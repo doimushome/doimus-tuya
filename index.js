@@ -1,0 +1,825 @@
+const TuyaOpenAPI = require("./core/TuyaOpenAPI");
+const TuyaCustomDeviceManager = require("./device/TuyaCustomDeviceManager");
+const TuyaHomeDeviceManager = require("./device/TuyaHomeDeviceManager");
+const TuyaDeviceManager = require("./device/TuyaDeviceManager");
+const debounce = require("debounce");
+const isEqual = require("lodash.isequal");
+const path = require("path");
+const fs = require("fs");
+
+function createLogger(api, prefix) {
+  return function (level, msg, ...args) {
+    let formatted = msg;
+    if (args.length > 0) {
+      let i = 0;
+      formatted = msg.replace(/%[sdifo]/g, () => {
+        const arg = args[i++];
+        if (arg === null || arg === undefined) return "";
+        if (typeof arg === "object") return JSON.stringify(arg);
+        return String(arg);
+      });
+    }
+    api.log(level, `[${prefix}] ${formatted}`);
+  };
+}
+
+function generateUUID(id) {
+  const crypto = require("crypto");
+  const hash = crypto.createHash("sha256").update(id).digest("hex");
+  return [
+    hash.substring(0, 8), hash.substring(8, 12),
+    "5" + hash.substring(12, 15),
+    ((parseInt(hash.substring(15, 17), 16) & 0x3f) | 0x80).toString(16) + hash.substring(17, 19),
+    hash.substring(19, 31),
+  ].join("-");
+}
+
+const CATEGORY_TO_DOIMUS_TYPE = {
+  dj: "light", dsd: "light", xdd: "light", fwd: "light",
+  dc: "light", dd: "light", gyd: "light", tyndj: "light", sxd: "light",
+  tgq: "light", tgkg: "light",
+  dlq: "switch", kg: "switch", tdq: "switch", qjdcz: "switch", szjqr: "switch",
+  cz: "outlet", pc: "outlet", wkcz: "outlet",
+  wxkg: "switch", cjkg: "switch",
+  bzyd: "light",
+  kt: "switch", ktkzq: "switch", qtwk: "switch",
+  qn: "thermostat", kj: "fan", xxj: "switch",
+  ckmkzq: "switch",
+  cl: "blind", clkg: "blind",
+  mc: "blind",
+  wk: "thermostat", wkf: "thermostat",
+  ggq: "switch", sfkzq: "switch",
+  jsq: "switch", cs: "switch",
+  fs: "fan", fsd: "fan", fskg: "fan",
+  yyj: "switch",
+  sp: "camera",
+  ywbj: "sensor", mcs: "sensor", zd: "sensor",
+  rqbj: "sensor", jwbj: "sensor", sj: "sensor",
+  cobj: "sensor", cocgq: "sensor",
+  co2bj: "sensor", co2cgq: "sensor",
+  wsdcg: "sensor", ldcg: "sensor", ldzd: "sensor",
+  tx: "sensor", hps: "sensor", pir: "sensor",
+  mh: "sensor", pm: "sensor", pm25: "sensor",
+  dyl: "sensor", sf: "sensor",
+  cw: "sensor",
+  mk: "lock", ms: "lock",
+  sgbj: "sensor",
+  sos: "sensor",
+  doorbell: "doorbell", wxml: "doorbell",
+  wxky: "switch",
+  cwwsq: "switch",
+  msp: "switch",
+  mal: "sensor",
+  hjjcy: "sensor",
+};
+
+function applySchemaOverride(device, options) {
+  if (!options.deviceOverrides) return;
+  const deviceConfig = options.deviceOverrides.find(
+    (c) => c.id === device.id || c.id === device.uuid || c.id === device.product_id || c.id === "global"
+  );
+  if (!deviceConfig || !deviceConfig.schema) return;
+
+  for (const override of deviceConfig.schema) {
+    const existing = device.schema.find((s) => s.code === override.code);
+    if (!existing) continue;
+
+    if (override.hidden) {
+      device.schema = device.schema.filter((s) => s.code !== override.code);
+      device.status = device.status.filter((s) => s.code !== override.code);
+      continue;
+    }
+
+    if (override.newCode) {
+      const oldCode = override.code;
+      existing.code = override.newCode;
+      const statusItem = device.status.find((s) => s.code === oldCode);
+      if (statusItem) statusItem.code = override.newCode;
+    }
+
+    if (override.type) {
+      existing.type = override.type;
+    }
+
+    if (override.property) {
+      existing.property = { ...existing.property, ...override.property };
+    }
+  }
+}
+
+function mapTuyaStatusToDoimusState(device, statusList, options) {
+  const state = {};
+  const schemaDeviceConfig = options && options.deviceOverrides
+    ? options.deviceOverrides.find(
+        (c) => c.id === device.id || c.id === device.uuid || c.id === device.product_id || c.id === "global"
+      )
+    : undefined;
+
+  for (const s of statusList || []) {
+    let code = s.code;
+    let value = s.value;
+
+    if (schemaDeviceConfig && schemaDeviceConfig.schema) {
+      const schemaOverride = schemaDeviceConfig.schema.find((o) => o.code === code);
+      if (schemaOverride) {
+        if (schemaOverride.hidden) continue;
+        if (schemaOverride.newCode) code = schemaOverride.newCode;
+        if (schemaOverride.onGet) {
+          try {
+            const fn = new Function("device", "value", `"use strict"; return (${schemaOverride.onGet})`);
+            value = fn(device, value);
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (code === "switch" || code === "switch_1") {
+      state.on = value === true || value === "true" || value === 1 || value === "1";
+    } else if (code === "bright_value" || code === "bright_value_v2" || code === "bright_value_1") {
+      state.brightness = Number(value);
+      state._brightValue = Number(value);
+    } else if (code === "temp_value" || code === "temp_value_v2") {
+      state.color_temp = Number(value);
+    } else if (code === "colour_data" || code === "colour_data_v2") {
+      if (typeof value === "object" && value !== null) {
+        if (value.hue !== undefined) state.hue = Number(value.hue);
+        if (value.saturation !== undefined) state.saturation = Number(value.saturation);
+        if (value.value !== undefined) {
+          const scaled = Math.round((Number(value.value) / 1000) * 100);
+          state.brightness = Math.min(100, Math.max(0, scaled));
+        }
+        state._colourData = value;
+      }
+    } else if (code === "fan_speed" || code === "fan_speed_percent") {
+      state.rotation_speed = Number(value);
+    } else if (code === "wind_speed") {
+      state.rotation_speed = Number(value);
+    } else if (code === "lock_state" || code === "lock_sta" || code === "lock_motor_state") {
+      state.locked = value === "locked" || value === true || value === 1 || value === "1";
+    } else if (code === "doorbell_state" || code === "doorcontact") {
+      state.doorbell = value === true || value === "true" || value === 1;
+    } else if (code === "contact_state" || code === "doorcontact_state") {
+      state.contact = value === "open" || value === true || value === 1 || value === "1";
+    } else if (code === "va_temperature") {
+      state.temperature = Number(value);
+    } else if (code === "va_humidity") {
+      state.humidity = Number(value);
+    } else if (code === "temp_current" || code === "temperature") {
+      state.temperature = Number(value);
+    } else if (code === "humidity" || code === "humidity_value") {
+      state.humidity = Number(value);
+    } else if (code === "temp_set" || code === "target_temp") {
+      state.target_temp = Number(value);
+    } else if (code === "switch_fan" || code === "fan_switch") {
+      if (state.on === undefined) state.on = value === true || value === 1;
+    } else if (code === "pir" || code === "motion_sensor") {
+      state.motion = value === true || value === "pir" || value === 1;
+    } else if (code === "smoke_sensor" || code === "smoke_sensor_status") {
+      state.smoke = value === true || value === 1 || value === "alarm";
+    } else if (code === "gas_sensor" || code === "co_gas_sensor") {
+      state.gas = value === true || value === 1 || value === "alarm";
+    } else if (code === "battery_percentage" || code === "battery_state") {
+      state.battery = Number(value);
+    } else if (code === "percent_control" || code === "control_back" || code === "position") {
+      state.position = Number(value);
+    } else if (code === "work_state" || code === "mode") {
+      state.mode = String(value);
+    } else if (code === "child_lock") {
+      state.child_lock = value === true || value === 1;
+    } else if (code === "light") {
+      if (state.on === undefined) state.on = value === true || value === 1;
+    } else if (code === "cur_current") {
+      state.current = Number(value) / 1000;
+    } else if (code === "cur_power") {
+      state.power = Number(value);
+    } else if (code === "cur_voltage") {
+      state.voltage = Number(value);
+    } else if (code === "meter_power" || code === "total_forward_energy") {
+      state.energy = Number(value);
+    } else if (code === "electricity") {
+      state.current = Number(value);
+    } else if (code === "percent_state") {
+      state.position = Number(value);
+    } else if (code === "countdown" || code === "count_down") {
+      state.countdown = Number(value);
+    }
+  }
+
+  if (device.online !== undefined) {
+    state.online = device.online;
+  }
+
+  return state;
+}
+
+function determineCapabilities(device) {
+  const doimusType = CATEGORY_TO_DOIMUS_TYPE[device.category] || "switch";
+  const capabilities = new Set();
+
+  capabilities.add("on");
+
+  switch (doimusType) {
+    case "light":
+      if (device.schema && device.schema.some((s) => s.code.startsWith("bright"))) {
+        capabilities.add("brightness");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("temp_value"))) {
+        capabilities.add("color_temp");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("colour_data"))) {
+        capabilities.add("hue");
+        capabilities.add("saturation");
+        capabilities.add("brightness");
+      }
+      break;
+    case "fan":
+      if (device.schema && device.schema.some((s) => s.code.startsWith("fan_speed") || s.code.startsWith("wind_speed"))) {
+        capabilities.add("rotation_speed");
+      }
+      break;
+    case "blind":
+      if (device.schema && device.schema.some((s) => s.code.startsWith("percent") || s.code === "control_back" || s.code === "position")) {
+        capabilities.add("position");
+      }
+      break;
+    case "lock":
+      if (device.schema && device.schema.some((s) => s.code.startsWith("lock"))) {
+        capabilities.add("locked");
+      }
+      break;
+    case "thermostat":
+      if (device.schema && device.schema.some((s) => s.code.startsWith("temp_set") || s.code === "target_temp")) {
+        capabilities.add("target_temp");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("temp_current") || s.code === "temperature" || s.code === "va_temperature")) {
+        capabilities.add("temperature");
+      }
+      break;
+    case "sensor":
+      capabilities.delete("on");
+      if (device.schema && device.schema.some((s) => s.code.startsWith("va_temperature") || s.code === "temperature" || s.code === "temp_current")) {
+        capabilities.add("temperature");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("va_humidity") || s.code === "humidity" || s.code === "humidity_value")) {
+        capabilities.add("humidity");
+      }
+      if (device.schema && device.schema.some((s) => s.code === "pir" || s.code === "motion_sensor")) {
+        capabilities.add("motion");
+      }
+      if (device.schema && device.schema.some((s) => s.code === "contact_state" || s.code === "doorcontact_state")) {
+        capabilities.add("contact");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("battery"))) {
+        capabilities.add("battery");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("smoke"))) {
+        capabilities.add("smoke");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("gas") || s.code === "co_gas_sensor")) {
+        capabilities.add("gas");
+      }
+      if (device.schema && device.schema.some((s) => s.code.startsWith("cur_") || s.code === "electricity")) {
+        capabilities.add("current");
+        capabilities.add("power");
+        capabilities.add("voltage");
+        capabilities.add("energy");
+      }
+      break;
+    case "outlet":
+    case "switch":
+      if (device.schema && device.schema.some((s) => s.code.startsWith("cur_"))) {
+        if (device.schema.some((s) => s.code === "cur_current" || s.code === "electricity")) {
+          capabilities.add("current");
+        }
+        if (device.schema.some((s) => s.code === "cur_power")) {
+          capabilities.add("power");
+        }
+        if (device.schema.some((s) => s.code === "cur_voltage")) {
+          capabilities.add("voltage");
+        }
+        if (device.schema.some((s) => s.code === "meter_power" || s.code === "total_forward_energy")) {
+          capabilities.add("energy");
+        }
+      }
+      break;
+    case "camera":
+      capabilities.add("on");
+      break;
+    case "doorbell":
+      capabilities.delete("on");
+      capabilities.add("doorbell");
+      break;
+  }
+
+  return Array.from(capabilities);
+}
+
+function getDoimusType(device, options) {
+  let category = device.category;
+
+  const deviceConfig = getDeviceConfig(device, options);
+  if (deviceConfig && deviceConfig.category) {
+    if (deviceConfig.category === "hidden") return "hidden";
+    category = deviceConfig.category;
+  }
+
+  return CATEGORY_TO_DOIMUS_TYPE[category] || "switch";
+}
+
+function getDeviceConfig(device, options) {
+  if (!options.deviceOverrides) return undefined;
+  const deviceConfig = options.deviceOverrides.find((c) => c.id === device.id || c.id === device.uuid);
+  const productConfig = options.deviceOverrides.find((c) => c.id === device.product_id);
+  const globalConfig = options.deviceOverrides.find((c) => c.id === "global");
+  return deviceConfig || productConfig || globalConfig;
+}
+
+function getDeviceSchemaConfig(device, code, options) {
+  const deviceConfig = getDeviceConfig(device, options);
+  if (!deviceConfig || !deviceConfig.schema) return undefined;
+  const schemaConfig = deviceConfig.schema.find((item) =>
+    item.newCode ? item.newCode === code : item.code === code
+  );
+  return schemaConfig;
+}
+
+function buildCommand(commandSchemas, code, value) {
+  const schema = commandSchemas.find((s) => s.code === code);
+  if (schema) {
+    if (schema.property && schema.property.min !== undefined && schema.property.max !== undefined) {
+      if (schema.type === "Enum") {
+        return { code, value: String(value) };
+      } else if (schema.type === "Integer") {
+        const scale = schema.property.scale != null ? Math.pow(10, schema.property.scale) : 1;
+        return { code, value: Math.round(Number(value) * scale) };
+      } else if (schema.type === "Boolean") {
+        return { code, value: value === true || value === 1 || value === "true" };
+      }
+    }
+  }
+  return { code, value };
+}
+
+function sendCommandsDebounced(tuyaDevice, commands, deviceManager, log) {
+  const key = tuyaDevice.id;
+  const debounced = debounceMap.get(key) || debounce(
+    async (cmds) => {
+      try {
+        await deviceManager.sendCommands(tuyaDevice.id, cmds);
+      } catch (e) {
+        log("error", `Command failed for ${tuyaDevice.id}: ${e.message}`);
+        if (lastKnownState.has(tuyaDevice.id)) {
+          const prevState = lastKnownState.get(tuyaDevice.id);
+          const doimusID = doimusDeviceMap.get(tuyaDevice.id);
+          if (doimusID && apiRef) {
+            apiRef.updateDeviceState(doimusID, prevState);
+          }
+        }
+      }
+    },
+    50
+  );
+  debounceMap.set(key, debounced);
+  debounced(commands);
+}
+
+let debounceMap = new Map();
+let lastKnownState = new Map();
+let deviceManager = null;
+let doimusDeviceMap = new Map();
+let apiRef = null;
+
+function validateConfig(options, log) {
+  if (options.deviceOverrides) {
+    const idMap = new Map();
+    for (const item of options.deviceOverrides) {
+      if (idMap.has(item.id)) {
+        idMap.get(item.id).push(item);
+      } else {
+        idMap.set(item.id, [item]);
+      }
+    }
+    for (const [id, items] of idMap.entries()) {
+      if (items.length > 1) {
+        log("error", `"deviceOverrides" conflict: "id" "${id}" must be unique.`);
+        return false;
+      }
+    }
+
+    for (const deviceOverride of options.deviceOverrides) {
+      if (!deviceOverride.schema) continue;
+      const codeMap = new Map();
+      for (const item of deviceOverride.schema) {
+        if (codeMap.has(item.code)) {
+          codeMap.get(item.code).push(item);
+        } else {
+          codeMap.set(item.code, [item]);
+        }
+      }
+      for (const [code, items] of codeMap.entries()) {
+        if (items.length > 1) {
+          log("error", `"schema" conflict: "code" "${code}" must be unique.`);
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+async function initCustomProject(api, options, log) {
+  const { endpoint, accessId, accessKey, debug, debugLevel } = options;
+  const debugMode = debug && ((debugLevel || "").length > 0 ? debugLevel.includes("api") : true);
+
+  const openAPI = new TuyaOpenAPI(endpoint, accessId, accessKey, log, "en", debugMode);
+  const dm = new TuyaCustomDeviceManager(openAPI, debugMode);
+
+  log("info", "Get token.");
+  let res = await openAPI.getToken();
+  if (res.success === false) {
+    log("error", `Get token failed. code=${res.code}, msg=${res.msg}`);
+    return null;
+  }
+
+  const DEFAULT_USER = "homebridge";
+  log("info", `Search default user "${DEFAULT_USER}"`);
+  res = await openAPI.customGetUserInfo(DEFAULT_USER);
+  if (res.success === false) {
+    log("error", `Search user failed. code=${res.code}, msg=${res.msg}`);
+    return null;
+  }
+
+  if (!res.result || !res.result.user_name) {
+    log("info", `Creating default user "${DEFAULT_USER}".`);
+    res = await openAPI.customCreateUser(DEFAULT_USER, DEFAULT_USER);
+    if (res.success === false) {
+      log("error", `Create default user failed. code=${res.code}, msg=${res.msg}`);
+      return null;
+    }
+  }
+
+  const uid = res.result.user_id;
+  log("info", "Fetching asset list.");
+  res = await dm.getAssetList();
+  if (res.success === false) {
+    log("error", `Fetching asset list failed. code=${res.code}, msg=${res.msg}`);
+    return null;
+  }
+
+  const assetIDList = (res.result.list || []).map((a) => a.asset_id);
+  if (assetIDList.length === 0) {
+    log("warn", "Asset list is empty.");
+    return null;
+  }
+
+  log("info", "Authorize asset list.");
+  res = await dm.authorizeAssetList(uid, assetIDList, true);
+  if (res.success === false) {
+    log("error", `Authorize asset list failed. code=${res.code}, msg=${res.msg}`);
+    return null;
+  }
+
+  log("info", "Logging in with user.");
+  res = await openAPI.customLogin(DEFAULT_USER, DEFAULT_USER);
+  if (res.success === false) {
+    log("error", `Login failed. code=${res.code}, msg=${res.msg}`);
+    if (TuyaOpenAPI.LOGIN_ERROR_MESSAGES[res.code]) {
+      log("error", TuyaOpenAPI.LOGIN_ERROR_MESSAGES[res.code]);
+    }
+    return null;
+  }
+
+  log("info", "Starting MQTT connection.");
+  dm.mq.start();
+  log("info", "Fetching device list.");
+  dm.ownerIDs = assetIDList;
+  await dm.updateDevices(assetIDList);
+  return { dm, uid };
+}
+
+async function initHomeProject(api, options, log) {
+  const { accessId, accessKey, countryCode, username, password, appSchema, endpoint, debug, debugLevel } = options;
+  const debugMode = debug && ((debugLevel || "").length > 0 ? debugLevel.includes("api") : true);
+
+  const resolvedEndpoint = endpoint && endpoint.length > 0
+    ? endpoint
+    : TuyaOpenAPI.getDefaultEndpoint(countryCode);
+
+  const openAPI = new TuyaOpenAPI(resolvedEndpoint, accessId, accessKey, log, "en", debugMode);
+  const dm = new TuyaHomeDeviceManager(openAPI, debugMode);
+
+  log("info", "Logging in to Tuya Cloud.");
+  let res = await openAPI.homeLogin(countryCode, username, password, appSchema);
+  if (res.success === false) {
+    log("error", `Login failed. code=${res.code}, msg=${res.msg}`);
+    if (TuyaOpenAPI.LOGIN_ERROR_MESSAGES[res.code]) {
+      log("error", TuyaOpenAPI.LOGIN_ERROR_MESSAGES[res.code]);
+    }
+    return null;
+  }
+
+  log("info", "Starting MQTT connection.");
+  dm.mq.start();
+
+  log("info", "Fetching home list.");
+  res = await dm.getHomeList();
+  if (res.success === false) {
+    log("error", `Fetching home list failed. code=${res.code}, msg=${res.msg}`);
+    return null;
+  }
+
+  const homeWhitelist = options.homeWhitelist;
+  const homeIDList = [];
+  for (const { home_id, name } of res.result || []) {
+    log("info", `Got home_id=${home_id}, name=${name}`);
+    if (!homeWhitelist || homeWhitelist.includes(home_id)) {
+      homeIDList.push(home_id);
+    }
+  }
+
+  if (homeIDList.length === 0) {
+    log("warn", "Home list is empty or no whitelisted homes found.");
+    return { dm, uid: openAPI.tokenInfo.uid };
+  }
+
+  log("info", "Fetching device list.");
+  dm.ownerIDs = homeIDList.map((id) => id.toString());
+  await dm.updateDevices(homeIDList);
+
+  log("info", "Fetching scenes.");
+  for (const homeID of homeIDList) {
+    const scenes = await dm.getSceneList(homeID);
+    if (scenes.length > 0) {
+      dm.devices.push(...scenes);
+      log("info", `Got ${scenes.length} scene(s) from home ${homeID}`);
+    }
+  }
+
+  return { dm, uid: openAPI.tokenInfo.uid };
+}
+
+async function persistDeviceList(api, dm, uid, log) {
+  try {
+    const persistPath = path.join(process.cwd(), "data", "persist");
+    if (!fs.existsSync(persistPath)) {
+      fs.mkdirSync(persistPath, { recursive: true });
+    }
+    const file = path.join(persistPath, `TuyaDeviceList.${uid}.json`);
+    const devices = dm.devices.map((d) => ({
+      id: d.id,
+      name: d.name,
+      category: d.category,
+      product_id: d.product_id,
+      online: d.online,
+      schema: d.schema,
+      status: d.status,
+    }));
+    fs.writeFileSync(file, JSON.stringify(devices, null, 2));
+    log("info", `Device list saved at ${file}`);
+  } catch (_) {}
+}
+
+async function registerDevicesWithDoimus(api, dm, options) {
+  const devices = dm.devices;
+  if (!devices || devices.length === 0) {
+    api.log("warn", "No devices found.");
+    return;
+  }
+
+  api.log("info", `Registering ${devices.length} Tuya device(s) with Doimus.`);
+
+  for (const device of devices) {
+    applySchemaOverride(device, options);
+    const type = getDoimusType(device, options);
+    if (type === "hidden") continue;
+
+    const doimusID = generateUUID(device.id);
+    const capabilities = determineCapabilities(device);
+    const initialState = mapTuyaStatusToDoimusState(device, device.status, options);
+
+    api.registerDevice({
+      id: doimusID,
+      name: device.name,
+      type: type,
+      capabilities: capabilities,
+      state: initialState,
+    });
+
+    doimusDeviceMap.set(doimusID, device.id);
+    doimusDeviceMap.set(device.id, doimusID);
+    lastKnownState.set(device.id, initialState);
+  }
+
+  api.log("info", "Device registration complete.");
+}
+
+module.exports = {
+  async start(cfg, api) {
+    apiRef = api;
+    const options = (cfg && cfg.options) || {};
+    const log = createLogger(api, "TuyaPlatform");
+
+    log("info", "Starting Tuya Platform plugin");
+
+    if (!options.accessId || !options.accessKey) {
+      log("error", "Access ID and Access Secret are required.");
+      return;
+    }
+
+    if (!options.projectType) {
+      log("error", "Project type is required.");
+      return;
+    }
+
+    if (!validateConfig(options, log)) {
+      log("error", "Configuration validation failed.");
+      return;
+    }
+
+    let result = null;
+    try {
+      if (options.projectType === "1") {
+        result = await initCustomProject(api, options, log);
+      } else if (options.projectType === "2") {
+        result = await initHomeProject(api, options, log);
+      } else {
+        log("error", `Unsupported projectType: ${options.projectType}`);
+        return;
+      }
+    } catch (e) {
+      log("error", `Initialization failed: ${e.message}`);
+      return;
+    }
+
+    if (!result || !result.dm) {
+      log("error", "Failed to initialize Tuya connection.");
+      return;
+    }
+
+    const { dm, uid } = result;
+    deviceManager = dm;
+
+    await persistDeviceList(api, dm, uid, log);
+    await registerDevicesWithDoimus(api, dm, options);
+
+    api.onCommand(async (deviceID, key, value) => {
+      const tuyaID = doimusDeviceMap.get(deviceID);
+      if (!tuyaID) return;
+      try {
+        const tuyaDevice = dm.getDevice(tuyaID);
+        if (!tuyaDevice) return;
+
+        let commands = [];
+
+        if (key === "on") {
+          const onSchema = tuyaDevice.schema.find((s) => s.code === "switch_1" || s.code === "switch_fan" || s.code === "fan_switch");
+          if (onSchema) {
+            commands.push({ code: onSchema.code, value: value === true });
+          } else if (tuyaDevice.schema.some((s) => s.code === "switch")) {
+            commands.push({ code: "switch", value: value === true });
+          } else if (tuyaDevice.schema.some((s) => s.code === "light")) {
+            commands.push({ code: "light", value: value === true });
+            if (value === true) {
+              const brightSchema = tuyaDevice.schema.find((s) => s.code === "bright_value" || s.code === "bright_value_v2" || s.code === "bright_value_1");
+              if (brightSchema) {
+                const currentBright = tuyaDevice.status.find((s) => s.code === brightSchema.code);
+                if (currentBright && currentBright.value !== undefined) {
+                  commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, currentBright.value));
+                }
+              }
+            }
+          } else if (tuyaDevice.schema.some((s) => s.code === "switch_led")) {
+            commands.push({ code: "switch_led", value: value === true });
+          } else {
+            const anySwitch = tuyaDevice.schema.find((s) => s.code.startsWith("switch"));
+            if (anySwitch) {
+              commands.push({ code: anySwitch.code, value: value === true });
+            }
+          }
+        } else if (key === "brightness") {
+          const brightSchema = tuyaDevice.schema.find((s) => s.code === "bright_value" || s.code === "bright_value_v2" || s.code === "bright_value_1");
+          if (brightSchema) {
+            commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, value));
+          }
+        } else if (key === "color_temp") {
+          const tempSchema = tuyaDevice.schema.find((s) => s.code === "temp_value" || s.code === "temp_value_v2");
+          if (tempSchema) {
+            commands.push(buildCommand(tuyaDevice.schema, tempSchema.code, value));
+          }
+        } else if (key === "hue" || key === "saturation") {
+          const colourSchema = tuyaDevice.schema.find((s) => s.code === "colour_data" || s.code === "colour_data_v2");
+          if (colourSchema) {
+            const currentState = tuyaDevice.status;
+            const currentColour = currentState.find((s) => s.code === colourSchema.code);
+            let colourData = { hue: 0, saturation: 0, value: 1000 };
+            if (currentColour && typeof currentColour.value === "object") {
+              colourData = { ...colourData, ...currentColour.value };
+            }
+            if (key === "hue") colourData.hue = Number(value);
+            if (key === "saturation") colourData.saturation = Number(value);
+            commands.push({ code: colourSchema.code, value: colourData });
+          }
+        } else if (key === "target_temp") {
+          const tempSetSchema = tuyaDevice.schema.find((s) => s.code === "temp_set" || s.code === "target_temp");
+          if (tempSetSchema) {
+            commands.push(buildCommand(tuyaDevice.schema, tempSetSchema.code, value));
+          }
+        } else if (key === "locked") {
+          commands.push({ code: "lock_state", value: value === true });
+        } else if (key === "position") {
+          const posSchema = tuyaDevice.schema.find((s) => s.code === "percent_control" || s.code === "control_back" || s.code === "position");
+          if (posSchema) {
+            commands.push(buildCommand(tuyaDevice.schema, posSchema.code, value));
+          }
+        } else if (key === "rotation_speed") {
+          const speedSchema = tuyaDevice.schema.find((s) => s.code.startsWith("fan_speed") || s.code === "wind_speed");
+          if (speedSchema) {
+            commands.push(buildCommand(tuyaDevice.schema, speedSchema.code, value));
+          }
+        } else if (key === "mode") {
+          commands.push({ code: "work_state", value: String(value) });
+        }
+
+        if (commands.length > 0) {
+          sendCommandsDebounced(tuyaDevice, commands, dm, log);
+        }
+      } catch (e) {
+        log("error", `Command handler error: ${e.message}`);
+      }
+    });
+
+    dm.on(TuyaDeviceManager.Events.DEVICE_STATUS_UPDATE, (device, status) => {
+      const doimusID = doimusDeviceMap.get(device.id);
+      if (!doimusID) return;
+      const state = mapTuyaStatusToDoimusState(device, status, options);
+      if (Object.keys(state).length > 0) {
+        state.online = device.online;
+        api.updateDeviceState(doimusID, state);
+        lastKnownState.set(device.id, { ...lastKnownState.get(device.id), ...state });
+      }
+    });
+
+    dm.on(TuyaDeviceManager.Events.DEVICE_INFO_UPDATE, (device, info) => {
+      const doimusID = doimusDeviceMap.get(device.id);
+      if (!doimusID) return;
+      const state = { online: device.online };
+      if (info && info.name) {
+        log("info", `Device renamed: ${device.name}`);
+      }
+      api.updateDeviceState(doimusID, state);
+      lastKnownState.set(device.id, { ...lastKnownState.get(device.id), ...state });
+    });
+
+    dm.on(TuyaDeviceManager.Events.DEVICE_ADD, async (device) => {
+      log("info", `New device added: ${device.name}`);
+      const options2 = (cfg && cfg.options) || {};
+      device.schema = await dm.getDeviceSchema(device.id);
+      applySchemaOverride(device, options2);
+      dm.devices.push(device);
+
+      const type = getDoimusType(device, options2);
+      if (type === "hidden") return;
+
+      const doimusID = generateUUID(device.id);
+      const capabilities = determineCapabilities(device);
+      const initialState = mapTuyaStatusToDoimusState(device, device.status, options2);
+
+      api.registerDevice({
+        id: doimusID,
+        name: device.name,
+        type: type,
+        capabilities: capabilities,
+        state: initialState,
+      });
+
+      doimusDeviceMap.set(doimusID, device.id);
+      doimusDeviceMap.set(device.id, doimusID);
+      lastKnownState.set(device.id, initialState);
+    });
+
+    dm.on(TuyaDeviceManager.Events.DEVICE_DELETE, (deviceID) => {
+      const doimusID = doimusDeviceMap.get(deviceID);
+      if (!doimusID) return;
+      log("info", `Device removed: ${deviceID}`);
+      doimusDeviceMap.delete(doimusID);
+      doimusDeviceMap.delete(deviceID);
+      lastKnownState.delete(deviceID);
+    });
+
+    log("info", "Tuya Platform plugin ready.");
+  },
+
+  stop() {
+    if (deviceManager && deviceManager.mq) {
+      try { deviceManager.mq.stop(); } catch (_) {}
+    }
+    for (const [, debounced] of debounceMap.entries()) {
+      debounced.clear();
+    }
+    debounceMap = new Map();
+    lastKnownState = new Map();
+    deviceManager = null;
+    doimusDeviceMap = new Map();
+    apiRef = null;
+  },
+};

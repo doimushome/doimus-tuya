@@ -1,0 +1,171 @@
+{
+  "pluginAlias": "TuyaPlatform",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Tuya / Smart Life cloud integration. Supports lights, switches, sensors, covers, locks, cameras, IR hubs, and more.",
+  "footerDisplay": "Create a project at https://iot.tuya.com, add your devices, then enter your Access ID/Secret and app credentials below.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "title": "Name",
+        "required": true,
+        "default": "Tuya"
+      },
+      "options": {
+        "title": "Project Info",
+        "type": "object",
+        "required": true,
+        "properties": {
+          "projectType": {
+            "title": "Project Type (Development Method)",
+            "type": "string",
+            "default": "2",
+            "oneOf": [
+              { "title": "Custom", "enum": ["1"] },
+              { "title": "Smart Home", "enum": ["2"] }
+            ],
+            "required": true
+          },
+          "endpoint": {
+            "title": "Endpoint URL",
+            "type": "string",
+            "format": "url"
+          },
+          "accessId": {
+            "title": "Access ID",
+            "type": "string",
+            "required": true
+          },
+          "accessKey": {
+            "title": "Access Secret",
+            "type": "string",
+            "required": true
+          },
+          "countryCode": {
+            "title": "Country Code",
+            "type": "integer",
+            "minimum": 1,
+            "condition": {
+              "functionBody": "return model.options.projectType === '2';"
+            }
+          },
+          "username": {
+            "title": "Username (email)",
+            "type": "string",
+            "condition": {
+              "functionBody": "return model.options.projectType === '2';"
+            }
+          },
+          "password": {
+            "title": "Password",
+            "type": "string",
+            "format": "password",
+            "condition": {
+              "functionBody": "return model.options.projectType === '2';"
+            }
+          },
+          "appSchema": {
+            "title": "App",
+            "type": "string",
+            "default": "tuyaSmart",
+            "oneOf": [
+              { "title": "Tuya Smart", "enum": ["tuyaSmart"] },
+              { "title": "Smart Life", "enum": ["smartlife"] }
+            ],
+            "condition": {
+              "functionBody": "return model.options.projectType === '2';"
+            }
+          },
+          "homeWhitelist": {
+            "title": "Whitelisted Home IDs",
+            "description": "Optional list of Home IDs. If blank, all homes are matched.",
+            "type": "array",
+            "items": { "title": "Home ID", "type": "integer" },
+            "condition": {
+              "functionBody": "return model.options.projectType === '2';"
+            }
+          },
+          "deviceOverrides": {
+            "title": "Device Override Configs",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "title": "ID",
+                  "description": "Device ID, Product ID, or `global`",
+                  "type": "string",
+                  "required": true
+                },
+                "category": {
+                  "title": "Category",
+                  "description": "Category code or `hidden`",
+                  "type": "string"
+                },
+                "unbridged": {
+                  "title": "Unbridge",
+                  "type": "boolean"
+                },
+                "schema": {
+                  "title": "Schema Override Configs",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "code": { "title": "DP Code", "type": "string", "required": true },
+                      "newCode": { "title": "New DP Code", "type": "string" },
+                      "type": {
+                        "title": "New DP Type",
+                        "type": "string",
+                        "default": "",
+                        "oneOf": [
+                          { "title": "Boolean", "enum": ["Boolean"] },
+                          { "title": "Integer", "enum": ["Integer"] },
+                          { "title": "Enum", "enum": ["Enum"] },
+                          { "title": "String", "enum": ["String"] },
+                          { "title": "Json", "enum": ["Json"] },
+                          { "title": "Raw", "enum": ["Raw"] }
+                        ]
+                      },
+                      "property": {
+                        "title": "New DP Property",
+                        "type": "object",
+                        "properties": {
+                          "min": { "title": "min", "type": "integer" },
+                          "max": { "title": "max", "type": "integer" },
+                          "scale": { "title": "scale", "type": "integer" },
+                          "step": { "title": "step", "type": "integer" },
+                          "range": {
+                            "title": "range",
+                            "type": "array",
+                            "items": { "title": "value", "type": "string" }
+                          }
+                        }
+                      },
+                      "hidden": { "title": "Hidden", "type": "boolean" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "debug": {
+            "title": "Enable Debug Logging",
+            "type": "boolean",
+            "default": false
+          },
+          "debugLevel": {
+            "title": "Debug Level",
+            "description": "Comma-separated list. `api` for API/MQTT logs, device ID for specific device logs.",
+            "type": "string",
+            "condition": {
+              "functionBody": "return model.options && model.options.debug;"
+            }
+          }
+        }
+      }
+    }
+  }
+}

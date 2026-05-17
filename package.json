@@ -1,0 +1,22 @@
+{
+  "name": "doimus-tuya-platform",
+  "version": "1.0.0",
+  "description": "Doimus plugin for Tuya/Smart Life devices. Port of @0x5e/homebridge-tuya-platform v1.7.0-beta.58",
+  "license": "MIT",
+  "main": "index.js",
+  "doimus": {
+    "plugin": true,
+    "type": "native"
+  },
+  "dependencies": {
+    "async-await-retry": "^2.0.1",
+    "color-convert": "^2.0.1",
+    "crypto-js": "^4.1.1",
+    "debounce": "^1.2.1",
+    "jsonschema": "^1.4.1",
+    "kelvin-to-rgb": "^1.0.2",
+    "lodash.isequal": "^4.5.0",
+    "mqtt": "^4.2.6",
+    "uuid": "^9.0.0"
+  }
+}
