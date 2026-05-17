@@ -347,10 +347,15 @@ function buildCommand(commandSchemas, code, value) {
   const schema = commandSchemas.find((s) => s.code === code);
   if (schema) {
     if (schema.property && schema.property.min !== undefined && schema.property.max !== undefined) {
+      const scale = schema.property.scale != null ? Math.pow(10, schema.property.scale) : 1;
+      if (typeof value === "number") {
+        const realMin = schema.property.min / scale;
+        const realMax = schema.property.max / scale;
+        value = Math.max(realMin, Math.min(realMax, value));
+      }
       if (schema.type === "Enum") {
         return { code, value: String(value) };
       } else if (schema.type === "Integer") {
-        const scale = schema.property.scale != null ? Math.pow(10, schema.property.scale) : 1;
         return { code, value: Math.round(Number(value) * scale) };
       } else if (schema.type === "Boolean") {
         return { code, value: value === true || value === 1 || value === "true" };
@@ -597,6 +602,13 @@ async function registerDevicesWithDoimus(api, dm, options) {
     const capabilities = determineCapabilities(device);
     const initialState = mapTuyaStatusToDoimusState(device, device.status, options);
 
+    const tempSetSchema = device.schema.find((s) => s.code === "temp_set" || s.code === "target_temp");
+    if (tempSetSchema && tempSetSchema.property && tempSetSchema.property.min !== undefined && tempSetSchema.property.max !== undefined) {
+      const scale = tempSetSchema.property.scale != null ? Math.pow(10, tempSetSchema.property.scale) : 1;
+      initialState.min_target_temp = tempSetSchema.property.min / scale;
+      initialState.max_target_temp = tempSetSchema.property.max / scale;
+    }
+
     api.registerDevice({
       id: doimusID,
       name: device.name,
@@ -783,6 +795,13 @@ module.exports = {
       const doimusID = generateUUID(device.id);
       const capabilities = determineCapabilities(device);
       const initialState = mapTuyaStatusToDoimusState(device, device.status, options2);
+
+      const tempSetSchema = device.schema.find((s) => s.code === "temp_set" || s.code === "target_temp");
+      if (tempSetSchema && tempSetSchema.property && tempSetSchema.property.min !== undefined && tempSetSchema.property.max !== undefined) {
+        const scale = tempSetSchema.property.scale != null ? Math.pow(10, tempSetSchema.property.scale) : 1;
+        initialState.min_target_temp = tempSetSchema.property.min / scale;
+        initialState.max_target_temp = tempSetSchema.property.max / scale;
+      }
 
       api.registerDevice({
         id: doimusID,
