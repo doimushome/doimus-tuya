@@ -311,6 +311,18 @@ function determineCapabilities(device) {
       break;
   }
 
+  if (device.schema) {
+    if (device.schema.some((s) => s.code === "work_state" || s.code === "mode")) {
+      capabilities.add("mode");
+    }
+    if (device.schema.some((s) => s.code === "child_lock")) {
+      capabilities.add("child_lock");
+    }
+    if (device.schema.some((s) => s.code === "countdown" || s.code === "count_down")) {
+      capabilities.add("countdown");
+    }
+  }
+
   return Array.from(capabilities);
 }
 
@@ -738,6 +750,11 @@ module.exports = {
           }
         } else if (key === "locked") {
           commands.push({ code: "lock_state", value: value === true });
+        } else if (key === "child_lock") {
+          const childLockSchema = tuyaDevice.schema.find((s) => s.code === "child_lock");
+          if (childLockSchema) {
+            commands.push(buildCommand(tuyaDevice.schema, childLockSchema.code, value));
+          }
         } else if (key === "position") {
           const posSchema = tuyaDevice.schema.find((s) => s.code === "percent_control" || s.code === "control_back" || s.code === "position");
           if (posSchema) {
@@ -750,6 +767,11 @@ module.exports = {
           }
         } else if (key === "mode") {
           commands.push({ code: "work_state", value: String(value) });
+        } else if (key === "countdown") {
+          const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");
+          if (countdownSchema) {
+            commands.push(buildCommand(tuyaDevice.schema, countdownSchema.code, value));
+          }
         }
 
         if (commands.length > 0) {
