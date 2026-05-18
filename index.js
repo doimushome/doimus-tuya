@@ -136,7 +136,8 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     if (code === "switch" || code === "switch_1") {
       state.on = value === true || value === "true" || value === 1 || value === "1";
     } else if (code === "bright_value" || code === "bright_value_v2" || code === "bright_value_1") {
-      state.brightness = Number(value);
+      // Tuya bright_value is 0–1000; normalise to 0–100 for Doimus
+      state.brightness = Math.min(100, Math.max(0, Math.round((Number(value) / 1000) * 100)));
       state._brightValue = Number(value);
     } else if (code === "temp_value" || code === "temp_value_v2") {
       state.color_temp = Number(value);
@@ -723,7 +724,9 @@ module.exports = {
         } else if (key === "brightness") {
           const brightSchema = tuyaDevice.schema.find((s) => s.code === "bright_value" || s.code === "bright_value_v2" || s.code === "bright_value_1");
           if (brightSchema) {
-            commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, value));
+            // Convert Doimus 0–100 back to Tuya 0–1000 range before sending
+            const tuyaBrightness = Math.round((Number(value) / 100) * 1000);
+            commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, tuyaBrightness));
           }
         } else if (key === "color_temp") {
           const tempSchema = tuyaDevice.schema.find((s) => s.code === "temp_value" || s.code === "temp_value_v2");
