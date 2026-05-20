@@ -9,7 +9,6 @@ const GCM_TAG_LENGTH = 16;
 class TuyaOpenMQ {
   constructor(api, log = console, debug = false) {
     this.api = api;
-    this.log = log;
     this.debug = debug;
     this.version = "1.0";
     this.messageListeners = new Set();
@@ -34,14 +33,23 @@ class TuyaOpenMQ {
     this.stop();
     const res = await this._getMQConfig("mqtt");
     if (res.success === false) {
-      this.log.warn("Get MQTT config failed. code = %s, msg = %s", res.code, res.msg);
+      this.log.warn(
+        "Get MQTT config failed. code = %s, msg = %s",
+        res.code,
+        res.msg,
+      );
       return;
     }
 
-    const { url, client_id, username, password, expire_time, source_topic } = res.result;
+    const { url, client_id, username, password, expire_time, source_topic } =
+      res.result;
     this.log.debug("Connecting to:", url);
 
-    const client = mqtt.connect(url, { clientId: client_id, username, password });
+    const client = mqtt.connect(url, {
+      clientId: client_id,
+      username,
+      password,
+    });
     client.on("connect", this._onConnect.bind(this));
     client.on("error", this._onError.bind(this));
     client.on("end", this._onEnd.bind(this));
@@ -50,7 +58,10 @@ class TuyaOpenMQ {
 
     this.client = client;
     this.config = res.result;
-    this.timer = setTimeout(this._connect.bind(this), (expire_time - 60) * 1000);
+    this.timer = setTimeout(
+      this._connect.bind(this),
+      (expire_time - 60) * 1000,
+    );
   }
 
   async _getMQConfig(linkType) {
@@ -89,7 +100,7 @@ class TuyaOpenMQ {
       topic,
       protocol,
       JSON.stringify(message, null, 2),
-      t
+      t,
     );
 
     this._fixWrongOrderMessage(protocol, message, t);
@@ -106,13 +117,19 @@ class TuyaOpenMQ {
 
     if (lastPayload && currentPayload.t < lastPayload.t) {
       this.log.debug("Message received with wrong order.");
-      this.log.debug("LastMessage: dataId = %s, t = %s", lastPayload.message.dataId, lastPayload.t);
+      this.log.debug(
+        "LastMessage: dataId = %s, t = %s",
+        lastPayload.message.dataId,
+        lastPayload.t,
+      );
       this.log.debug("CurrentMessage: dataId = %s, t = %s", message.dataId, t);
 
       for (const _status of message.status) {
         for (const payload of this.consumedQueue.reverse()) {
           if (message.devId !== payload.message.devId) continue;
-          const latestStatus = payload.message.status.find((item) => item.code === _status.code);
+          const latestStatus = payload.message.status.find(
+            (item) => item.code === _status.code,
+          );
           if (latestStatus && latestStatus.value !== _status.value) {
             this.log.debug("Override status %o => %o", latestStatus, _status);
             _status.value = latestStatus.value;
@@ -138,11 +155,10 @@ class TuyaOpenMQ {
 
   _decodeMQMessage_1_0(b64msg, password) {
     password = password.substring(8, 24);
-    return CryptoJS.AES.decrypt(
-      b64msg,
-      CryptoJS.enc.Utf8.parse(password),
-      { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 }
-    ).toString(CryptoJS.enc.Utf8);
+    return CryptoJS.AES.decrypt(b64msg, CryptoJS.enc.Utf8.parse(password), {
+      mode: CryptoJS.mode.ECB,
+      padding: CryptoJS.pad.Pkcs7,
+    }).toString(CryptoJS.enc.Utf8);
   }
 
   _decodeMQMessage_2_0(data, password, t) {
@@ -150,9 +166,14 @@ class TuyaOpenMQ {
     const key = password.substring(8, 24);
     const iv_length = tmpbuffer.readUIntBE(0, 4);
     const iv_buffer = tmpbuffer.slice(4, iv_length + 4);
-    const data_buffer = tmpbuffer.slice(iv_length + 4, tmpbuffer.length - GCM_TAG_LENGTH);
+    const data_buffer = tmpbuffer.slice(
+      iv_length + 4,
+      tmpbuffer.length - GCM_TAG_LENGTH,
+    );
     const cipher = crypto.createDecipheriv("aes-128-gcm", key, iv_buffer);
-    cipher.setAuthTag(tmpbuffer.slice(tmpbuffer.length - GCM_TAG_LENGTH, tmpbuffer.length));
+    cipher.setAuthTag(
+      tmpbuffer.slice(tmpbuffer.length - GCM_TAG_LENGTH, tmpbuffer.length),
+    );
     const buf = Buffer.allocUnsafe(6);
     buf.writeUIntBE(t, 0, 6);
     cipher.setAAD(buf);

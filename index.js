@@ -1,14 +1,17 @@
+const crypto = require("crypto");
+const path = require("path");
+const fs = require("fs");
+const debounce = require("debounce");
+
+const { PrefixLogger } = require("./util/Logger");
 const TuyaOpenAPI = require("./core/TuyaOpenAPI");
 const TuyaCustomDeviceManager = require("./device/TuyaCustomDeviceManager");
 const TuyaHomeDeviceManager = require("./device/TuyaHomeDeviceManager");
 const TuyaDeviceManager = require("./device/TuyaDeviceManager");
-const debounce = require("debounce");
-const isEqual = require("lodash.isequal");
-const path = require("path");
-const fs = require("fs");
 
-function createLogger(api, prefix) {
-  return function (level, msg, ...args) {
+function createLogger(api, prefix, debug = false) {
+  const logger = api.log;
+  const call = (level, msg, ...args) => {
     let formatted = msg;
     if (args.length > 0) {
       let i = 0;
@@ -19,53 +22,116 @@ function createLogger(api, prefix) {
         return String(arg);
       });
     }
-    api.log(level, `[${prefix}] ${formatted}`);
+    if (typeof logger === "function") {
+      logger(level, `[${prefix}] ${formatted}`);
+    } else if (logger && typeof logger.info === "function") {
+      if (level === "debug" && debug) {
+        logger.debug(`[${prefix}] ${formatted}`);
+      } else if (level === "warn") {
+        logger.warn(`[${prefix}] ${formatted}`);
+      } else if (level === "error") {
+        logger.error(`[${prefix}] ${formatted}`);
+      } else if (level === "info") {
+        logger.info(`[${prefix}] ${formatted}`);
+      }
+    }
   };
+  const pl = function (level, msg, ...args) {
+    call(level, msg, ...args);
+  };
+  pl.info = (...args) => call("info", args[0], ...args.slice(1));
+  pl.warn = (...args) => call("warn", args[0], ...args.slice(1));
+  pl.error = (...args) => call("error", args[0], ...args.slice(1));
+  pl.debug = (...args) => {
+    if (debug) call("debug", args[0], ...args.slice(1));
+  };
+  return pl;
 }
 
 function generateUUID(id) {
-  const crypto = require("crypto");
   const hash = crypto.createHash("sha256").update(id).digest("hex");
   return [
-    hash.substring(0, 8), hash.substring(8, 12),
+    hash.substring(0, 8),
+    hash.substring(8, 12),
     "5" + hash.substring(12, 15),
-    ((parseInt(hash.substring(15, 17), 16) & 0x3f) | 0x80).toString(16) + hash.substring(17, 19),
+    ((parseInt(hash.substring(15, 17), 16) & 0x3f) | 0x80).toString(16) +
+      hash.substring(17, 19),
     hash.substring(19, 31),
   ].join("-");
 }
 
 const CATEGORY_TO_DOIMUS_TYPE = {
-  dj: "light", dsd: "light", xdd: "light", fwd: "light",
-  dc: "light", dd: "light", gyd: "light", tyndj: "light", sxd: "light",
-  tgq: "light", tgkg: "light",
-  dlq: "switch", kg: "switch", tdq: "switch", qjdcz: "switch", szjqr: "switch",
-  cz: "outlet", pc: "outlet", wkcz: "outlet",
-  wxkg: "switch", cjkg: "switch",
+  dj: "light",
+  dsd: "light",
+  xdd: "light",
+  fwd: "light",
+  dc: "light",
+  dd: "light",
+  gyd: "light",
+  tyndj: "light",
+  sxd: "light",
+  tgq: "light",
+  tgkg: "light",
+  dlq: "switch",
+  kg: "switch",
+  tdq: "switch",
+  qjdcz: "switch",
+  szjqr: "switch",
+  cz: "outlet",
+  pc: "outlet",
+  wkcz: "outlet",
+  wxkg: "switch",
+  cjkg: "switch",
   bzyd: "light",
-  kt: "switch", ktkzq: "switch", qtwk: "switch",
-  qn: "thermostat", kj: "fan", xxj: "switch",
+  kt: "switch",
+  ktkzq: "switch",
+  qtwk: "switch",
+  qn: "thermostat",
+  kj: "fan",
+  xxj: "switch",
   ckmkzq: "switch",
-  cl: "blind", clkg: "blind",
+  cl: "blind",
+  clkg: "blind",
   mc: "blind",
-  wk: "thermostat", wkf: "thermostat",
-  ggq: "switch", sfkzq: "switch",
-  jsq: "switch", cs: "switch",
-  fs: "fan", fsd: "fan", fskg: "fan",
+  wk: "thermostat",
+  wkf: "thermostat",
+  ggq: "switch",
+  sfkzq: "switch",
+  jsq: "switch",
+  cs: "switch",
+  fs: "fan",
+  fsd: "fan",
+  fskg: "fan",
   yyj: "switch",
   sp: "camera",
-  ywbj: "sensor", mcs: "sensor", zd: "sensor",
-  rqbj: "sensor", jwbj: "sensor", sj: "sensor",
-  cobj: "sensor", cocgq: "sensor",
-  co2bj: "sensor", co2cgq: "sensor",
-  wsdcg: "sensor", ldcg: "sensor", ldzd: "sensor",
-  tx: "sensor", hps: "sensor", pir: "sensor",
-  mh: "sensor", pm: "sensor", pm25: "sensor",
-  dyl: "sensor", sf: "sensor",
+  ywbj: "sensor",
+  mcs: "sensor",
+  zd: "sensor",
+  rqbj: "sensor",
+  jwbj: "sensor",
+  sj: "sensor",
+  cobj: "sensor",
+  cocgq: "sensor",
+  co2bj: "sensor",
+  co2cgq: "sensor",
+  wsdcg: "sensor",
+  ldcg: "sensor",
+  ldzd: "sensor",
+  tx: "sensor",
+  hps: "sensor",
+  pir: "sensor",
+  mh: "sensor",
+  pm: "sensor",
+  pm25: "sensor",
+  dyl: "sensor",
+  sf: "sensor",
   cw: "sensor",
-  mk: "lock", ms: "lock",
+  mk: "lock",
+  ms: "lock",
   sgbj: "sensor",
   sos: "sensor",
-  doorbell: "doorbell", wxml: "doorbell",
+  doorbell: "doorbell",
+  wxml: "doorbell",
   wxky: "switch",
   cwwsq: "switch",
   msp: "switch",
@@ -76,7 +142,11 @@ const CATEGORY_TO_DOIMUS_TYPE = {
 function applySchemaOverride(device, options) {
   if (!options.deviceOverrides) return;
   const deviceConfig = options.deviceOverrides.find(
-    (c) => c.id === device.id || c.id === device.uuid || c.id === device.product_id || c.id === "global"
+    (c) =>
+      c.id === device.id ||
+      c.id === device.uuid ||
+      c.id === device.product_id ||
+      c.id === "global",
   );
   if (!deviceConfig || !deviceConfig.schema) return;
 
@@ -107,26 +177,58 @@ function applySchemaOverride(device, options) {
   }
 }
 
+function tuyaTempToKelvin(tuyaValue, schemaProp) {
+  const min = schemaProp?.min ?? 0;
+  const max = schemaProp?.max ?? 1000;
+  const scale = schemaProp?.scale != null ? Math.pow(10, schemaProp.scale) : 1;
+  const tuyaMin = min / scale;
+  const tuyaMax = max / scale;
+  const t = Math.max(tuyaMin, Math.min(tuyaMax, Number(tuyaValue)));
+  const normalized = (t - tuyaMin) / (tuyaMax - tuyaMin);
+  return Math.round(2700 + normalized * (6500 - 2700));
+}
+
+function kelvinToTuyaTemp(kelvin, schemaProp) {
+  const min = schemaProp?.min ?? 0;
+  const max = schemaProp?.max ?? 1000;
+  const scale = schemaProp?.scale != null ? Math.pow(10, schemaProp.scale) : 1;
+  const tuyaMin = min / scale;
+  const tuyaMax = max / scale;
+  const normalized = (kelvin - 2700) / (6500 - 2700);
+  return Math.round(tuyaMin + Math.max(0, Math.min(1, normalized)) * (tuyaMax - tuyaMin));
+}
+
 function mapTuyaStatusToDoimusState(device, statusList, options) {
   const state = {};
-  const schemaDeviceConfig = options && options.deviceOverrides
-    ? options.deviceOverrides.find(
-        (c) => c.id === device.id || c.id === device.uuid || c.id === device.product_id || c.id === "global"
-      )
-    : undefined;
+  const schemaDeviceConfig =
+    options && options.deviceOverrides
+      ? options.deviceOverrides.find(
+          (c) =>
+            c.id === device.id ||
+            c.id === device.uuid ||
+            c.id === device.product_id ||
+            c.id === "global",
+        )
+      : undefined;
 
   for (const s of statusList || []) {
     let code = s.code;
     let value = s.value;
 
     if (schemaDeviceConfig && schemaDeviceConfig.schema) {
-      const schemaOverride = schemaDeviceConfig.schema.find((o) => o.code === code);
+      const schemaOverride = schemaDeviceConfig.schema.find(
+        (o) => o.code === code,
+      );
       if (schemaOverride) {
         if (schemaOverride.hidden) continue;
         if (schemaOverride.newCode) code = schemaOverride.newCode;
         if (schemaOverride.onGet) {
           try {
-            const fn = new Function("device", "value", `"use strict"; return (${schemaOverride.onGet})`);
+            const fn = new Function(
+              "device",
+              "value",
+              `"use strict"; return (${schemaOverride.onGet})`,
+            );
             value = fn(device, value);
           } catch (_) {}
         }
@@ -134,17 +236,27 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     }
 
     if (code === "switch" || code === "switch_1") {
-      state.on = value === true || value === "true" || value === 1 || value === "1";
-    } else if (code === "bright_value" || code === "bright_value_v2" || code === "bright_value_1") {
+      state.on =
+        value === true || value === "true" || value === 1 || value === "1";
+    } else if (
+      code === "bright_value" ||
+      code === "bright_value_v2" ||
+      code === "bright_value_1"
+    ) {
       // Tuya bright_value is 0–1000; normalise to 0–100 for Doimus
-      state.brightness = Math.min(100, Math.max(0, Math.round((Number(value) / 1000) * 100)));
+      state.brightness = Math.min(
+        100,
+        Math.max(0, Math.round((Number(value) / 1000) * 100)),
+      );
       state._brightValue = Number(value);
     } else if (code === "temp_value" || code === "temp_value_v2") {
-      state.color_temp = Number(value);
+      const tempSchema = device.schema?.find((s) => s.code === code);
+      state.color_temp = tuyaTempToKelvin(value, tempSchema?.property);
     } else if (code === "colour_data" || code === "colour_data_v2") {
       if (typeof value === "object" && value !== null) {
         if (value.hue !== undefined) state.hue = Number(value.hue);
-        if (value.saturation !== undefined) state.saturation = Number(value.saturation);
+        if (value.saturation !== undefined)
+          state.saturation = Number(value.saturation);
         if (value.value !== undefined) {
           const scaled = Math.round((Number(value.value) / 1000) * 100);
           state.brightness = Math.min(100, Math.max(0, scaled));
@@ -155,12 +267,18 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.rotation_speed = Number(value);
     } else if (code === "wind_speed") {
       state.rotation_speed = Number(value);
-    } else if (code === "lock_state" || code === "lock_sta" || code === "lock_motor_state") {
-      state.locked = value === "locked" || value === true || value === 1 || value === "1";
+    } else if (
+      code === "lock_state" ||
+      code === "lock_sta" ||
+      code === "lock_motor_state"
+    ) {
+      state.locked =
+        value === "locked" || value === true || value === 1 || value === "1";
     } else if (code === "doorbell_state" || code === "doorcontact") {
       state.doorbell = value === true || value === "true" || value === 1;
     } else if (code === "contact_state" || code === "doorcontact_state") {
-      state.contact = value === "open" || value === true || value === 1 || value === "1";
+      state.contact =
+        value === "open" || value === true || value === 1 || value === "1";
     } else if (code === "va_temperature") {
       state.temperature = Number(value);
     } else if (code === "va_humidity") {
@@ -181,7 +299,11 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.gas = value === true || value === 1 || value === "alarm";
     } else if (code === "battery_percentage" || code === "battery_state") {
       state.battery = Number(value);
-    } else if (code === "percent_control" || code === "control_back" || code === "position") {
+    } else if (
+      code === "percent_control" ||
+      code === "control_back" ||
+      code === "position"
+    ) {
       state.position = Number(value);
     } else if (code === "work_state" || code === "mode") {
       state.mode = String(value);
@@ -221,65 +343,146 @@ function determineCapabilities(device) {
 
   switch (doimusType) {
     case "light":
-      if (device.schema && device.schema.some((s) => s.code.startsWith("bright"))) {
+      if (
+        device.schema &&
+        device.schema.some((s) => s.code.startsWith("bright"))
+      ) {
         capabilities.add("brightness");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("temp_value"))) {
+      if (
+        device.schema &&
+        device.schema.some((s) => s.code.startsWith("temp_value"))
+      ) {
         capabilities.add("color_temp");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("colour_data"))) {
+      if (
+        device.schema &&
+        device.schema.some((s) => s.code.startsWith("colour_data"))
+      ) {
         capabilities.add("hue");
         capabilities.add("saturation");
         capabilities.add("brightness");
       }
       break;
     case "fan":
-      if (device.schema && device.schema.some((s) => s.code.startsWith("fan_speed") || s.code.startsWith("wind_speed"))) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code.startsWith("fan_speed") || s.code.startsWith("wind_speed"),
+        )
+      ) {
         capabilities.add("rotation_speed");
       }
       break;
     case "blind":
-      if (device.schema && device.schema.some((s) => s.code.startsWith("percent") || s.code === "control_back" || s.code === "position")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code.startsWith("percent") ||
+            s.code === "control_back" ||
+            s.code === "position",
+        )
+      ) {
         capabilities.add("position");
       }
       break;
     case "lock":
-      if (device.schema && device.schema.some((s) => s.code.startsWith("lock"))) {
+      if (
+        device.schema &&
+        device.schema.some((s) => s.code.startsWith("lock"))
+      ) {
         capabilities.add("locked");
       }
       break;
     case "thermostat":
-      if (device.schema && device.schema.some((s) => s.code.startsWith("temp_set") || s.code === "target_temp")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code.startsWith("temp_set") || s.code === "target_temp",
+        )
+      ) {
         capabilities.add("target_temp");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("temp_current") || s.code === "temperature" || s.code === "va_temperature")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code.startsWith("temp_current") ||
+            s.code === "temperature" ||
+            s.code === "va_temperature",
+        )
+      ) {
         capabilities.add("temperature");
       }
       break;
     case "sensor":
       capabilities.delete("on");
-      if (device.schema && device.schema.some((s) => s.code.startsWith("va_temperature") || s.code === "temperature" || s.code === "temp_current")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code.startsWith("va_temperature") ||
+            s.code === "temperature" ||
+            s.code === "temp_current",
+        )
+      ) {
         capabilities.add("temperature");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("va_humidity") || s.code === "humidity" || s.code === "humidity_value")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code.startsWith("va_humidity") ||
+            s.code === "humidity" ||
+            s.code === "humidity_value",
+        )
+      ) {
         capabilities.add("humidity");
       }
-      if (device.schema && device.schema.some((s) => s.code === "pir" || s.code === "motion_sensor")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "pir" || s.code === "motion_sensor",
+        )
+      ) {
         capabilities.add("motion");
       }
-      if (device.schema && device.schema.some((s) => s.code === "contact_state" || s.code === "doorcontact_state")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "contact_state" || s.code === "doorcontact_state",
+        )
+      ) {
         capabilities.add("contact");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("battery"))) {
+      if (
+        device.schema &&
+        device.schema.some((s) => s.code.startsWith("battery"))
+      ) {
         capabilities.add("battery");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("smoke"))) {
+      if (
+        device.schema &&
+        device.schema.some((s) => s.code.startsWith("smoke"))
+      ) {
         capabilities.add("smoke");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("gas") || s.code === "co_gas_sensor")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code.startsWith("gas") || s.code === "co_gas_sensor",
+        )
+      ) {
         capabilities.add("gas");
       }
-      if (device.schema && device.schema.some((s) => s.code.startsWith("cur_") || s.code === "electricity")) {
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code.startsWith("cur_") || s.code === "electricity",
+        )
+      ) {
         capabilities.add("current");
         capabilities.add("power");
         capabilities.add("voltage");
@@ -288,8 +491,15 @@ function determineCapabilities(device) {
       break;
     case "outlet":
     case "switch":
-      if (device.schema && device.schema.some((s) => s.code.startsWith("cur_"))) {
-        if (device.schema.some((s) => s.code === "cur_current" || s.code === "electricity")) {
+      if (
+        device.schema &&
+        device.schema.some((s) => s.code.startsWith("cur_"))
+      ) {
+        if (
+          device.schema.some(
+            (s) => s.code === "cur_current" || s.code === "electricity",
+          )
+        ) {
           capabilities.add("current");
         }
         if (device.schema.some((s) => s.code === "cur_power")) {
@@ -298,7 +508,12 @@ function determineCapabilities(device) {
         if (device.schema.some((s) => s.code === "cur_voltage")) {
           capabilities.add("voltage");
         }
-        if (device.schema.some((s) => s.code === "meter_power" || s.code === "total_forward_energy")) {
+        if (
+          device.schema.some(
+            (s) =>
+              s.code === "meter_power" || s.code === "total_forward_energy",
+          )
+        ) {
           capabilities.add("energy");
         }
       }
@@ -313,13 +528,19 @@ function determineCapabilities(device) {
   }
 
   if (device.schema) {
-    if (device.schema.some((s) => s.code === "work_state" || s.code === "mode")) {
+    if (
+      device.schema.some((s) => s.code === "work_state" || s.code === "mode")
+    ) {
       capabilities.add("mode");
     }
     if (device.schema.some((s) => s.code === "child_lock")) {
       capabilities.add("child_lock");
     }
-    if (device.schema.some((s) => s.code === "countdown" || s.code === "count_down")) {
+    if (
+      device.schema.some(
+        (s) => s.code === "countdown" || s.code === "count_down",
+      )
+    ) {
       capabilities.add("countdown");
     }
   }
@@ -341,8 +562,12 @@ function getDoimusType(device, options) {
 
 function getDeviceConfig(device, options) {
   if (!options.deviceOverrides) return undefined;
-  const deviceConfig = options.deviceOverrides.find((c) => c.id === device.id || c.id === device.uuid);
-  const productConfig = options.deviceOverrides.find((c) => c.id === device.product_id);
+  const deviceConfig = options.deviceOverrides.find(
+    (c) => c.id === device.id || c.id === device.uuid,
+  );
+  const productConfig = options.deviceOverrides.find(
+    (c) => c.id === device.product_id,
+  );
   const globalConfig = options.deviceOverrides.find((c) => c.id === "global");
   return deviceConfig || productConfig || globalConfig;
 }
@@ -351,7 +576,7 @@ function getDeviceSchemaConfig(device, code, options) {
   const deviceConfig = getDeviceConfig(device, options);
   if (!deviceConfig || !deviceConfig.schema) return undefined;
   const schemaConfig = deviceConfig.schema.find((item) =>
-    item.newCode ? item.newCode === code : item.code === code
+    item.newCode ? item.newCode === code : item.code === code,
   );
   return schemaConfig;
 }
@@ -359,8 +584,13 @@ function getDeviceSchemaConfig(device, code, options) {
 function buildCommand(commandSchemas, code, value) {
   const schema = commandSchemas.find((s) => s.code === code);
   if (schema) {
-    if (schema.property && schema.property.min !== undefined && schema.property.max !== undefined) {
-      const scale = schema.property.scale != null ? Math.pow(10, schema.property.scale) : 1;
+    if (
+      schema.property &&
+      schema.property.min !== undefined &&
+      schema.property.max !== undefined
+    ) {
+      const scale =
+        schema.property.scale != null ? Math.pow(10, schema.property.scale) : 1;
       if (typeof value === "number") {
         const realMin = schema.property.min / scale;
         const realMax = schema.property.max / scale;
@@ -371,41 +601,50 @@ function buildCommand(commandSchemas, code, value) {
       } else if (schema.type === "Integer") {
         return { code, value: Math.round(Number(value) * scale) };
       } else if (schema.type === "Boolean") {
-        return { code, value: value === true || value === 1 || value === "true" };
+        return {
+          code,
+          value: value === true || value === 1 || value === "true",
+        };
       }
     }
   }
   return { code, value };
 }
 
-function sendCommandsDebounced(tuyaDevice, commands, deviceManager, log) {
+function createPluginInstance() {
+  return {
+    debounceMap: new Map(),
+    lastKnownState: new Map(),
+    deviceManager: null,
+    doimusDeviceMap: new Map(),
+    apiRef: null,
+  };
+}
+
+// Module-level reference to the current plugin context so stop() can access it.
+let _ctx = null;
+
+function sendCommandsDebounced(tuyaDevice, commands, ctx, log) {
   const key = tuyaDevice.id;
-  const debounced = debounceMap.get(key) || debounce(
-    async (cmds) => {
+  const debounced =
+    ctx.debounceMap.get(key) ||
+    debounce(async (cmds) => {
       try {
-        await deviceManager.sendCommands(tuyaDevice.id, cmds);
+        await ctx.deviceManager.sendCommands(tuyaDevice.id, cmds);
       } catch (e) {
         log("error", `Command failed for ${tuyaDevice.id}: ${e.message}`);
-        if (lastKnownState.has(tuyaDevice.id)) {
-          const prevState = lastKnownState.get(tuyaDevice.id);
-          const doimusID = doimusDeviceMap.get(tuyaDevice.id);
-          if (doimusID && apiRef) {
-            apiRef.updateDeviceState(doimusID, prevState);
+        if (ctx.lastKnownState.has(tuyaDevice.id)) {
+          const prevState = ctx.lastKnownState.get(tuyaDevice.id);
+          const doimusID = ctx.doimusDeviceMap.get(tuyaDevice.id);
+          if (doimusID && ctx.apiRef) {
+            ctx.apiRef.updateDeviceState(doimusID, prevState);
           }
         }
       }
-    },
-    50
-  );
-  debounceMap.set(key, debounced);
+    }, 50);
+  ctx.debounceMap.set(key, debounced);
   debounced(commands);
 }
-
-let debounceMap = new Map();
-let lastKnownState = new Map();
-let deviceManager = null;
-let doimusDeviceMap = new Map();
-let apiRef = null;
 
 function validateConfig(options, log) {
   if (options.deviceOverrides) {
@@ -419,7 +658,10 @@ function validateConfig(options, log) {
     }
     for (const [id, items] of idMap.entries()) {
       if (items.length > 1) {
-        log("error", `"deviceOverrides" conflict: "id" "${id}" must be unique.`);
+        log(
+          "error",
+          `"deviceOverrides" conflict: "id" "${id}" must be unique.`,
+        );
         return false;
       }
     }
@@ -447,9 +689,18 @@ function validateConfig(options, log) {
 
 async function initCustomProject(api, options, log) {
   const { endpoint, accessId, accessKey, debug, debugLevel } = options;
-  const debugMode = debug && ((debugLevel || "").length > 0 ? debugLevel.includes("api") : true);
+  const debugMode =
+    debug &&
+    ((debugLevel || "").length > 0 ? debugLevel.includes("api") : true);
 
-  const openAPI = new TuyaOpenAPI(endpoint, accessId, accessKey, log, "en", debugMode);
+  const openAPI = new TuyaOpenAPI(
+    endpoint,
+    accessId,
+    accessKey,
+    log,
+    "en",
+    debugMode,
+  );
   const dm = new TuyaCustomDeviceManager(openAPI, debugMode);
 
   log("info", "Get token.");
@@ -471,7 +722,10 @@ async function initCustomProject(api, options, log) {
     log("info", `Creating default user "${DEFAULT_USER}".`);
     res = await openAPI.customCreateUser(DEFAULT_USER, DEFAULT_USER);
     if (res.success === false) {
-      log("error", `Create default user failed. code=${res.code}, msg=${res.msg}`);
+      log(
+        "error",
+        `Create default user failed. code=${res.code}, msg=${res.msg}`,
+      );
       return null;
     }
   }
@@ -480,7 +734,10 @@ async function initCustomProject(api, options, log) {
   log("info", "Fetching asset list.");
   res = await dm.getAssetList();
   if (res.success === false) {
-    log("error", `Fetching asset list failed. code=${res.code}, msg=${res.msg}`);
+    log(
+      "error",
+      `Fetching asset list failed. code=${res.code}, msg=${res.msg}`,
+    );
     return null;
   }
 
@@ -493,7 +750,10 @@ async function initCustomProject(api, options, log) {
   log("info", "Authorize asset list.");
   res = await dm.authorizeAssetList(uid, assetIDList, true);
   if (res.success === false) {
-    log("error", `Authorize asset list failed. code=${res.code}, msg=${res.msg}`);
+    log(
+      "error",
+      `Authorize asset list failed. code=${res.code}, msg=${res.msg}`,
+    );
     return null;
   }
 
@@ -516,14 +776,34 @@ async function initCustomProject(api, options, log) {
 }
 
 async function initHomeProject(api, options, log) {
-  const { accessId, accessKey, countryCode, username, password, appSchema, endpoint, debug, debugLevel } = options;
-  const debugMode = debug && ((debugLevel || "").length > 0 ? debugLevel.includes("api") : true);
+  const {
+    accessId,
+    accessKey,
+    countryCode,
+    username,
+    password,
+    appSchema,
+    endpoint,
+    debug,
+    debugLevel,
+  } = options;
+  const debugMode =
+    debug &&
+    ((debugLevel || "").length > 0 ? debugLevel.includes("api") : true);
 
-  const resolvedEndpoint = endpoint && endpoint.length > 0
-    ? endpoint
-    : TuyaOpenAPI.getDefaultEndpoint(countryCode);
+  const resolvedEndpoint =
+    endpoint && endpoint.length > 0
+      ? endpoint
+      : TuyaOpenAPI.getDefaultEndpoint(countryCode);
 
-  const openAPI = new TuyaOpenAPI(resolvedEndpoint, accessId, accessKey, log, "en", debugMode);
+  const openAPI = new TuyaOpenAPI(
+    resolvedEndpoint,
+    accessId,
+    accessKey,
+    log,
+    "en",
+    debugMode,
+  );
   const dm = new TuyaHomeDeviceManager(openAPI, debugMode);
 
   log("info", "Logging in to Tuya Cloud.");
@@ -597,7 +877,7 @@ async function persistDeviceList(api, dm, uid, log) {
   } catch (_) {}
 }
 
-async function registerDevicesWithDoimus(api, dm, options) {
+async function registerDevicesWithDoimus(api, dm, options, ctx) {
   const devices = dm.devices;
   if (!devices || devices.length === 0) {
     api.log("warn", "No devices found.");
@@ -613,11 +893,25 @@ async function registerDevicesWithDoimus(api, dm, options) {
 
     const doimusID = generateUUID(device.id);
     const capabilities = determineCapabilities(device);
-    const initialState = mapTuyaStatusToDoimusState(device, device.status, options);
+    const initialState = mapTuyaStatusToDoimusState(
+      device,
+      device.status,
+      options,
+    );
 
-    const tempSetSchema = device.schema.find((s) => s.code === "temp_set" || s.code === "target_temp");
-    if (tempSetSchema && tempSetSchema.property && tempSetSchema.property.min !== undefined && tempSetSchema.property.max !== undefined) {
-      const scale = tempSetSchema.property.scale != null ? Math.pow(10, tempSetSchema.property.scale) : 1;
+    const tempSetSchema = device.schema.find(
+      (s) => s.code === "temp_set" || s.code === "target_temp",
+    );
+    if (
+      tempSetSchema &&
+      tempSetSchema.property &&
+      tempSetSchema.property.min !== undefined &&
+      tempSetSchema.property.max !== undefined
+    ) {
+      const scale =
+        tempSetSchema.property.scale != null
+          ? Math.pow(10, tempSetSchema.property.scale)
+          : 1;
       initialState.min_target_temp = tempSetSchema.property.min / scale;
       initialState.max_target_temp = tempSetSchema.property.max / scale;
     }
@@ -630,9 +924,9 @@ async function registerDevicesWithDoimus(api, dm, options) {
       state: initialState,
     });
 
-    doimusDeviceMap.set(doimusID, device.id);
-    doimusDeviceMap.set(device.id, doimusID);
-    lastKnownState.set(device.id, initialState);
+    ctx.doimusDeviceMap.set(doimusID, device.id);
+    ctx.doimusDeviceMap.set(device.id, doimusID);
+    ctx.lastKnownState.set(device.id, initialState);
   }
 
   api.log("info", "Device registration complete.");
@@ -640,7 +934,9 @@ async function registerDevicesWithDoimus(api, dm, options) {
 
 module.exports = {
   async start(cfg, api) {
-    apiRef = api;
+    const ctx = createPluginInstance();
+    ctx.apiRef = api;
+    _ctx = ctx;
     const options = (cfg && cfg.options) || {};
     const log = createLogger(api, "TuyaPlatform");
 
@@ -682,13 +978,13 @@ module.exports = {
     }
 
     const { dm, uid } = result;
-    deviceManager = dm;
+    ctx.deviceManager = dm;
 
     await persistDeviceList(api, dm, uid, log);
-    await registerDevicesWithDoimus(api, dm, options);
+    await registerDevicesWithDoimus(api, dm, options, ctx);
 
     api.onCommand(async (deviceID, key, value) => {
-      const tuyaID = doimusDeviceMap.get(deviceID);
+      const tuyaID = ctx.doimusDeviceMap.get(deviceID);
       if (!tuyaID) return;
       try {
         const tuyaDevice = dm.getDevice(tuyaID);
@@ -697,7 +993,12 @@ module.exports = {
         let commands = [];
 
         if (key === "on") {
-          const onSchema = tuyaDevice.schema.find((s) => s.code === "switch_1" || s.code === "switch_fan" || s.code === "fan_switch");
+          const onSchema = tuyaDevice.schema.find(
+            (s) =>
+              s.code === "switch_1" ||
+              s.code === "switch_fan" ||
+              s.code === "fan_switch",
+          );
           if (onSchema) {
             commands.push({ code: onSchema.code, value: value === true });
           } else if (tuyaDevice.schema.some((s) => s.code === "switch")) {
@@ -705,39 +1006,72 @@ module.exports = {
           } else if (tuyaDevice.schema.some((s) => s.code === "light")) {
             commands.push({ code: "light", value: value === true });
             if (value === true) {
-              const brightSchema = tuyaDevice.schema.find((s) => s.code === "bright_value" || s.code === "bright_value_v2" || s.code === "bright_value_1");
+              const brightSchema = tuyaDevice.schema.find(
+                (s) =>
+                  s.code === "bright_value" ||
+                  s.code === "bright_value_v2" ||
+                  s.code === "bright_value_1",
+              );
               if (brightSchema) {
-                const currentBright = tuyaDevice.status.find((s) => s.code === brightSchema.code);
+                const currentBright = tuyaDevice.status.find(
+                  (s) => s.code === brightSchema.code,
+                );
                 if (currentBright && currentBright.value !== undefined) {
-                  commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, currentBright.value));
+                  commands.push(
+                    buildCommand(
+                      tuyaDevice.schema,
+                      brightSchema.code,
+                      currentBright.value,
+                    ),
+                  );
                 }
               }
             }
           } else if (tuyaDevice.schema.some((s) => s.code === "switch_led")) {
             commands.push({ code: "switch_led", value: value === true });
           } else {
-            const anySwitch = tuyaDevice.schema.find((s) => s.code.startsWith("switch"));
+            const anySwitch = tuyaDevice.schema.find((s) =>
+              s.code.startsWith("switch"),
+            );
             if (anySwitch) {
               commands.push({ code: anySwitch.code, value: value === true });
             }
           }
         } else if (key === "brightness") {
-          const brightSchema = tuyaDevice.schema.find((s) => s.code === "bright_value" || s.code === "bright_value_v2" || s.code === "bright_value_1");
+          const brightSchema = tuyaDevice.schema.find(
+            (s) =>
+              s.code === "bright_value" ||
+              s.code === "bright_value_v2" ||
+              s.code === "bright_value_1",
+          );
           if (brightSchema) {
             // Convert Doimus 0–100 back to Tuya 0–1000 range before sending
             const tuyaBrightness = Math.round((Number(value) / 100) * 1000);
-            commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, tuyaBrightness));
+            commands.push(
+              buildCommand(
+                tuyaDevice.schema,
+                brightSchema.code,
+                tuyaBrightness,
+              ),
+            );
           }
         } else if (key === "color_temp") {
-          const tempSchema = tuyaDevice.schema.find((s) => s.code === "temp_value" || s.code === "temp_value_v2");
+          const tempSchema = tuyaDevice.schema.find(
+            (s) => s.code === "temp_value" || s.code === "temp_value_v2",
+          );
           if (tempSchema) {
-            commands.push(buildCommand(tuyaDevice.schema, tempSchema.code, value));
+            const tuyaValue = kelvinToTuyaTemp(value, tempSchema.property);
+            commands.push({ code: tempSchema.code, value: tuyaValue });
           }
         } else if (key === "hue" || key === "saturation") {
-          const colourSchema = tuyaDevice.schema.find((s) => s.code === "colour_data" || s.code === "colour_data_v2");
+          const colourSchema = tuyaDevice.schema.find(
+            (s) => s.code === "colour_data" || s.code === "colour_data_v2",
+          );
           if (colourSchema) {
             const currentState = tuyaDevice.status;
-            const currentColour = currentState.find((s) => s.code === colourSchema.code);
+            const currentColour = currentState.find(
+              (s) => s.code === colourSchema.code,
+            );
             let colourData = { hue: 0, saturation: 0, value: 1000 };
             if (currentColour && typeof currentColour.value === "object") {
               colourData = { ...colourData, ...currentColour.value };
@@ -747,38 +1081,61 @@ module.exports = {
             commands.push({ code: colourSchema.code, value: colourData });
           }
         } else if (key === "target_temp") {
-          const tempSetSchema = tuyaDevice.schema.find((s) => s.code === "temp_set" || s.code === "target_temp");
+          const tempSetSchema = tuyaDevice.schema.find(
+            (s) => s.code === "temp_set" || s.code === "target_temp",
+          );
           if (tempSetSchema) {
-            commands.push(buildCommand(tuyaDevice.schema, tempSetSchema.code, value));
+            commands.push(
+              buildCommand(tuyaDevice.schema, tempSetSchema.code, value),
+            );
           }
         } else if (key === "locked") {
           commands.push({ code: "lock_state", value: value === true });
         } else if (key === "child_lock") {
-          const childLockSchema = tuyaDevice.schema.find((s) => s.code === "child_lock");
+          const childLockSchema = tuyaDevice.schema.find(
+            (s) => s.code === "child_lock",
+          );
           if (childLockSchema) {
-            commands.push(buildCommand(tuyaDevice.schema, childLockSchema.code, value));
+            commands.push(
+              buildCommand(tuyaDevice.schema, childLockSchema.code, value),
+            );
           }
         } else if (key === "position") {
-          const posSchema = tuyaDevice.schema.find((s) => s.code === "percent_control" || s.code === "control_back" || s.code === "position");
+          const posSchema = tuyaDevice.schema.find(
+            (s) =>
+              s.code === "percent_control" ||
+              s.code === "control_back" ||
+              s.code === "position",
+          );
           if (posSchema) {
-            commands.push(buildCommand(tuyaDevice.schema, posSchema.code, value));
+            commands.push(
+              buildCommand(tuyaDevice.schema, posSchema.code, value),
+            );
           }
         } else if (key === "rotation_speed") {
-          const speedSchema = tuyaDevice.schema.find((s) => s.code.startsWith("fan_speed") || s.code === "wind_speed");
+          const speedSchema = tuyaDevice.schema.find(
+            (s) => s.code.startsWith("fan_speed") || s.code === "wind_speed",
+          );
           if (speedSchema) {
-            commands.push(buildCommand(tuyaDevice.schema, speedSchema.code, value));
+            commands.push(
+              buildCommand(tuyaDevice.schema, speedSchema.code, value),
+            );
           }
         } else if (key === "mode") {
           commands.push({ code: "work_state", value: String(value) });
         } else if (key === "countdown") {
-          const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");
+          const countdownSchema = tuyaDevice.schema.find(
+            (s) => s.code === "countdown" || s.code === "count_down",
+          );
           if (countdownSchema) {
-            commands.push(buildCommand(tuyaDevice.schema, countdownSchema.code, value));
+            commands.push(
+              buildCommand(tuyaDevice.schema, countdownSchema.code, value),
+            );
           }
         }
 
         if (commands.length > 0) {
-          sendCommandsDebounced(tuyaDevice, commands, dm, log);
+          sendCommandsDebounced(tuyaDevice, commands, ctx, log);
         }
       } catch (e) {
         log("error", `Command handler error: ${e.message}`);
@@ -786,25 +1143,31 @@ module.exports = {
     });
 
     dm.on(TuyaDeviceManager.Events.DEVICE_STATUS_UPDATE, (device, status) => {
-      const doimusID = doimusDeviceMap.get(device.id);
+      const doimusID = ctx.doimusDeviceMap.get(device.id);
       if (!doimusID) return;
       const state = mapTuyaStatusToDoimusState(device, status, options);
       if (Object.keys(state).length > 0) {
         state.online = device.online;
         api.updateDeviceState(doimusID, state);
-        lastKnownState.set(device.id, { ...lastKnownState.get(device.id), ...state });
+        ctx.lastKnownState.set(device.id, {
+          ...ctx.lastKnownState.get(device.id),
+          ...state,
+        });
       }
     });
 
     dm.on(TuyaDeviceManager.Events.DEVICE_INFO_UPDATE, (device, info) => {
-      const doimusID = doimusDeviceMap.get(device.id);
+      const doimusID = ctx.doimusDeviceMap.get(device.id);
       if (!doimusID) return;
       const state = { online: device.online };
       if (info && info.name) {
         log("info", `Device renamed: ${device.name}`);
       }
       api.updateDeviceState(doimusID, state);
-      lastKnownState.set(device.id, { ...lastKnownState.get(device.id), ...state });
+      ctx.lastKnownState.set(device.id, {
+        ...ctx.lastKnownState.get(device.id),
+        ...state,
+      });
     });
 
     dm.on(TuyaDeviceManager.Events.DEVICE_ADD, async (device) => {
@@ -819,11 +1182,25 @@ module.exports = {
 
       const doimusID = generateUUID(device.id);
       const capabilities = determineCapabilities(device);
-      const initialState = mapTuyaStatusToDoimusState(device, device.status, options2);
+      const initialState = mapTuyaStatusToDoimusState(
+        device,
+        device.status,
+        options2,
+      );
 
-      const tempSetSchema = device.schema.find((s) => s.code === "temp_set" || s.code === "target_temp");
-      if (tempSetSchema && tempSetSchema.property && tempSetSchema.property.min !== undefined && tempSetSchema.property.max !== undefined) {
-        const scale = tempSetSchema.property.scale != null ? Math.pow(10, tempSetSchema.property.scale) : 1;
+      const tempSetSchema = device.schema.find(
+        (s) => s.code === "temp_set" || s.code === "target_temp",
+      );
+      if (
+        tempSetSchema &&
+        tempSetSchema.property &&
+        tempSetSchema.property.min !== undefined &&
+        tempSetSchema.property.max !== undefined
+      ) {
+        const scale =
+          tempSetSchema.property.scale != null
+            ? Math.pow(10, tempSetSchema.property.scale)
+            : 1;
         initialState.min_target_temp = tempSetSchema.property.min / scale;
         initialState.max_target_temp = tempSetSchema.property.max / scale;
       }
@@ -836,34 +1213,39 @@ module.exports = {
         state: initialState,
       });
 
-      doimusDeviceMap.set(doimusID, device.id);
-      doimusDeviceMap.set(device.id, doimusID);
-      lastKnownState.set(device.id, initialState);
+      ctx.doimusDeviceMap.set(doimusID, device.id);
+      ctx.doimusDeviceMap.set(device.id, doimusID);
+      ctx.lastKnownState.set(device.id, initialState);
     });
 
     dm.on(TuyaDeviceManager.Events.DEVICE_DELETE, (deviceID) => {
-      const doimusID = doimusDeviceMap.get(deviceID);
+      const doimusID = ctx.doimusDeviceMap.get(deviceID);
       if (!doimusID) return;
       log("info", `Device removed: ${deviceID}`);
-      doimusDeviceMap.delete(doimusID);
-      doimusDeviceMap.delete(deviceID);
-      lastKnownState.delete(deviceID);
+      ctx.doimusDeviceMap.delete(doimusID);
+      ctx.doimusDeviceMap.delete(deviceID);
+      ctx.lastKnownState.delete(deviceID);
     });
 
     log("info", "Tuya Platform plugin ready.");
   },
 
   stop() {
-    if (deviceManager && deviceManager.mq) {
-      try { deviceManager.mq.stop(); } catch (_) {}
+    if (_ctx) {
+      if (_ctx.deviceManager && _ctx.deviceManager.mq) {
+        try {
+          _ctx.deviceManager.mq.stop();
+        } catch (_) {}
+      }
+      for (const [, debounced] of _ctx.debounceMap.entries()) {
+        debounced.clear();
+      }
+      _ctx.debounceMap.clear();
+      _ctx.lastKnownState.clear();
+      _ctx.deviceManager = null;
+      _ctx.doimusDeviceMap.clear();
+      _ctx.apiRef = null;
+      _ctx = null;
     }
-    for (const [, debounced] of debounceMap.entries()) {
-      debounced.clear();
-    }
-    debounceMap = new Map();
-    lastKnownState = new Map();
-    deviceManager = null;
-    doimusDeviceMap = new Map();
-    apiRef = null;
   },
 };

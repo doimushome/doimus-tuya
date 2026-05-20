@@ -24,7 +24,7 @@ class TuyaDeviceManager extends EventEmitter {
     this.devices = [];
     const log = this.api.log;
     this.log = new PrefixLogger(log, "TuyaDeviceManager", debug);
-    this.mq = new TuyaOpenMQ(api, log);
+    this.mq = new TuyaOpenMQ(api, this.log);
     this.mq.addMessageListener(this.onMQTTMessage.bind(this));
   }
 
@@ -60,16 +60,26 @@ class TuyaDeviceManager extends EventEmitter {
   async getDeviceSchema(deviceID) {
     const res = await this.api.get(`/v1.0/devices/${deviceID}/specifications`);
     if (res.success === false) {
-      this.log.warn("Get device specification failed. devId = %s, code = %s, msg = %s", deviceID, res.code, res.msg);
+      this.log.warn(
+        "Get device specification failed. devId = %s, code = %s, msg = %s",
+        deviceID,
+        res.code,
+        res.msg,
+      );
       return [];
     }
 
     const schemas = new Map();
-    for (const { code, type, values } of [...(res.result.status || []), ...(res.result.functions || [])]) {
+    for (const { code, type, values } of [
+      ...(res.result.status || []),
+      ...(res.result.functions || []),
+    ]) {
       if (schemas[code]) continue;
 
-      const read = (res.result.status || []).find((s) => s.code === code) !== undefined;
-      const write = (res.result.functions || []).find((s) => s.code === code) !== undefined;
+      const read =
+        (res.result.status || []).find((s) => s.code === code) !== undefined;
+      const write =
+        (res.result.functions || []).find((s) => s.code === code) !== undefined;
       let mode = "rw";
       if (read && write) mode = "rw";
       else if (read && !write) mode = "ro";
@@ -89,15 +99,21 @@ class TuyaDeviceManager extends EventEmitter {
   }
 
   async getInfraredKeys(infraredID, remoteID) {
-    return this.api.get(`/v2.0/infrareds/${infraredID}/remotes/${remoteID}/keys`);
+    return this.api.get(
+      `/v2.0/infrareds/${infraredID}/remotes/${remoteID}/keys`,
+    );
   }
 
   async getInfraredACStatus(infraredID, remoteID) {
-    return this.api.get(`/v2.0/infrareds/${infraredID}/remotes/${remoteID}/ac/status`);
+    return this.api.get(
+      `/v2.0/infrareds/${infraredID}/remotes/${remoteID}/ac/status`,
+    );
   }
 
   async getInfraredDIYKeys(infraredID, remoteID) {
-    return this.api.get(`/v2.0/infrareds/${infraredID}/remotes/${remoteID}/learning-codes`);
+    return this.api.get(
+      `/v2.0/infrareds/${infraredID}/remotes/${remoteID}/learning-codes`,
+    );
   }
 
   async updateInfraredRemotes(allDevices) {
@@ -105,7 +121,12 @@ class TuyaDeviceManager extends EventEmitter {
     for (const irDevice of irDevices) {
       const res = await this.getInfraredRemotes(irDevice.id);
       if (!res.success) {
-        this.log.warn("Get infrared remotes failed. deviceId = %d, code = %s, msg = %s", irDevice.id, res.code, res.msg);
+        this.log.warn(
+          "Get infrared remotes failed. deviceId = %d, code = %s, msg = %s",
+          irDevice.id,
+          res.code,
+          res.msg,
+        );
         continue;
       }
 
@@ -118,21 +139,36 @@ class TuyaDeviceManager extends EventEmitter {
 
         const keysRes = await this.getInfraredKeys(irDevice.id, subDevice.id);
         if (!keysRes.success) {
-          this.log.warn("Get infrared remote keys failed. deviceId = %d, code = %s, msg = %s", subDevice.id, keysRes.code, keysRes.msg);
+          this.log.warn(
+            "Get infrared remote keys failed. deviceId = %d, code = %s, msg = %s",
+            subDevice.id,
+            keysRes.code,
+            keysRes.msg,
+          );
           continue;
         }
         subDevice.remote_keys = keysRes.result;
 
         if (subDevice.category === "infrared_ac") {
-          const acRes = await this.getInfraredACStatus(irDevice.id, subDevice.id);
+          const acRes = await this.getInfraredACStatus(
+            irDevice.id,
+            subDevice.id,
+          );
           if (acRes.success) {
-            subDevice.status = Object.entries(acRes.result).map(([key, value]) => ({ code: key, value }));
+            subDevice.status = Object.entries(acRes.result).map(
+              ([key, value]) => ({ code: key, value }),
+            );
           }
         } else if (category_id === 999) {
-          const diyRes = await this.getInfraredDIYKeys(irDevice.id, subDevice.id);
+          const diyRes = await this.getInfraredDIYKeys(
+            irDevice.id,
+            subDevice.id,
+          );
           if (diyRes.success && subDevice.remote_keys) {
             for (const key of subDevice.remote_keys.key_list || []) {
-              const item = (diyRes.result || []).find((i) => i.id === key.key_id && i.key === key.key);
+              const item = (diyRes.result || []).find(
+                (i) => i.id === key.key_id && i.key === key.key,
+              );
               if (item) key.learning_code = item.code;
             }
           }
@@ -141,39 +177,70 @@ class TuyaDeviceManager extends EventEmitter {
     }
   }
 
-  async sendInfraredCommands(infraredID, remoteID, category_id, remote_index, key, key_id) {
-    return this.api.post(`/v2.0/infrareds/${infraredID}/remotes/${remoteID}/raw/command`, {
-      category_id, remote_index, key, key_id,
-    });
+  async sendInfraredCommands(
+    infraredID,
+    remoteID,
+    category_id,
+    remote_index,
+    key,
+    key_id,
+  ) {
+    return this.api.post(
+      `/v2.0/infrareds/${infraredID}/remotes/${remoteID}/raw/command`,
+      {
+        category_id,
+        remote_index,
+        key,
+        key_id,
+      },
+    );
   }
 
   async sendInfraredACCommands(infraredID, remoteID, power, mode, temp, wind) {
     const commands = power === 1 ? { power, mode, temp, wind } : { power };
-    return this.api.post(`/v2.0/infrareds/${infraredID}/air-conditioners/${remoteID}/scenes/command`, commands);
+    return this.api.post(
+      `/v2.0/infrareds/${infraredID}/air-conditioners/${remoteID}/scenes/command`,
+      commands,
+    );
   }
 
   async sendInfraredDIYCommands(infraredID, remoteID, code) {
-    return this.api.post(`/v2.0/infrareds/${infraredID}/remotes/${remoteID}/learning-codes`, { code });
+    return this.api.post(
+      `/v2.0/infrareds/${infraredID}/remotes/${remoteID}/learning-codes`,
+      { code },
+    );
   }
 
   async getLockTemporaryKey(deviceID) {
-    const res = await this.api.post(`/v1.0/smart-lock/devices/${deviceID}/password-ticket`);
+    const res = await this.api.post(
+      `/v1.0/smart-lock/devices/${deviceID}/password-ticket`,
+    );
     if (res.success === false) {
-      this.log.warn("Get Temporary Pass failed. devID = %s, code = %s, msg = %s", deviceID, res.code, res.msg);
+      this.log.warn(
+        "Get Temporary Pass failed. devID = %s, code = %s, msg = %s",
+        deviceID,
+        res.code,
+        res.msg,
+      );
     }
     return res;
   }
 
   async sendLockCommands(deviceID, ticketID, open) {
-    return this.api.post(`/v1.0/smart-lock/devices/${deviceID}/password-free/door-operate`, {
-      device_id: deviceID,
-      ticket_id: ticketID,
-      open,
-    });
+    return this.api.post(
+      `/v1.0/smart-lock/devices/${deviceID}/password-free/door-operate`,
+      {
+        device_id: deviceID,
+        ticket_id: ticketID,
+        open,
+      },
+    );
   }
 
   async sendCommands(deviceID, commands) {
-    const res = await this.api.post(`/v1.0/devices/${deviceID}/commands`, { commands });
+    const res = await this.api.post(`/v1.0/devices/${deviceID}/commands`, {
+      commands,
+    });
     return res.result;
   }
 
@@ -196,7 +263,10 @@ class TuyaDeviceManager extends EventEmitter {
         if (bizCode === "bindUser") {
           const { ownerId } = bizData;
           if (!this.ownerIDs.includes(ownerId)) {
-            this.log.warn("Update devId = %s not included in your ownerIDs. Skip.", devId);
+            this.log.warn(
+              "Update devId = %s not included in your ownerIDs. Skip.",
+              devId,
+            );
             return;
           }
           await new Promise((r) => setTimeout(r, 10000));
@@ -225,7 +295,11 @@ class TuyaDeviceManager extends EventEmitter {
         break;
       }
       default:
-        this.log.warn("Unhandled mqtt message: protocol = %s, message = %o", protocol, message);
+        this.log.warn(
+          "Unhandled mqtt message: protocol = %s, message = %o",
+          protocol,
+          message,
+        );
         break;
     }
   }

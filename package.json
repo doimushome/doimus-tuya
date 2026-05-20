@@ -5,16 +5,12 @@
   "license": "MIT",
   "main": "index.js",
   "doimus": {
-    "plugin": true,
     "type": "native"
   },
   "dependencies": {
     "async-await-retry": "^2.0.1",
-    "color-convert": "^2.0.1",
     "crypto-js": "^4.1.1",
     "debounce": "^1.2.1",
-    "jsonschema": "^1.4.1",
-    "kelvin-to-rgb": "^1.0.2",
     "lodash.isequal": "^4.5.0",
     "mqtt": "^4.2.6",
     "uuid": "^9.0.0"
