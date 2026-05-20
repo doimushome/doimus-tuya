@@ -1,6 +1,6 @@
 {
-  "name": "doimus-tuya-platform",
-  "version": "1.0.0",
+  "name": "doimus-tuya",
+  "version": "0.1.0",
   "description": "Doimus plugin for Tuya/Smart Life devices. Port of @0x5e/homebridge-tuya-platform v1.7.0-beta.58",
   "license": "MIT",
   "main": "index.js",
