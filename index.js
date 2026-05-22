@@ -983,6 +983,28 @@ module.exports = {
     await persistDeviceList(api, dm, uid, log);
     await registerDevicesWithDoimus(api, dm, options, ctx);
 
+    // Periodic MJPEG snapshot for camera devices
+    let snapshotTimer = null;
+    if (result.dm) {
+      const cameraDevices = result.dm.devices.filter((d) => d.category === "sp");
+      if (cameraDevices.length > 0) {
+        log("info", `Starting MJPEG snapshot polling for ${cameraDevices.length} camera(s)`);
+        snapshotTimer = setInterval(async () => {
+          for (const device of cameraDevices) {
+            try {
+              const frame = await result.dm.api.getCameraSnapshot(device.id);
+              if (frame) {
+                const doimusID = ctx.doimusDeviceMap.get(device.id);
+                if (doimusID) api.sendMjpegFrame(doimusID, "main", frame.toString("base64"));
+              }
+            } catch (_) { /* snapshot best-effort */ }
+          }
+        }, 30000);
+        if (snapshotTimer.unref) snapshotTimer.unref();
+      }
+    }
+    ctx._snapshotTimer = snapshotTimer;
+
     api.onCommand(async (deviceID, key, value) => {
       const tuyaID = ctx.doimusDeviceMap.get(deviceID);
       if (!tuyaID) return;
@@ -1232,6 +1254,10 @@ module.exports = {
 
   stop() {
     if (_ctx) {
+      if (_ctx._snapshotTimer) {
+        clearInterval(_ctx._snapshotTimer);
+        _ctx._snapshotTimer = null;
+      }
       if (_ctx.deviceManager && _ctx.deviceManager.mq) {
         try {
           _ctx.deviceManager.mq.stop();

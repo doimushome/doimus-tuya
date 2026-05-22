@@ -298,6 +298,21 @@ class TuyaOpenAPI {
   _isSaltedPassword(password) {
     return Buffer.from(password, "hex").length === 16;
   }
+
+  async getCameraSnapshot(deviceId) {
+    const res = await this.post(`/v1.0/iot-03/devices/${deviceId}/snapshot`);
+    if (res.success && res.result?.url) {
+      return new Promise((resolve, reject) => {
+        https.get(res.result.url, (r) => {
+          const chunks = [];
+          r.on("data", (c) => chunks.push(c));
+          r.on("end", () => resolve(Buffer.concat(chunks)));
+          r.on("error", reject);
+        }).on("error", reject);
+      });
+    }
+    return null;
+  }
 }
 
 TuyaOpenAPI.Endpoints = Endpoints;
