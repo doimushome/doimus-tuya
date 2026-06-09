@@ -710,7 +710,7 @@ async function initCustomProject(api, options, log) {
     return null;
   }
 
-  const DEFAULT_USER = "homebridge";
+  const DEFAULT_USER = "doimus";
   log("info", `Search default user "${DEFAULT_USER}"`);
   res = await openAPI.customGetUserInfo(DEFAULT_USER);
   if (res.success === false) {
