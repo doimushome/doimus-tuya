@@ -195,7 +195,9 @@ function kelvinToTuyaTemp(kelvin, schemaProp) {
   const tuyaMin = min / scale;
   const tuyaMax = max / scale;
   const normalized = (kelvin - 2700) / (6500 - 2700);
-  return Math.round(tuyaMin + Math.max(0, Math.min(1, normalized)) * (tuyaMax - tuyaMin));
+  return Math.round(
+    tuyaMin + Math.max(0, Math.min(1, normalized)) * (tuyaMax - tuyaMin),
+  );
 }
 
 function mapTuyaStatusToDoimusState(device, statusList, options) {
@@ -986,18 +988,25 @@ module.exports = {
     // Periodic MJPEG snapshot for camera devices
     let snapshotTimer = null;
     if (result.dm) {
-      const cameraDevices = result.dm.devices.filter((d) => d.category === "sp");
+      const cameraDevices = result.dm.devices.filter(
+        (d) => d.category === "sp",
+      );
       if (cameraDevices.length > 0) {
-        log("info", `Starting MJPEG snapshot polling for ${cameraDevices.length} camera(s)`);
+        log(
+          "info",
+          `Starting MJPEG snapshot polling for ${cameraDevices.length} camera(s)`,
+        );
         snapshotTimer = setInterval(async () => {
           for (const device of cameraDevices) {
             try {
               const frame = await result.dm.api.getCameraSnapshot(device.id);
               if (frame) {
                 const doimusID = ctx.doimusDeviceMap.get(device.id);
-                if (doimusID) api.sendMjpegFrame(doimusID, "main", frame.toString("base64"));
+                if (doimusID) api.sendMjpegFrame(doimusID, "main", frame);
               }
-            } catch (_) { /* snapshot best-effort */ }
+            } catch (_) {
+              /* snapshot best-effort */
+            }
           }
         }, 30000);
         if (snapshotTimer.unref) snapshotTimer.unref();
