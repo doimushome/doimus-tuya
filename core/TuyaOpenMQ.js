@@ -5,6 +5,8 @@ const CryptoJS = require("crypto-js");
 const { PrefixLogger } = require("../util/Logger");
 
 const GCM_TAG_LENGTH = 16;
+const INITIAL_RETRY_DELAY = 2000; // 2 seconds
+const MAX_RETRY_DELAY = 120000; // 2 minutes
 
 class TuyaOpenMQ {
   constructor(api, log = console, debug = false) {
@@ -15,51 +17,142 @@ class TuyaOpenMQ {
     this.linkId = uuidv4();
     this.consumedQueue = [];
     this.log = new PrefixLogger(log, "TuyaOpenMQ", debug);
+    this.running = false;
+    this.retryDelay = INITIAL_RETRY_DELAY;
+    this.reconnectTimer = null;
+    this.config = null;
   }
 
   start() {
+    this.running = true;
+    this.retryDelay = INITIAL_RETRY_DELAY;
     this._connect();
   }
 
   stop() {
-    if (this.timer) clearTimeout(this.timer);
+    this.running = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     if (this.client) {
       this.client.removeAllListeners();
-      this.client.end();
+      this.client.end(true);
+      this.client = null;
     }
+    this.config = null;
+  }
+
+  _scheduleReconnect() {
+    if (!this.running) return;
+    if (this.reconnectTimer) return; // already scheduled
+
+    this.log.debug("Scheduling MQTT reconnect in %dms", this.retryDelay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      // Exponential backoff with cap
+      this.retryDelay = Math.min(this.retryDelay * 2, MAX_RETRY_DELAY);
+      this._connect();
+    }, this.retryDelay);
   }
 
   async _connect() {
-    this.stop();
-    const res = await this._getMQConfig("mqtt");
-    if (res.success === false) {
-      this.log.warn(
-        "Get MQTT config failed. code = %s, msg = %s",
-        res.code,
-        res.msg,
-      );
+    if (!this.running) return;
+
+    // Clean up previous connection
+    if (this.client) {
+      this.client.removeAllListeners();
+      this.client.end(true);
+      this.client = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    let res;
+    try {
+      res = await this._getMQConfig("mqtt");
+    } catch (err) {
+      this.log.error("Get MQTT config error: %s", err.message);
+      this._scheduleReconnect();
       return;
     }
 
+    if (res.success === false) {
+      this.log.warn(
+        "Get MQTT config failed. code = %s, msg = %s. Will retry.",
+        res.code,
+        res.msg,
+      );
+      this._scheduleReconnect();
+      return;
+    }
+
+    // Config fetched successfully — reset retry delay
+    this.retryDelay = INITIAL_RETRY_DELAY;
+
     const { url, client_id, username, password, expire_time, source_topic } =
       res.result;
-    this.log.debug("Connecting to:", url);
+    this.log.debug("Connecting to MQTT: %s", url);
+
+    // Store config BEFORE connecting so _onMessage can use it immediately
+    this.config = res.result;
 
     const client = mqtt.connect(url, {
       clientId: client_id,
       username,
       password,
+      // Ensure we reconnect aggressively if the TCP drops
+      reconnectPeriod: 5000,
     });
-    client.on("connect", this._onConnect.bind(this));
-    client.on("error", this._onError.bind(this));
-    client.on("end", this._onEnd.bind(this));
-    client.on("message", this._onMessage.bind(this));
-    client.subscribe(source_topic.device);
+
+    client.on("connect", () => {
+      this.log.info("MQTT Connected");
+    });
+
+    client.on("error", (error) => {
+      this.log.error("MQTT Error: %s", error.message);
+      // The mqtt.js lib will try to auto-reconnect, but we also schedule
+      // a full reconnect via _connect in case the built-in mechanism stalls.
+    });
+
+    client.on("close", () => {
+      this.log.info("MQTT Connection closed");
+      // Only schedule a reconnect if not already reconnecting
+      if (!this.client) {
+        this._scheduleReconnect();
+      }
+    });
+
+    // Capture the config password in the closure so each client instance
+    // uses its own credentials for decryption (avoids stale-password issues
+    // if the shared this.config changes before a delayed message arrives).
+    const _mqPassword = password;
+    client.on("message", (topic, payload) => {
+      this._onMessage(topic, payload, _mqPassword);
+    });
+
+    client.subscribe(source_topic.device, (err) => {
+      if (err) {
+        this.log.error("MQTT Subscribe error: %s", err.message);
+      } else {
+        this.log.info("MQTT Subscribed to: %s", source_topic.device);
+      }
+    });
 
     this.client = client;
-    this.config = res.result;
-    this.timer = setTimeout(
-      this._connect.bind(this),
+
+    // Schedule periodic reconnection before MQTT token expires
+    this.reconnectTimer = setTimeout(
+      () => {
+        this.reconnectTimer = null;
+        this.log.debug("MQTT expire_time reached, reconnecting...");
+        if (this.client) {
+          this.client.removeAllListeners();
+          this.client.end(true);
+          this.client = null;
+        }
+        this._connect();
+      },
       (expire_time - 60) * 1000,
     );
   }
@@ -74,44 +167,67 @@ class TuyaOpenMQ {
     });
   }
 
-  _onConnect() {
-    this.log.debug("Connected");
-  }
+  async _onMessage(topic, payload, mqPassword) {
+    try {
+      const parsed = JSON.parse(payload.toString());
+      const { protocol, data, t } = parsed;
 
-  _onError(error) {
-    this.log.error("Error:", error);
-  }
+      if (!data) {
+        this.log.warn("MQTT message has no data field: %s", payload.toString());
+        return;
+      }
 
-  _onEnd() {
-    this.log.debug("End");
-  }
+      // Use the closure-captured password (per-client-instance) first,
+      // fall back to this.config.password for backward compatibility.
+      const password = mqPassword || (this.config ? this.config.password : "");
 
-  async _onMessage(topic, payload) {
-    const { protocol, data, t } = JSON.parse(payload.toString());
-    const messageData = this._decodeMQMessage(data, this.config.password, t);
-    if (!messageData) {
-      this.log.warn("Message decode failed:", payload.toString());
-      return;
-    }
+      const messageData = this._decodeMQMessage(data, password, t);
+      if (!messageData) {
+        this.log.warn(
+          "Message decode returned empty payload for protocol=%s",
+          protocol,
+        );
+        return;
+      }
 
-    const message = JSON.parse(messageData);
-    this.log.debug(
-      "onMessage:\ntopic = %s\nprotocol = %s\nmessage = %s\nt = %s",
-      topic,
-      protocol,
-      JSON.stringify(message, null, 2),
-      t,
-    );
+      const message = JSON.parse(messageData);
+      this.log.info(
+        "MQTT message: topic=%s protocol=%s devId=%s statusCodes=[%s]",
+        topic,
+        protocol,
+        message.devId || "?",
+        (message.status || []).map((s) => s.code).join(","),
+      );
+      this.log.debug(
+        "MQTT message detail:\ntopic = %s\nprotocol = %s\nmessage = %s\nt = %s",
+        topic,
+        protocol,
+        JSON.stringify(message, null, 2),
+        t,
+      );
 
-    this._fixWrongOrderMessage(protocol, message, t);
+      this._fixWrongOrderMessage(protocol, message, t);
 
-    for (const listener of this.messageListeners) {
-      listener(topic, protocol, message);
+      for (const listener of this.messageListeners) {
+        try {
+          listener(topic, protocol, message);
+        } catch (listenerErr) {
+          this.log.error("MQTT listener error: %s", listenerErr.message);
+        }
+      }
+    } catch (err) {
+      this.log.warn(
+        "MQTT message processing error: %s\npayload: %s",
+        err.message,
+        payload.toString().substring(0, 500),
+      );
     }
   }
 
   _fixWrongOrderMessage(protocol, message, t) {
     if (protocol !== 4) return;
+    if (!message || !message.status) return;
+
     const currentPayload = { protocol, message, t };
     const lastPayload = this.consumedQueue[this.consumedQueue.length - 1];
 
@@ -143,9 +259,9 @@ class TuyaOpenMQ {
 
     this.consumedQueue.push(currentPayload);
     while (this.consumedQueue.length > 0) {
-      let t = this.consumedQueue[0].t;
-      if (t > Math.pow(10, 12)) t = t / 1000;
-      if (Date.now() / 1000 > t + 30) {
+      let entryT = this.consumedQueue[0].t;
+      if (entryT > Math.pow(10, 12)) entryT = entryT / 1000;
+      if (Date.now() / 1000 > entryT + 30) {
         this.consumedQueue.shift();
       } else {
         break;

@@ -14,9 +14,27 @@ const Endpoints = {
 };
 
 const DEFAULT_ENDPOINTS = {
-  [Endpoints.AMERICA]: [1, 51, 52, 54, 55, 56, 57, 58, 60, 62, 63, 64, 66, 81, 82, 84, 95, 239, 245, 246, 500, 502, 591, 593, 594, 595, 597, 598, 670, 672, 674, 675, 677, 678, 682, 683, 686, 690, 852, 853, 886, 970, 1721, 1787, 1809, 1829, 1849, 4779, 5999, 35818],
+  [Endpoints.AMERICA]: [
+    1, 51, 52, 54, 55, 56, 57, 58, 60, 62, 63, 64, 66, 81, 82, 84, 95, 239, 245,
+    246, 500, 502, 591, 593, 594, 595, 597, 598, 670, 672, 674, 675, 677, 678,
+    682, 683, 686, 690, 852, 853, 886, 970, 1721, 1787, 1809, 1829, 1849, 4779,
+    5999, 35818,
+  ],
   [Endpoints.CHINA]: [86],
-  [Endpoints.EUROPE]: [7, 20, 27, 30, 31, 32, 33, 34, 36, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 61, 65, 90, 92, 93, 94, 212, 213, 216, 218, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 240, 241, 242, 243, 244, 248, 250, 251, 252, 253, 254, 255, 256, 257, 258, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 291, 297, 298, 299, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 385, 386, 387, 389, 420, 421, 423, 501, 503, 504, 505, 506, 507, 508, 509, 590, 592, 596, 673, 676, 679, 680, 681, 685, 687, 688, 689, 691, 692, 855, 856, 880, 960, 961, 962, 964, 965, 966, 967, 968, 971, 972, 973, 974, 975, 976, 977, 992, 993, 994, 995, 996, 998, 1242, 1246, 1264, 1268, 1284, 1340, 1345, 1441, 1473, 1649, 1664, 1670, 1671, 1684, 1758, 1767, 1784, 1868, 1869, 1876],
+  [Endpoints.EUROPE]: [
+    7, 20, 27, 30, 31, 32, 33, 34, 36, 39, 40, 41, 43, 44, 45, 46, 47, 48, 49,
+    61, 65, 90, 92, 93, 94, 212, 213, 216, 218, 220, 221, 222, 223, 224, 225,
+    226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 240, 241,
+    242, 243, 244, 248, 250, 251, 252, 253, 254, 255, 256, 257, 258, 260, 261,
+    262, 263, 264, 265, 266, 267, 268, 269, 291, 297, 298, 299, 350, 351, 352,
+    353, 354, 355, 356, 357, 358, 359, 370, 371, 372, 373, 374, 375, 376, 377,
+    378, 379, 380, 381, 382, 385, 386, 387, 389, 420, 421, 423, 501, 503, 504,
+    505, 506, 507, 508, 509, 590, 592, 596, 673, 676, 679, 680, 681, 685, 687,
+    688, 689, 691, 692, 855, 856, 880, 960, 961, 962, 964, 965, 966, 967, 968,
+    971, 972, 973, 974, 975, 976, 977, 992, 993, 994, 995, 996, 998, 1242, 1246,
+    1264, 1268, 1284, 1340, 1345, 1441, 1473, 1649, 1664, 1670, 1671, 1684,
+    1758, 1767, 1784, 1868, 1869, 1876,
+  ],
   [Endpoints.INDIA]: [91],
 };
 
@@ -39,13 +57,21 @@ and Authorize the following APIs before using:
 
 const API_ERROR_MESSAGES = {
   1010: "Token expired. Tuya Cloud doesn't support running multiple instances with same tuya account.",
-  28841002: "API subscription expired. Please renew the API subscription at Tuya IoT Platform.",
+  28841002:
+    "API subscription expired. Please renew the API subscription at Tuya IoT Platform.",
   28841101: API_NOT_SUBSCRIBED_ERROR,
   28841105: API_NOT_SUBSCRIBED_ERROR,
 };
 
 class TuyaOpenAPI {
-  constructor(endpoint, accessId, accessKey, log = console, lang = "en", debug = false) {
+  constructor(
+    endpoint,
+    accessId,
+    accessKey,
+    log = console,
+    lang = "en",
+    debug = false,
+  ) {
     this.endpoint = endpoint;
     this.accessId = accessId;
     this.accessKey = accessKey;
@@ -53,8 +79,21 @@ class TuyaOpenAPI {
     this.debug = debug;
     this.assetIDArr = [];
     this.deviceArr = [];
-    this.tokenInfo = { access_token: "", refresh_token: "", uid: "", expire: 0 };
+    this.tokenInfo = {
+      access_token: "",
+      refresh_token: "",
+      uid: "",
+      expire: 0,
+    };
     this.log = new PrefixLogger(log, "TuyaOpenAPI", debug);
+    // Optional handler for full re-login when token refresh fails.
+    // Set via setReloginHandler(). Called with no arguments, must return
+    // { success: true/false }.
+    this._reloginHandler = null;
+  }
+
+  setReloginHandler(handler) {
+    this._reloginHandler = handler;
   }
 
   static getDefaultEndpoint(countryCode) {
@@ -85,7 +124,24 @@ class TuyaOpenAPI {
     this.log.debug("Refreshing access_token");
     const res = await this.get(`/v1.0/token/${this.tokenInfo.refresh_token}`);
     if (res.success === false) {
-      this.log.error("Refresh access_token failed. code = %s, msg = %s", res.code, res.msg);
+      this.log.error(
+        "Refresh access_token failed. code = %s, msg = %s",
+        res.code,
+        res.msg,
+      );
+      if (this._reloginHandler) {
+        this.log.info("Attempting full re-login...");
+        try {
+          const loginRes = await this._reloginHandler();
+          if (loginRes && loginRes.success) {
+            this.log.info("Re-login successful");
+            return;
+          }
+          this.log.error("Re-login failed");
+        } catch (loginErr) {
+          this.log.error("Re-login error: %s", loginErr.message);
+        }
+      }
       return;
     }
     const { access_token, refresh_token, uid, expire_time } = res.result;
@@ -118,15 +174,24 @@ class TuyaOpenAPI {
       password = crypto.createHash("md5").update(password).digest("hex");
     }
     this.log.info("Login to: %s", this.endpoint);
-    this.tokenInfo = { access_token: "", refresh_token: "", uid: "", expire: 0 };
-    const res = await this.post("/v1.0/iot-01/associated-users/actions/authorized-login", {
-      country_code: countryCode,
-      username,
-      password,
-      schema: appSchema,
-    });
+    this.tokenInfo = {
+      access_token: "",
+      refresh_token: "",
+      uid: "",
+      expire: 0,
+    };
+    const res = await this.post(
+      "/v1.0/iot-01/associated-users/actions/authorized-login",
+      {
+        country_code: countryCode,
+        username,
+        password,
+        schema: appSchema,
+      },
+    );
     if (res.success) {
-      const { access_token, refresh_token, uid, expire_time, platform_url } = res.result;
+      const { access_token, refresh_token, uid, expire_time, platform_url } =
+        res.result;
       this.endpoint = platform_url || this.endpoint;
       this.tokenInfo = {
         access_token,
@@ -151,7 +216,12 @@ class TuyaOpenAPI {
   }
 
   async customLogin(username, password) {
-    this.tokenInfo = { access_token: "", refresh_token: "", uid: "", expire: 0 };
+    this.tokenInfo = {
+      access_token: "",
+      refresh_token: "",
+      uid: "",
+      expire: 0,
+    };
     const res = await this.post("/v1.0/iot-03/users/login", {
       username,
       password: crypto.createHash("sha256").update(password).digest("hex"),
@@ -186,7 +256,7 @@ class TuyaOpenAPI {
         this.isTokenManagementAPI(path) ? "" : this.tokenInfo.access_token,
         now,
         nonce,
-        stringToSign
+        stringToSign,
       ),
       sign_method: "HMAC-SHA256",
       access_token: accessToken,
@@ -203,7 +273,7 @@ class TuyaOpenAPI {
       path,
       JSON.stringify(params, null, 2),
       JSON.stringify(headers, null, 2),
-      JSON.stringify(body, null, 2)
+      JSON.stringify(body, null, 2),
     );
 
     if (params) {
@@ -217,7 +287,11 @@ class TuyaOpenAPI {
             { host: new URL(this.endpoint).host, method, headers, path },
             (res) => {
               if (res.statusCode !== 200) {
-                this.log.warn("Status: %d %s", res.statusCode, res.statusMessage);
+                this.log.warn(
+                  "Status: %d %s",
+                  res.statusCode,
+                  res.statusMessage,
+                );
                 return;
               }
               res.setEncoding("utf8");
@@ -228,7 +302,7 @@ class TuyaOpenAPI {
               res.on("end", () => {
                 resolve(JSON.parse(rawData));
               });
-            }
+            },
           );
           if (body) req.write(JSON.stringify(body));
           req.on("error", (e) => {
@@ -238,13 +312,19 @@ class TuyaOpenAPI {
           req.end();
         }),
       undefined,
-      { retriesMax: 10, interval: 100, exponential: true, factor: 2, jitter: 100 }
+      {
+        retriesMax: 10,
+        interval: 100,
+        exponential: true,
+        factor: 2,
+        jitter: 100,
+      },
     );
 
     this.log.debug(
       "Response:\npath = %s\ndata = %s",
       path,
-      JSON.stringify(res, null, 2)
+      JSON.stringify(res, null, 2),
     );
 
     if (res && res.success !== true && API_ERROR_MESSAGES[res.code]) {
@@ -265,8 +345,21 @@ class TuyaOpenAPI {
     return this.request("delete", path, params, null);
   }
 
-  _getSign(accessId, accessKey, accessToken = "", timestamp = 0, nonce, stringToSign) {
-    const message = [accessId, accessToken, timestamp, nonce, stringToSign].join("");
+  _getSign(
+    accessId,
+    accessKey,
+    accessToken = "",
+    timestamp = 0,
+    nonce,
+    stringToSign,
+  ) {
+    const message = [
+      accessId,
+      accessToken,
+      timestamp,
+      nonce,
+      stringToSign,
+    ].join("");
     return crypto
       .createHmac("SHA256", accessKey)
       .update(message)
@@ -277,7 +370,10 @@ class TuyaOpenAPI {
   _getStringToSign(method, path, params, body) {
     const httpMethod = method.toUpperCase();
     const bodyStream = body ? JSON.stringify(body) : "";
-    const contentSHA256 = crypto.createHash("sha256").update(bodyStream).digest("hex");
+    const contentSHA256 = crypto
+      .createHash("sha256")
+      .update(bodyStream)
+      .digest("hex");
     const headers = `client_id:${this.accessId}\n`;
     const url = this._getSignUrl(path, params);
     return [httpMethod, contentSHA256, headers, url].join("\n");
@@ -303,12 +399,14 @@ class TuyaOpenAPI {
     const res = await this.post(`/v1.0/iot-03/devices/${deviceId}/snapshot`);
     if (res.success && res.result?.url) {
       return new Promise((resolve, reject) => {
-        https.get(res.result.url, (r) => {
-          const chunks = [];
-          r.on("data", (c) => chunks.push(c));
-          r.on("end", () => resolve(Buffer.concat(chunks)));
-          r.on("error", reject);
-        }).on("error", reject);
+        https
+          .get(res.result.url, (r) => {
+            const chunks = [];
+            r.on("data", (c) => chunks.push(c));
+            r.on("end", () => resolve(Buffer.concat(chunks)));
+            r.on("error", reject);
+          })
+          .on("error", reject);
       });
     }
     return null;

@@ -249,12 +249,19 @@ class TuyaDeviceManager extends EventEmitter {
       case TuyaMQTTProtocol.DEVICE_STATUS_UPDATE: {
         const { devId, status } = message;
         const device = this.getDevice(devId);
-        if (!device) return;
+        if (!device) {
+          this.log.warn(
+            "MQTT status update for unknown device: devId=%s (not yet fetched?)",
+            devId,
+          );
+          return;
+        }
         for (const item of device.status) {
           const _item = status.find((s) => s.code === item.code);
           if (!_item) continue;
           item.value = _item.value;
         }
+        this.log.debug("MQTT status update: devId=%s status=%o", devId, status);
         this.emit(Events.DEVICE_STATUS_UPDATE, device, status);
         break;
       }

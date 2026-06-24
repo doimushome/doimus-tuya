@@ -515,14 +515,14 @@ function determineCapabilities(device) {
         if (device.schema.some((s) => s.code === "cur_voltage")) {
           capabilities.add("voltage");
         }
-        if (
-          device.schema.some(
-            (s) =>
-              s.code === "meter_power" || s.code === "total_forward_energy",
-          )
-        ) {
-          capabilities.add("energy");
-        }
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "meter_power" || s.code === "total_forward_energy",
+        )
+      ) {
+        capabilities.add("energy");
       }
       break;
     case "camera":
@@ -774,6 +774,12 @@ async function initCustomProject(api, options, log) {
     return null;
   }
 
+  // Set up automatic re-login when token refresh expires (after ~7 days).
+  openAPI.setReloginHandler(async () => {
+    log("info", "Re-logging in default user due to token expiry...");
+    return await openAPI.customLogin(DEFAULT_USER, DEFAULT_USER);
+  });
+
   log("info", "Starting MQTT connection.");
   dm.mq.start();
   log("info", "Fetching device list.");
@@ -822,6 +828,12 @@ async function initHomeProject(api, options, log) {
     }
     return null;
   }
+
+  // Set up automatic re-login when token refresh expires.
+  openAPI.setReloginHandler(async () => {
+    log("info", "Re-logging in to Tuya Cloud due to token expiry...");
+    return await openAPI.homeLogin(countryCode, username, password, appSchema);
+  });
 
   log("info", "Starting MQTT connection.");
   dm.mq.start();
@@ -1000,22 +1012,44 @@ module.exports = {
           (s) =>
             s.code === "cur_current" ||
             s.code === "cur_power" ||
-            s.code === "cur_voltage",
+            s.code === "cur_voltage" ||
+            s.code === "meter_power" ||
+            s.code === "total_forward_energy" ||
+            s.code === "electricity",
         ),
     );
+
+    // Log device schemas at startup for debugging
+    if (debugMode) {
+      for (const device of dm.devices) {
+        log(
+          "debug",
+          `Device schema: ${device.name} (${device.id}, category=${device.category}) → codes=[${(device.schema || []).map((s) => `${s.code}(${s.type})`).join(", ")}]`,
+        );
+      }
+    }
     if (energyPollDevices.length > 0) {
       log(
         "info",
-        `Starting energy monitoring polling for ${energyPollDevices.length} device(s)`,
+        `Starting energy monitoring polling for ${energyPollDevices.length} device(s): ${energyPollDevices.map((d) => d.name).join(", ")}`,
       );
       ctx._energyPollTimer = setInterval(async () => {
         for (const device of energyPollDevices) {
           try {
             const res = await dm.getDeviceInfo(device.id);
-            if (!res.success || !res.result) continue;
+            if (!res.success || !res.result) {
+              log("debug", `Energy poll: ${device.name} → API returned error`);
+              continue;
+            }
             const status = res.result.status || [];
             const doimusID = ctx.doimusDeviceMap.get(device.id);
-            if (!doimusID) continue;
+            if (!doimusID) {
+              log(
+                "warn",
+                `Energy poll: no doimusID for ${device.name} (${device.id})`,
+              );
+              continue;
+            }
 
             // Update device status so MQTT-only updates stay in sync
             for (const item of device.status) {
@@ -1024,6 +1058,14 @@ module.exports = {
             }
 
             const state = mapTuyaStatusToDoimusState(device, status, options);
+            log(
+              "debug",
+              `Energy poll: ${device.name} → API status returned codes=[${status.map((s) => `${s.code}=${s.value}`).join(",")}]`,
+            );
+            log(
+              "debug",
+              `Energy poll: ${device.name} → mapped stateKeys=[${Object.keys(state).join(",")}]`,
+            );
             if (Object.keys(state).length > 0) {
               state.online = res.result.online ?? device.online;
               // Only push update if values actually changed
@@ -1031,6 +1073,11 @@ module.exports = {
               const changed = Object.keys(state).some(
                 (k) =>
                   JSON.stringify(state[k]) !== JSON.stringify(lastKnown[k]),
+              );
+              log(
+                "debug",
+                `Energy poll: ${device.name} → changed=${changed} state=%s`,
+                JSON.stringify(state),
               );
               if (changed) {
                 api.updateDeviceState(doimusID, state);
@@ -1238,8 +1285,23 @@ module.exports = {
 
     dm.on(TuyaDeviceManager.Events.DEVICE_STATUS_UPDATE, (device, status) => {
       const doimusID = ctx.doimusDeviceMap.get(device.id);
-      if (!doimusID) return;
+      if (!doimusID) {
+        log(
+          "warn",
+          `DEVICE_STATUS_UPDATE: no doimusID for device ${device.id}`,
+        );
+        return;
+      }
       const state = mapTuyaStatusToDoimusState(device, status, options);
+      log(
+        "info",
+        `DEVICE_STATUS_UPDATE: ${device.name} → stateKeys=[${Object.keys(state).join(",")}]`,
+      );
+      log(
+        "debug",
+        `DEVICE_STATUS_UPDATE full: ${device.name} → %s`,
+        JSON.stringify(state),
+      );
       if (Object.keys(state).length > 0) {
         state.online = device.online;
         api.updateDeviceState(doimusID, state);
