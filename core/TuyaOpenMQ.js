@@ -19,8 +19,11 @@ class TuyaOpenMQ {
     this.log = new PrefixLogger(log, "TuyaOpenMQ", debug);
     this.running = false;
     this.retryDelay = INITIAL_RETRY_DELAY;
-    this.reconnectTimer = null;
+    this._retryTimer = null; // separate timer for retry backoff
+    this._expireTimer = null; // separate timer for MQTT credential expiry
+    this._connecting = false; // flag to prevent close-handler race during _connect()
     this.config = null;
+    this.client = null;
   }
 
   start() {
@@ -32,8 +35,7 @@ class TuyaOpenMQ {
 
   stop() {
     this.running = false;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+    this._clearTimers();
     if (this.client) {
       this.client.removeAllListeners();
       this.client.end(true);
@@ -42,16 +44,27 @@ class TuyaOpenMQ {
     this.config = null;
   }
 
+  _clearTimers() {
+    if (this._retryTimer) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
+    if (this._expireTimer) {
+      clearTimeout(this._expireTimer);
+      this._expireTimer = null;
+    }
+  }
+
   _scheduleReconnect() {
     if (!this.running) return;
-    if (this.reconnectTimer) return; // already scheduled
+    if (this._retryTimer) return; // already scheduled
 
     this.log.info(
       "Scheduling MQTT reconnect in %dms (backoff)",
       this.retryDelay,
     );
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
+    this._retryTimer = setTimeout(() => {
+      this._retryTimer = null;
       // Exponential backoff with cap
       this.retryDelay = Math.min(this.retryDelay * 2, MAX_RETRY_DELAY);
       this._connect();
@@ -61,22 +74,25 @@ class TuyaOpenMQ {
   async _connect() {
     if (!this.running) return;
 
-    // Clean up previous connection
+    // Prevent close-handler race: signal we're in the connect loop
+    // so the old client's async close event doesn't trigger _scheduleReconnect.
+    this._connecting = true;
+
+    // Clean up previous connection completely (like reference's this.stop())
+    this._clearTimers();
     if (this.client) {
       this.client.removeAllListeners();
       this.client.end(true);
       this.client = null;
     }
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.config = null;
 
     let res;
     try {
       res = await this._getMQConfig("mqtt");
     } catch (err) {
       this.log.error("Get MQTT config error: %s", err.message);
+      this._connecting = false;
       this._scheduleReconnect();
       return;
     }
@@ -87,6 +103,7 @@ class TuyaOpenMQ {
         res.code,
         res.msg,
       );
+      this._connecting = false;
       this._scheduleReconnect();
       return;
     }
@@ -100,6 +117,7 @@ class TuyaOpenMQ {
         res.code,
         res.msg,
       );
+      this._connecting = false;
       this._scheduleReconnect();
       return;
     }
@@ -113,6 +131,14 @@ class TuyaOpenMQ {
         !!url,
         !!client_id,
       );
+      this._connecting = false;
+      this._scheduleReconnect();
+      return;
+    }
+
+    if (!source_topic || !source_topic.device) {
+      this.log.error("MQTT config missing source_topic.device");
+      this._connecting = false;
       this._scheduleReconnect();
       return;
     }
@@ -136,16 +162,27 @@ class TuyaOpenMQ {
 
     client.on("error", (error) => {
       this.log.error("MQTT Error: %s", error.message);
-      // The mqtt.js lib will try to auto-reconnect, but we also schedule
-      // a full reconnect via _connect in case the built-in mechanism stalls.
+      // mqtt.js auto-reconnect handles TCP drops, but if credentials are
+      // rejected the built-in loop may fail permanently. Schedule a full
+      // reconnect (including fresh config fetch) so credentials refresh.
+      if (this.running && !this._retryTimer) {
+        this.log.info("MQTT error triggered reconnect schedule");
+        this._scheduleReconnect();
+      }
     });
 
     client.on("close", () => {
       this.log.info("MQTT Connection closed");
-      // Only schedule a reconnect if the client was intentionally ended
-      // (this.running) AND we're not already mid-reconnect.
-      // The reconnect timer handles planned reconnections.
-      if (this.running && !this.reconnectTimer && !this.client) {
+      // Only schedule external reconnect if we're NOT in the middle of
+      // _connect()'s own cleanup. When _connecting is true, the close
+      // event is from the old client being ended during cleanup — ignore it.
+      // Also skip if either timer is already armed.
+      if (
+        this.running &&
+        !this._connecting &&
+        !this._retryTimer &&
+        !this._expireTimer
+      ) {
         this._scheduleReconnect();
       }
     });
@@ -168,16 +205,16 @@ class TuyaOpenMQ {
 
     this.client = client;
 
+    // Reconnecting is complete — release the guard so close events
+    // from this point on can trigger reconnect if needed.
+    this._connecting = false;
+
     // Schedule periodic reconnection before MQTT token expires
-    this.reconnectTimer = setTimeout(
+    // Stored in _expireTimer (separate from _retryTimer to avoid conflicts)
+    this._expireTimer = setTimeout(
       () => {
-        this.reconnectTimer = null;
+        this._expireTimer = null;
         this.log.debug("MQTT expire_time reached, reconnecting...");
-        if (this.client) {
-          this.client.removeAllListeners();
-          this.client.end(true);
-          this.client = null;
-        }
         this._connect();
       },
       (expire_time - 60) * 1000,
