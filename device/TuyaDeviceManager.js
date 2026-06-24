@@ -24,7 +24,7 @@ class TuyaDeviceManager extends EventEmitter {
     this.devices = [];
     const log = this.api.log;
     this.log = new PrefixLogger(log, "TuyaDeviceManager", debug);
-    this.mq = new TuyaOpenMQ(api, this.log);
+    this.mq = new TuyaOpenMQ(api, this.log, debug);
     this.mq.addMessageListener(this.onMQTTMessage.bind(this));
   }
 

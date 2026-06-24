@@ -200,6 +200,11 @@ function kelvinToTuyaTemp(kelvin, schemaProp) {
   );
 }
 
+function getScale(device, code) {
+  const s = device.schema?.find((s) => s.code === code);
+  return s?.property?.scale != null ? Math.pow(10, s.property.scale) : 1;
+}
+
 function mapTuyaStatusToDoimusState(device, statusList, options) {
   const state = {};
   const schemaDeviceConfig =
@@ -314,11 +319,11 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     } else if (code === "light") {
       if (state.on === undefined) state.on = value === true || value === 1;
     } else if (code === "cur_current") {
-      state.current = Number(value) / 1000;
+      state.current = Number(value) / getScale(device, code);
     } else if (code === "cur_power") {
-      state.power = Number(value);
+      state.power = Number(value) / getScale(device, code);
     } else if (code === "cur_voltage") {
-      state.voltage = Number(value);
+      state.voltage = Number(value) / getScale(device, code);
     } else if (code === "meter_power" || code === "total_forward_energy") {
       state.energy = Number(value);
     } else if (code === "electricity") {
@@ -985,6 +990,64 @@ module.exports = {
     await persistDeviceList(api, dm, uid, log);
     await registerDevicesWithDoimus(api, dm, options, ctx);
 
+    // Periodic REST API polling for energy monitoring devices
+    // Tuya's MQTT often doesn't push cur_current, cur_power, cur_voltage
+    // updates reliably, so we poll the REST API to catch changes.
+    const energyPollDevices = dm.devices.filter(
+      (device) =>
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "cur_current" ||
+            s.code === "cur_power" ||
+            s.code === "cur_voltage",
+        ),
+    );
+    if (energyPollDevices.length > 0) {
+      log(
+        "info",
+        `Starting energy monitoring polling for ${energyPollDevices.length} device(s)`,
+      );
+      ctx._energyPollTimer = setInterval(async () => {
+        for (const device of energyPollDevices) {
+          try {
+            const res = await dm.getDeviceInfo(device.id);
+            if (!res.success || !res.result) continue;
+            const status = res.result.status || [];
+            const doimusID = ctx.doimusDeviceMap.get(device.id);
+            if (!doimusID) continue;
+
+            // Update device status so MQTT-only updates stay in sync
+            for (const item of device.status) {
+              const match = status.find((s) => s.code === item.code);
+              if (match) item.value = match.value;
+            }
+
+            const state = mapTuyaStatusToDoimusState(device, status, options);
+            if (Object.keys(state).length > 0) {
+              state.online = res.result.online ?? device.online;
+              // Only push update if values actually changed
+              const lastKnown = ctx.lastKnownState.get(device.id) || {};
+              const changed = Object.keys(state).some(
+                (k) =>
+                  JSON.stringify(state[k]) !== JSON.stringify(lastKnown[k]),
+              );
+              if (changed) {
+                api.updateDeviceState(doimusID, state);
+                ctx.lastKnownState.set(device.id, {
+                  ...lastKnown,
+                  ...state,
+                });
+              }
+            }
+          } catch (e) {
+            log("warn", `Energy poll error for ${device.name}: ${e.message}`);
+          }
+        }
+      }, 30000);
+      if (ctx._energyPollTimer.unref) ctx._energyPollTimer.unref();
+    }
+
     // Periodic MJPEG snapshot for camera devices
     let snapshotTimer = null;
     if (result.dm) {
@@ -1259,10 +1322,18 @@ module.exports = {
     });
 
     log("info", "Tuya Platform plugin ready.");
+    log(
+      "info",
+      `Energy polling: ${energyPollDevices.length} device(s) monitored, MJPEG snapshot: ${(snapshotTimer !== null).toString()}`,
+    );
   },
 
   stop() {
     if (_ctx) {
+      if (_ctx._energyPollTimer) {
+        clearInterval(_ctx._energyPollTimer);
+        _ctx._energyPollTimer = null;
+      }
       if (_ctx._snapshotTimer) {
         clearInterval(_ctx._snapshotTimer);
         _ctx._snapshotTimer = null;
