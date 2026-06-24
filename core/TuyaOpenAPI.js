@@ -286,27 +286,52 @@ class TuyaOpenAPI {
           const req = https.request(
             { host: new URL(this.endpoint).host, method, headers, path },
             (res) => {
-              if (res.statusCode !== 200) {
-                this.log.warn(
-                  "Status: %d %s",
-                  res.statusCode,
-                  res.statusMessage,
-                );
-                return;
-              }
               res.setEncoding("utf8");
               let rawData = "";
               res.on("data", (chunk) => {
                 rawData += chunk;
               });
               res.on("end", () => {
-                resolve(JSON.parse(rawData));
+                if (res.statusCode !== 200) {
+                  this.log.warn(
+                    "Status: %d %s for %s",
+                    res.statusCode,
+                    res.statusMessage,
+                    path,
+                  );
+                  // Try to parse the response body even for errors
+                  try {
+                    resolve(JSON.parse(rawData));
+                  } catch (_) {
+                    resolve({
+                      success: false,
+                      code: res.statusCode,
+                      msg: res.statusMessage,
+                    });
+                  }
+                  return;
+                }
+                try {
+                  resolve(JSON.parse(rawData));
+                } catch (parseErr) {
+                  reject(
+                    new Error(`Invalid JSON response: ${parseErr.message}`),
+                  );
+                }
               });
             },
           );
+          // Add timeout to prevent hanging requests
+          req.setTimeout(30000, () => {
+            req.destroy(new Error("Request timeout after 30s"));
+          });
           if (body) req.write(JSON.stringify(body));
           req.on("error", (e) => {
-            this.log.error("Network error: %s. Retrying...", e.message);
+            this.log.error(
+              "Network error for %s: %s. Retrying...",
+              path,
+              e.message,
+            );
             reject(e);
           });
           req.end();
@@ -327,8 +352,18 @@ class TuyaOpenAPI {
       JSON.stringify(res, null, 2),
     );
 
-    if (res && res.success !== true && API_ERROR_MESSAGES[res.code]) {
-      this.log.error(API_ERROR_MESSAGES[res.code]);
+    if (res) {
+      if (res.success !== true && API_ERROR_MESSAGES[res.code]) {
+        this.log.error(API_ERROR_MESSAGES[res.code]);
+      }
+      if (res.success !== true) {
+        this.log.warn(
+          "API error: path=%s code=%s msg=%s",
+          path,
+          res.code,
+          res.msg,
+        );
+      }
     }
     return res;
   }

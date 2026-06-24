@@ -26,6 +26,7 @@ class TuyaOpenMQ {
   start() {
     this.running = true;
     this.retryDelay = INITIAL_RETRY_DELAY;
+    this.log.info("MQTT start requested, initiating connection...");
     this._connect();
   }
 
@@ -45,7 +46,10 @@ class TuyaOpenMQ {
     if (!this.running) return;
     if (this.reconnectTimer) return; // already scheduled
 
-    this.log.debug("Scheduling MQTT reconnect in %dms", this.retryDelay);
+    this.log.info(
+      "Scheduling MQTT reconnect in %dms (backoff)",
+      this.retryDelay,
+    );
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       // Exponential backoff with cap
@@ -90,9 +94,30 @@ class TuyaOpenMQ {
     // Config fetched successfully — reset retry delay
     this.retryDelay = INITIAL_RETRY_DELAY;
 
+    if (!res.result) {
+      this.log.error(
+        "MQTT config response missing 'result' field: code=%s msg=%s",
+        res.code,
+        res.msg,
+      );
+      this._scheduleReconnect();
+      return;
+    }
+
     const { url, client_id, username, password, expire_time, source_topic } =
       res.result;
-    this.log.debug("Connecting to MQTT: %s", url);
+
+    if (!url || !client_id || !username || !password) {
+      this.log.error(
+        "MQTT config missing required fields: url=%s client_id=%s",
+        !!url,
+        !!client_id,
+      );
+      this._scheduleReconnect();
+      return;
+    }
+
+    this.log.info("Connecting to MQTT: %s", url);
 
     // Store config BEFORE connecting so _onMessage can use it immediately
     this.config = res.result;
@@ -117,8 +142,10 @@ class TuyaOpenMQ {
 
     client.on("close", () => {
       this.log.info("MQTT Connection closed");
-      // Only schedule a reconnect if not already reconnecting
-      if (!this.client) {
+      // Only schedule a reconnect if the client was intentionally ended
+      // (this.running) AND we're not already mid-reconnect.
+      // The reconnect timer handles planned reconnections.
+      if (this.running && !this.reconnectTimer && !this.client) {
         this._scheduleReconnect();
       }
     });
