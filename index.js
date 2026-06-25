@@ -785,7 +785,7 @@ async function initCustomProject(api, options, log) {
   log("info", "Fetching device list.");
   dm.ownerIDs = assetIDList;
   await dm.updateDevices(assetIDList);
-  return { dm, uid };
+  return { dm, uid, debugMode };
 }
 
 async function initHomeProject(api, options, log) {
@@ -856,7 +856,7 @@ async function initHomeProject(api, options, log) {
 
   if (homeIDList.length === 0) {
     log("warn", "Home list is empty or no whitelisted homes found.");
-    return { dm, uid: openAPI.tokenInfo.uid };
+    return { dm, uid: openAPI.tokenInfo.uid, debugMode };
   }
 
   log("info", "Fetching device list.");
@@ -872,7 +872,7 @@ async function initHomeProject(api, options, log) {
     }
   }
 
-  return { dm, uid: openAPI.tokenInfo.uid };
+  return { dm, uid: openAPI.tokenInfo.uid, debugMode };
 }
 
 async function persistDeviceList(api, dm, uid, log) {
@@ -996,7 +996,7 @@ module.exports = {
       return;
     }
 
-    const { dm, uid } = result;
+    const { dm, uid, debugMode } = result;
     ctx.deviceManager = dm;
 
     await persistDeviceList(api, dm, uid, log);
