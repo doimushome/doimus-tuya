@@ -394,6 +394,14 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("position");
       }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "control" || s.code === "control_back",
+        )
+      ) {
+        capabilities.add("control");
+      }
       break;
     case "lock":
       if (
@@ -1252,6 +1260,13 @@ module.exports = {
             commands.push(
               buildCommand(tuyaDevice.schema, posSchema.code, value),
             );
+          }
+        } else if (key === "control") {
+          const controlSchema = tuyaDevice.schema.find(
+            (s) => s.code === "control" || s.code === "control_back",
+          );
+          if (controlSchema) {
+            commands.push({ code: controlSchema.code, value: String(value) });
           }
         } else if (key === "rotation_speed") {
           const speedSchema = tuyaDevice.schema.find(
