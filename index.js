@@ -1405,6 +1405,13 @@ module.exports = {
     );
   },
 
+  async setConfig(cfg) {
+    const api = _ctx ? _ctx.apiRef : null;
+    if (!api) return;
+    this.stop();
+    await this.start(cfg, api);
+  },
+
   stop() {
     if (_ctx) {
       if (_ctx._energyPollTimer) {
