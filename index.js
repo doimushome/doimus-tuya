@@ -1114,17 +1114,59 @@ module.exports = {
           "info",
           `Starting MJPEG snapshot polling for ${cameraDevices.length} camera(s)`,
         );
+        let firstSnapshotLogged = false;
+        let snapshotOK = 0;
+        let snapshotErr = 0;
         snapshotTimer = setInterval(async () => {
           for (const device of cameraDevices) {
             try {
               const frame = await result.dm.api.getCameraSnapshot(device.id);
               if (frame) {
                 const doimusID = ctx.doimusDeviceMap.get(device.id);
-                if (doimusID) api.sendMjpegFrame(doimusID, "main", frame);
+                if (doimusID) {
+                  api.sendMjpegFrame(doimusID, "main", frame);
+                  snapshotOK++;
+                  if (!firstSnapshotLogged) {
+                    log(
+                      "info",
+                      `First snapshot OK: device="${device.name}" doimusID="${doimusID}" size=${frame.length}B`,
+                    );
+                    firstSnapshotLogged = true;
+                  }
+                } else {
+                  log(
+                    "warn",
+                    `Snapshot skipped: no Doimus device ID for Tuya device "${device.name}" (id=${device.id})`,
+                  );
+                }
+              } else {
+                snapshotErr++;
+                log(
+                  "debug",
+                  `Snapshot empty for device "${device.name}" (id=${device.id})`,
+                );
               }
-            } catch (_) {
-              /* snapshot best-effort */
+            } catch (e) {
+              snapshotErr++;
+              log(
+                "warn",
+                `Snapshot failed for device "${device.name}" (id=${device.id}): ${e.message || e}`,
+              );
             }
+          }
+          // Periodic summary every 10 cycles (~5 min)
+          const cycle = Math.floor(
+            (snapshotOK + snapshotErr) / (cameraDevices.length || 1),
+          );
+          if (
+            cycle > 0 &&
+            cycle % 10 === 0 &&
+            (snapshotOK > 0 || snapshotErr > 0)
+          ) {
+            log(
+              "info",
+              `Snapshot summary (${cycle} cycles): ${snapshotOK} ok, ${snapshotErr} failed`,
+            );
           }
         }, 30000);
         if (snapshotTimer.unref) snapshotTimer.unref();
