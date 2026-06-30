@@ -3,7 +3,6 @@ const path = require("path");
 const fs = require("fs");
 const debounce = require("debounce");
 
-const { PrefixLogger } = require("./util/Logger");
 const TuyaOpenAPI = require("./core/TuyaOpenAPI");
 const TuyaCustomDeviceManager = require("./device/TuyaCustomDeviceManager");
 const TuyaHomeDeviceManager = require("./device/TuyaHomeDeviceManager");
@@ -12,7 +11,6 @@ const TuyaP2P = require("./core/TuyaP2P");
 
 /**
  * Retry an async function with exponential backoff.
- * Used for transient failures like network timeouts.
  */
 async function retryWithBackoff(fn, maxRetries = 4, baseDelayMs = 1000, log) {
   let lastErr;
@@ -35,43 +33,8 @@ async function retryWithBackoff(fn, maxRetries = 4, baseDelayMs = 1000, log) {
   throw lastErr;
 }
 
-function createLogger(api, prefix, debug = false) {
-  const logger = api.log;
-  const call = (level, msg, ...args) => {
-    let formatted = msg;
-    if (args.length > 0) {
-      let i = 0;
-      formatted = msg.replace(/%[sdifo]/g, () => {
-        const arg = args[i++];
-        if (arg === null || arg === undefined) return "";
-        if (typeof arg === "object") return JSON.stringify(arg);
-        return String(arg);
-      });
-    }
-    if (typeof logger === "function") {
-      logger(level, `[${prefix}] ${formatted}`);
-    } else if (logger && typeof logger.info === "function") {
-      if (level === "debug" && debug) {
-        logger.debug(`[${prefix}] ${formatted}`);
-      } else if (level === "warn") {
-        logger.warn(`[${prefix}] ${formatted}`);
-      } else if (level === "error") {
-        logger.error(`[${prefix}] ${formatted}`);
-      } else if (level === "info") {
-        logger.info(`[${prefix}] ${formatted}`);
-      }
-    }
-  };
-  const pl = function (level, msg, ...args) {
-    call(level, msg, ...args);
-  };
-  pl.info = (...args) => call("info", args[0], ...args.slice(1));
-  pl.warn = (...args) => call("warn", args[0], ...args.slice(1));
-  pl.error = (...args) => call("error", args[0], ...args.slice(1));
-  pl.debug = (...args) => {
-    if (debug) call("debug", args[0], ...args.slice(1));
-  };
-  return pl;
+function createLogger(api, prefix) {
+  return (level, msg) => api.log(level, `[${prefix}] ${msg}`);
 }
 
 function generateUUID(id) {
@@ -1108,14 +1071,14 @@ async function persistDeviceList(api, dm, uid, log) {
   } catch (_) {}
 }
 
-async function registerDevicesWithDoimus(api, dm, options, ctx) {
+async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
   const devices = dm.devices;
   if (!devices || devices.length === 0) {
-    api.log("warn", "No devices found.");
+    log("warn", "No devices found.");
     return;
   }
 
-  api.log("info", `Registering ${devices.length} Tuya device(s) with Doimus.`);
+  log("info", `Registering ${devices.length} Tuya device(s) with Doimus.`);
 
   for (const device of devices) {
     applySchemaOverride(device, options);
@@ -1160,7 +1123,7 @@ async function registerDevicesWithDoimus(api, dm, options, ctx) {
     ctx.lastKnownState.set(device.id, initialState);
   }
 
-  api.log("info", "Device registration complete.");
+  log("info", "Device registration complete.");
 }
 
 module.exports = {
@@ -1200,28 +1163,20 @@ module.exports = {
       }
     } catch (e) {
       log("warn", `Initialization failed: ${e.message}. Will retry in 60s.`);
-      ctx._retryInit = () => start(cfg, api);
-      ctx._initRetryTimer = setTimeout(() => {
-        ctx._retryInit = null;
-        start(cfg, api);
-      }, 60000);
+      ctx._initRetryTimer = setTimeout(() => start(cfg, api), 60000);
       return;
     }
 
     if (!result || !result.dm) {
-      log("error", "Failed to initialize Tuya connection.");
-      ctx._retryInit = () => start(cfg, api);
-      ctx._initRetryTimer = setTimeout(() => {
-        ctx._retryInit = null;
-        start(cfg, api);
-      }, 60000);
+      log("error", "Failed to initialize Tuya connection. Will retry in 60s.");
+      ctx._initRetryTimer = setTimeout(() => start(cfg, api), 60000);
       return;
     }
 
     const { dm, uid, debugMode } = result;
 
     await persistDeviceList(api, dm, uid, log);
-    await registerDevicesWithDoimus(api, dm, options, ctx);
+    await registerDevicesWithDoimus(api, dm, options, ctx, log);
 
     // Fetch local_key for camera/doorbell devices (needed for image decryption).
     // The bulk device list API omits local_key — must fetch per-device.
@@ -1327,8 +1282,7 @@ module.exports = {
               );
               log(
                 "debug",
-                `Energy poll: ${device.name} → changed=${changed} state=%s`,
-                JSON.stringify(state),
+                `Energy poll: ${device.name} → changed=${changed} state=${JSON.stringify(state)}`,
               );
               if (changed) {
                 api.updateDeviceState(doimusID, state);
@@ -1617,8 +1571,7 @@ module.exports = {
       );
       log(
         "debug",
-        `DEVICE_STATUS_UPDATE full: ${device.name} → %s`,
-        JSON.stringify(state),
+        `DEVICE_STATUS_UPDATE full: ${device.name} → ${JSON.stringify(state)}`,
       );
       if (Object.keys(state).length > 0) {
         state.online = device.online;
