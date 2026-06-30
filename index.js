@@ -902,31 +902,38 @@ function getDeviceSchemaConfig(device, code, options) {
 
 function buildCommand(commandSchemas, code, value) {
   const schema = commandSchemas.find((s) => s.code === code);
-  if (schema) {
-    if (
-      schema.property &&
-      schema.property.min !== undefined &&
-      schema.property.max !== undefined
-    ) {
-      const scale =
-        schema.property.scale != null ? Math.pow(10, schema.property.scale) : 1;
-      if (typeof value === "number") {
-        const realMin = schema.property.min / scale;
-        const realMax = schema.property.max / scale;
-        value = Math.max(realMin, Math.min(realMax, value));
-      }
-      if (schema.type === "Enum") {
-        return { code, value: String(value) };
-      } else if (schema.type === "Integer") {
-        return { code, value: Math.round(Number(value) * scale) };
-      } else if (schema.type === "Boolean") {
-        return {
-          code,
-          value: value === true || value === 1 || value === "true",
-        };
-      }
-    }
+  if (!schema) return { code, value };
+
+  // Determine scale factor (default 1 = no scaling).
+  const scale =
+    schema.property && schema.property.scale != null
+      ? Math.pow(10, schema.property.scale)
+      : 1;
+
+  // Clamp to min/max range when bounds are defined.
+  if (
+    schema.property &&
+    schema.property.min !== undefined &&
+    schema.property.max !== undefined &&
+    typeof value === "number"
+  ) {
+    const realMin = schema.property.min / scale;
+    const realMax = schema.property.max / scale;
+    value = Math.max(realMin, Math.min(realMax, value));
   }
+
+  if (schema.type === "Enum") {
+    return { code, value: String(value) };
+  } else if (schema.type === "Integer") {
+    return { code, value: Math.round(Number(value) * scale) };
+  } else if (schema.type === "Boolean") {
+    return {
+      code,
+      value: value === true || value === 1 || value === "true",
+    };
+  }
+
+  // Unknown type or no property block — send raw value.
   return { code, value };
 }
 
@@ -2088,13 +2095,12 @@ module.exports = {
             );
           }
         } else if (key === "position") {
-          // Match ALL writable position DPs — consistent with determineCapabilities
-          // which uses startsWith("percent"). We exclude read-only codes
-          // ("percent_state") that can't accept commands.
+          // Match writable position DPs (percent_control, percent, position).
+          // Exclude read-only codes ("percent_state") and direction-only
+          // codes ("control_back" — takes "open"/"close"/"stop", not 0-100).
           const posSchema = tuyaDevice.schema.find(
             (s) =>
               (s.code.startsWith("percent") && s.code !== "percent_state") ||
-              s.code === "control_back" ||
               s.code === "position",
           );
           if (posSchema) {

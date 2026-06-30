@@ -90,6 +90,9 @@ class TuyaOpenAPI {
     // Set via setReloginHandler(). Called with no arguments, must return
     // { success: true/false }.
     this._reloginHandler = null;
+    // Per-device cache of the snapshot endpoint that last succeeded.
+    // Avoids probing all 8 endpoint patterns on every 30s poll cycle.
+    this._snapshotEndpointCache = new Map();
   }
 
   setReloginHandler(handler) {
@@ -238,7 +241,11 @@ class TuyaOpenAPI {
     return res;
   }
 
-  async request(method, path, params, body) {
+  // opts.suppressErrorLog: when true, API errors are logged at debug instead of
+  // warn. Use for speculative calls where failure is expected (e.g. probing
+  // multiple snapshot endpoint patterns in getCameraSnapshot).
+  async request(method, path, params, body, opts) {
+    const suppressErrorLog = !!(opts && opts.suppressErrorLog);
     await this._refreshAccessTokenIfNeed(path);
     const now = new Date().getTime();
     const nonce = uuidv4();
@@ -293,12 +300,21 @@ class TuyaOpenAPI {
               });
               res.on("end", () => {
                 if (res.statusCode !== 200) {
-                  this.log.warn(
-                    "Status: %d %s for %s",
-                    res.statusCode,
-                    res.statusMessage,
-                    path,
-                  );
+                  if (suppressErrorLog) {
+                    this.log.debug(
+                      "Status: %d %s for %s",
+                      res.statusCode,
+                      res.statusMessage,
+                      path,
+                    );
+                  } else {
+                    this.log.warn(
+                      "Status: %d %s for %s",
+                      res.statusCode,
+                      res.statusMessage,
+                      path,
+                    );
+                  }
                   // Try to parse the response body even for errors
                   try {
                     resolve(JSON.parse(rawData));
@@ -357,23 +373,32 @@ class TuyaOpenAPI {
         this.log.error(API_ERROR_MESSAGES[res.code]);
       }
       if (res.success !== true) {
-        this.log.warn(
-          "API error: path=%s code=%s msg=%s",
-          path,
-          res.code,
-          res.msg,
-        );
+        if (suppressErrorLog) {
+          this.log.debug(
+            "API error: path=%s code=%s msg=%s",
+            path,
+            res.code,
+            res.msg,
+          );
+        } else {
+          this.log.warn(
+            "API error: path=%s code=%s msg=%s",
+            path,
+            res.code,
+            res.msg,
+          );
+        }
       }
     }
     return res;
   }
 
-  async get(path, params) {
-    return this.request("get", path, params, null);
+  async get(path, params, opts) {
+    return this.request("get", path, params, null, opts);
   }
 
-  async post(path, params) {
-    return this.request("post", path, null, params);
+  async post(path, params, opts) {
+    return this.request("post", path, null, params, opts);
   }
 
   async delete(path, params) {
@@ -431,8 +456,27 @@ class TuyaOpenAPI {
   }
 
   async getCameraSnapshot(deviceId) {
-    // Try multiple snapshot API endpoint patterns — different device models
-    // and API versions use different paths, HTTP methods, and body formats.
+    // Try cached endpoint first (avoids probing all 8 patterns every 30s).
+    const cached = this._snapshotEndpointCache.get(deviceId);
+    if (cached) {
+      const { method, path, body } = cached;
+      const res = method === "get"
+        ? await this.get(path, null, { suppressErrorLog: true })
+        : await this.request("post", path, null, body, { suppressErrorLog: true });
+      if (res.success && res.result?.url) {
+        return this._fetchSnapshotImage(res.result.url);
+      }
+      // Cached endpoint stopped working — evict and fall through to full probe.
+      this.log.debug(
+        "Cached snapshot endpoint failed (method=%s path=%s): code=%s msg=%s — re-probing",
+        method, path, res.code, res.msg,
+      );
+      this._snapshotEndpointCache.delete(deviceId);
+    }
+
+    // Full probe: try multiple snapshot API endpoint patterns — different
+    // device models and API versions use different paths, HTTP methods, and
+    // body formats.
     const endpoints = [
       // Standard IoT Core — some devices need a body parameter
       { method: "post", path: `/v1.0/devices/${deviceId}/snapshot`, body: null },
@@ -447,30 +491,26 @@ class TuyaOpenAPI {
       { method: "post", path: `/v1.1/devices/${deviceId}/snapshot`, body: null },
     ];
 
+    // Suppress error logging in request() — failures are expected when probing
+    // multiple endpoint patterns. getCameraSnapshot() handles all logging
+    // itself at the appropriate level.
     for (const { method, path, body } of endpoints) {
       let res;
       if (method === "get") {
-        res = await this.get(path);
+        res = await this.get(path, null, { suppressErrorLog: true });
       } else {
-        res = await this.request("post", path, null, body);
+        res = await this.request("post", path, null, body, { suppressErrorLog: true });
       }
       if (res.success && res.result?.url) {
+        // Cache the winning endpoint so subsequent polls skip the probe.
+        this._snapshotEndpointCache.set(deviceId, { method, path, body });
         this.log.info(
-          "Snapshot URL obtained (method=%s path=%s): %s",
+          "Snapshot URL obtained (method=%s path=%s, cached): %s",
           method,
           path,
           res.result.url,
         );
-        return new Promise((resolve, reject) => {
-          https
-            .get(res.result.url, (r) => {
-              const chunks = [];
-              r.on("data", (c) => chunks.push(c));
-              r.on("end", () => resolve(Buffer.concat(chunks)));
-              r.on("error", reject);
-            })
-            .on("error", reject);
-        });
+        return this._fetchSnapshotImage(res.result.url);
       }
       if (!res.success) {
         this.log.debug(
@@ -492,6 +532,21 @@ class TuyaOpenAPI {
 
     this.log.debug("All snapshot endpoints exhausted for device %s", deviceId);
     return null;
+  }
+
+  // Downloads the image from a snapshot URL. Extracted as a helper so both
+  // the cached and full-probe paths can reuse the same download logic.
+  _fetchSnapshotImage(url) {
+    return new Promise((resolve, reject) => {
+      https
+        .get(url, (r) => {
+          const chunks = [];
+          r.on("data", (c) => chunks.push(c));
+          r.on("end", () => resolve(Buffer.concat(chunks)));
+          r.on("error", reject);
+        })
+        .on("error", reject);
+    });
   }
 }
 
