@@ -1680,7 +1680,7 @@ module.exports = {
       if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
         log(
           "info",
-          `TEMP local_key status: device="${device.name}" id=${device.id} has=${!!device.local_key} len=${(device.local_key || "").length}`,
+          `TEMP local_key RAW: device="${device.name}" id=${device.id} key=${device.local_key}`,
         );
       }
       if (
