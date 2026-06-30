@@ -452,13 +452,6 @@ class TuyaP2P extends EventEmitter {
     this.recvBuf = Buffer.concat([this.recvBuf, chunk]);
     // Emit raw data for streaming mode
     if (this.streaming) {
-      // Log the raw first bytes of every chunk to diagnose missing frames
-      this.log.debug(
-        `[P2P] Raw chunk: %d bytes totalBuf=%d first8=%s`,
-        chunk.length,
-        this.recvBuf.length,
-        chunk.slice(0, Math.min(8, chunk.length)).toString("hex"),
-      );
       // Log first few bytes of data to help diagnose missing frames.
       if (!this._streamDataLogged) {
         this._streamDataLogged = true;
@@ -571,6 +564,12 @@ class TuyaP2P extends EventEmitter {
       { reqType: "video_start", data: { quality: "HD" } },
       { reqType: "video_start", data: { quality: "SD" } },
       { reqType: "start_stream", data: { channel: 0 } },
+      // Peephole / doorbell cameras often use simpler payloads
+      { reqType: "live" },
+      { reqType: "start_live" },
+      { reqType: "start_preview" },
+      { type: "stream_start" },
+      { action: "start" },
     ];
 
     for (const payloadObj of streamPayloads) {
@@ -616,10 +615,6 @@ class TuyaP2P extends EventEmitter {
    * be delimited by specific byte sequences.
    */
   _processStreamData() {
-    this.log.debug(
-      `[P2P] _processStreamData called: bufLen=%d`,
-      this.recvBuf.length,
-    );
     // Different camera models use different container formats.
     // Common patterns:
     // 1. Raw H.264 NAL units (00 00 00 01 delimited)
