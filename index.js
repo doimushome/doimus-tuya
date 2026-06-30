@@ -1677,6 +1677,12 @@ module.exports = {
     // Fetch local_key for camera/doorbell devices (needed for image decryption).
     // The bulk device list API omits local_key — must fetch per-device.
     for (const device of dm.devices) {
+      if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
+        log(
+          "info",
+          `TEMP local_key status: device="${device.name}" id=${device.id} has=${!!device.local_key} len=${(device.local_key || "").length}`,
+        );
+      }
       if (
         ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
         !device.local_key
