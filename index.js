@@ -8,6 +8,7 @@ const TuyaOpenAPI = require("./core/TuyaOpenAPI");
 const TuyaCustomDeviceManager = require("./device/TuyaCustomDeviceManager");
 const TuyaHomeDeviceManager = require("./device/TuyaHomeDeviceManager");
 const TuyaDeviceManager = require("./device/TuyaDeviceManager");
+const TuyaP2P = require("./core/TuyaP2P");
 
 function createLogger(api, prefix, debug = false) {
   const logger = api.log;
@@ -727,6 +728,88 @@ function tryDecodeDoorbellPic(item, localKey) {
   return null;
 }
 
+// ─── P2P Live View ───────────────────────────────────────────────────────────
+
+async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
+  if (!ctx.p2pClients) ctx.p2pClients = new Map();
+  if (ctx.p2pClients.has(doimusID)) {
+    log("info", `P2P already active for device "${tuyaDevice.name}"`);
+    return;
+  }
+
+  if (!tuyaDevice.local_key) {
+    log(
+      "warn",
+      `No local_key for device "${tuyaDevice.name}", cannot start P2P`,
+    );
+    return;
+  }
+
+  const ip = tuyaDevice.ip || tuyaDevice.ip_address;
+  if (!ip) {
+    log("warn", `No IP for device "${tuyaDevice.name}", cannot start P2P`);
+    return;
+  }
+
+  log("info", `Starting P2P live view for "${tuyaDevice.name}" (${ip}:554)`);
+
+  const p2p = new TuyaP2P({
+    deviceId: tuyaDevice.id,
+    ip,
+    port: 554,
+    localKey: tuyaDevice.local_key,
+    version: 3.4,
+    log: {
+      info: (m) => log("info", `[P2P] ${m}`),
+      debug: (m) => log("debug", `[P2P] ${m}`),
+      warn: (m) => log("warn", `[P2P] ${m}`),
+      error: (m) => log("error", `[P2P] ${m}`),
+    },
+  });
+
+  p2p.on("frame", (jpeg) => {
+    api.sendMjpegFrame(doimusID, "main", jpeg);
+  });
+
+  p2p.on("error", (err) => {
+    log("error", `P2P error for "${tuyaDevice.name}": ${err.message}`);
+    ctx.p2pClients.delete(doimusID);
+  });
+
+  p2p.on("close", () => {
+    log("info", `P2P connection closed for "${tuyaDevice.name}"`);
+    ctx.p2pClients.delete(doimusID);
+  });
+
+  p2p.on("streaming", (active) => {
+    log(
+      "info",
+      `P2P streaming ${active ? "started" : "stopped"} for "${tuyaDevice.name}"`,
+    );
+  });
+
+  try {
+    await p2p.connect();
+    await p2p.startVideoStream();
+    ctx.p2pClients.set(doimusID, p2p);
+  } catch (e) {
+    log(
+      "error",
+      `P2P connection failed for "${tuyaDevice.name}": ${e.message || e}`,
+    );
+    p2p.close();
+  }
+}
+
+function stopP2P(doimusID, ctx, log) {
+  if (!ctx.p2pClients) return;
+  const p2p = ctx.p2pClients.get(doimusID);
+  if (!p2p) return;
+  log("info", `Stopping P2P live view for device ${doimusID}`);
+  p2p.close();
+  ctx.p2pClients.delete(doimusID);
+}
+
 // Module-level reference to the current plugin context so stop() can access it.
 let _ctx = null;
 
@@ -1118,6 +1201,19 @@ module.exports = {
       }
     }
 
+    // Auto-start P2P for camera devices (opt-in via config.p2pAutoStart for testing)
+    if (options.p2pAutoStart) {
+      for (const device of dm.devices) {
+        if (["sp", "doorbell"].includes(device.category) && device.local_key) {
+          const doimusID = ctx.doimusDeviceMap.get(device.id);
+          if (doimusID) {
+            log("info", `Auto-starting P2P for camera "${device.name}"`);
+            startP2P(doimusID, device, ctx, log, api);
+          }
+        }
+      }
+    }
+
     // Periodic REST API polling for energy monitoring devices
     // Tuya's MQTT often doesn't push cur_current, cur_power, cur_voltage
     // updates reliably, so we poll the REST API to catch changes.
@@ -1450,6 +1546,12 @@ module.exports = {
               buildCommand(tuyaDevice.schema, countdownSchema.code, value),
             );
           }
+        } else if (key === "p2p_start") {
+          await startP2P(deviceID, tuyaDevice, ctx, log, api);
+          return;
+        } else if (key === "p2p_stop") {
+          stopP2P(deviceID, ctx, log);
+          return;
         }
 
         if (commands.length > 0) {
@@ -1615,6 +1717,15 @@ module.exports = {
       _ctx.lastKnownState.clear();
       _ctx.deviceManager = null;
       _ctx.doimusDeviceMap.clear();
+      // Close all active P2P connections
+      if (_ctx.p2pClients) {
+        for (const [id, p2p] of _ctx.p2pClients) {
+          try {
+            p2p.close();
+          } catch (_) {}
+        }
+        _ctx.p2pClients.clear();
+      }
       _ctx.apiRef = null;
       _ctx = null;
     }
