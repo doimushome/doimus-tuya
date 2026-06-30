@@ -127,6 +127,16 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   msp: "switch",
   mal: "sensor",
   hjjcy: "sensor",
+  // IR control hubs — not registered themselves, sub-devices are
+  wnykq: "ir_hub",
+  hwktwkq: "ir_hub",
+  wsdykq: "ir_hub",
+  // IR remote sub-devices
+  infrared_ac: "thermostat",
+  infrared_tv: "switch",
+  infrared_fan: "fan",
+  infrared_stb: "switch",
+  infrared_diy: "switch",
 };
 
 function applySchemaOverride(device, options) {
@@ -333,12 +343,32 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     ) {
       state.outlet_in_use = value === true || value === 1 || value === "1";
     } else if (code === "movement_detect_pic" || code === "ipc_human") {
-      // Camera PIR/human detection — set motion state for automations.
-      // The jpeg itself is captured and sent via sendMjpegFrame separately.
-      state.motion = typeof value === "string" && value.length > 0;
+      // Camera PIR/human detection — set motion for camera-type devices only.
+      // Doorbell-type devices use doorbell_pic instead (handled below).
+      if (
+        ["sp", "mobilecam"].includes(device.category) &&
+        typeof value === "string" &&
+        value.length > 0
+      ) {
+        state.motion = true;
+      }
     } else if (code === "doorbell_pic") {
-      // Doorbell button press — set doorbell state for automations.
+      // Doorbell button press (or camera doorbell pic) — set doorbell state.
       state.doorbell = typeof value === "string" && value.length > 0;
+    } else if (
+      code === "tamper" ||
+      code === "tamper_state" ||
+      code === "tamper_alarm"
+    ) {
+      state.tamper =
+        value === true ||
+        value === 1 ||
+        value === "alarm" ||
+        value === "tamper";
+    } else if (code === "sos" || code === "sos_state") {
+      // SOS/panic button — mapped to tamper for alarm notification
+      state.tamper =
+        value === true || value === 1 || value === "alarm" || value === "sos";
     } else if (
       code === "percent_control" ||
       code === "control_back" ||
@@ -348,23 +378,28 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     } else if (code === "work_state" || code === "mode") {
       state.mode = String(value);
       // Also map numeric mode values to heating_mode where applicable.
-      // Tuya thermostats encode mode as 0=off, 1=auto, 2=cool, 3=heat
-      // (ordering varies — we detect by checking for known strings first).
       if (typeof value === "number" && Number.isFinite(value)) {
         state.heating_mode = Number(value);
       } else if (typeof value === "string") {
-        const modeMap = {
-          auto: 3,
-          heat: 1,
-          hot: 1,
-          warm: 1,
-          cool: 2,
-          cold: 2,
-          off: 0,
-        };
-        const mapped = modeMap[value.toLowerCase()];
-        if (mapped !== undefined) {
-          state.heating_mode = mapped;
+        const numVal = Number(value);
+        if (!isNaN(numVal) && value.trim() !== "") {
+          // Numeric string (e.g. IR AC mode "0", "1", "2")
+          state.heating_mode = numVal;
+        } else {
+          // Named mode strings
+          const modeMap = {
+            auto: 3,
+            heat: 1,
+            hot: 1,
+            warm: 1,
+            cool: 2,
+            cold: 2,
+            off: 0,
+          };
+          const mapped = modeMap[value.toLowerCase()];
+          if (mapped !== undefined) {
+            state.heating_mode = mapped;
+          }
         }
       }
     } else if (code === "work_mode" || code === "hvac_mode") {
@@ -382,6 +417,15 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     } else if (code === "cool_state" || code === "cooler") {
       state.heating_state = value === true || value === 1 ? 2 : 0;
       state.cooling = value === true || value === 1;
+    } else if (code === "power") {
+      // IR AC power status ("1" = on, "0" = off)
+      state.on = value === "1" || value === 1 || value === true;
+    } else if (code === "temp") {
+      // IR AC target temperature
+      state.target_temp = Number(value);
+    } else if (code === "wind") {
+      // IR AC fan speed
+      state.rotation_speed = Number(value);
     } else if (code === "child_lock") {
       state.child_lock = value === true || value === 1;
     } else if (code === "light") {
@@ -737,7 +781,29 @@ function determineCapabilities(device) {
     case "doorbell":
       capabilities.delete("on");
       capabilities.add("doorbell");
+      // Wireless doorbells often have battery
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code.startsWith("battery") || s.code === "va_battery",
+        )
+      ) {
+        capabilities.add("battery");
+      }
       break;
+  }
+
+  // IR remote sub-devices — schema is empty, detect capabilities from
+  // remote_keys and IR AC status codes instead.
+  if (device.isIRRemoteControl && device.isIRRemoteControl()) {
+    if (device.category === "infrared_ac") {
+      const acCodes = new Set((device.status || []).map((s) => s.code));
+      if (acCodes.has("power")) capabilities.add("on");
+      if (acCodes.has("temp")) capabilities.add("target_temp");
+      if (acCodes.has("mode")) capabilities.add("heating_mode");
+      if (acCodes.has("wind")) capabilities.add("rotation_speed");
+    }
+    // Non-AC IR remotes get just "on" (already added universally).
   }
 
   if (device.schema) {
@@ -1055,14 +1121,13 @@ function sendCommandsDebounced(tuyaDevice, commands, ctx, log) {
       try {
         await ctx.deviceManager.sendCommands(tuyaDevice.id, cmds);
       } catch (e) {
+        // Command failed — log but do NOT push stale lastKnownState back
+        // to the backend. The backend already updated the device state
+        // (optimistically) before forwarding the command to us. Pushing
+        // old state here would race with and overwrite that update.
+        // The next MQTT status message from the device will correct any
+        // drift naturally.
         log("error", `Command failed for ${tuyaDevice.id}: ${e.message}`);
-        if (ctx.lastKnownState.has(tuyaDevice.id)) {
-          const prevState = ctx.lastKnownState.get(tuyaDevice.id);
-          const doimusID = ctx.doimusDeviceMap.get(tuyaDevice.id);
-          if (doimusID && ctx.apiRef) {
-            ctx.apiRef.updateDeviceState(doimusID, prevState);
-          }
-        }
       }
     }, 50);
   ctx.debounceMap.set(key, debounced);
@@ -1327,6 +1392,8 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
   log("info", `Registering ${devices.length} Tuya device(s) with Doimus.`);
 
   for (const device of devices) {
+    // Skip IR control hubs — they are bridges for sub-devices (remotes).
+    if (device.isIRControlHub && device.isIRControlHub()) continue;
     applySchemaOverride(device, options);
     const type = getDoimusType(device, options);
     if (type === "hidden") continue;
@@ -1420,6 +1487,9 @@ module.exports = {
     }
 
     const { dm, uid, debugMode } = result;
+
+    // Populate IR remote sub-devices (keys, AC status, etc.) before registration.
+    await dm.updateInfraredRemotes(dm.devices);
 
     await persistDeviceList(api, dm, uid, log);
     await registerDevicesWithDoimus(api, dm, options, ctx, log);
@@ -1642,6 +1712,68 @@ module.exports = {
         const tuyaDevice = dm.getDevice(tuyaID);
         if (!tuyaDevice) return;
 
+        // ── IR remote sub-devices ───────────────────────────────────────────
+        if (tuyaDevice.isIRRemoteControl && tuyaDevice.isIRRemoteControl()) {
+          if (tuyaDevice.category === "infrared_ac") {
+            // Build complete AC command state from current status + delta.
+            const cur = {};
+            for (const s of tuyaDevice.status || []) {
+              if (s.code === "power") cur.power = Number(s.value);
+              if (s.code === "mode") cur.mode = Number(s.value);
+              if (s.code === "temp") cur.temp = Number(s.value);
+              if (s.code === "wind") cur.wind = Number(s.value);
+            }
+            if (key === "on") cur.power = value === true ? 1 : 0;
+            if (key === "target_temp") cur.temp = Number(value);
+            if (key === "heating_mode") cur.mode = Number(value);
+            if (key === "rotation_speed") cur.wind = Number(value);
+            await dm.sendInfraredACCommands(
+              tuyaDevice.parent_id,
+              tuyaDevice.id,
+              cur.power,
+              cur.mode,
+              cur.temp,
+              cur.wind,
+            );
+            // Optimistically update state so UI reflects change immediately.
+            const newState = {};
+            if (cur.power !== undefined) newState.on = cur.power === 1;
+            if (cur.temp !== undefined) newState.target_temp = cur.temp;
+            if (cur.mode !== undefined) newState.heating_mode = cur.mode;
+            if (cur.wind !== undefined) newState.rotation_speed = cur.wind;
+            api.updateDeviceState(deviceID, newState);
+            ctx.lastKnownState.set(tuyaDevice.id, {
+              ...ctx.lastKnownState.get(tuyaDevice.id),
+              ...newState,
+            });
+          } else {
+            // Non-AC IR remote — find the power key and send it.
+            const keyList =
+              tuyaDevice.remote_keys && tuyaDevice.remote_keys.key_list;
+            if (keyList && key === "on") {
+              const powerKey = keyList.find(
+                (k) => k.key === "power" || /power/i.test(k.key_name || ""),
+              );
+              if (powerKey) {
+                await dm.sendInfraredCommands(
+                  tuyaDevice.parent_id,
+                  tuyaDevice.id,
+                  5, // category_id for generic IR
+                  0, // remote_index
+                  powerKey.key,
+                  powerKey.key_id,
+                );
+                api.updateDeviceState(deviceID, { on: value === true });
+                ctx.lastKnownState.set(tuyaDevice.id, {
+                  ...ctx.lastKnownState.get(tuyaDevice.id),
+                  on: value === true,
+                });
+              }
+            }
+          }
+          return; // IR command handled — skip normal flow.
+        }
+
         let commands = [];
 
         if (key === "on") {
@@ -1843,11 +1975,21 @@ module.exports = {
       );
       if (Object.keys(state).length > 0) {
         state.online = device.online;
-        api.updateDeviceState(doimusID, state);
-        ctx.lastKnownState.set(device.id, {
-          ...ctx.lastKnownState.get(device.id),
-          ...state,
-        });
+        // Only push update if values actually changed — prevents MQTT
+        // heartbeats from overwriting recently-commanded state (e.g. blind
+        // position set to 100 by the app, then a heartbeat arrives with the
+        // old percent_control=0 and reverts it back).
+        const lastKnown = ctx.lastKnownState.get(device.id) || {};
+        const changed = Object.keys(state).some(
+          (k) => JSON.stringify(state[k]) !== JSON.stringify(lastKnown[k]),
+        );
+        if (changed) {
+          api.updateDeviceState(doimusID, state);
+          ctx.lastKnownState.set(device.id, {
+            ...lastKnown,
+            ...state,
+          });
+        }
       }
 
       // Camera / doorbell / mobilecam image capture from MQTT
@@ -1874,6 +2016,8 @@ module.exports = {
     });
 
     dm.on(TuyaDeviceManager.Events.DEVICE_ADD, async (device) => {
+      // Skip IR control hubs — they are bridges for sub-devices (remotes).
+      if (device.isIRControlHub && device.isIRControlHub()) return;
       log("info", `New device added: ${device.name}`);
       const options2 = (cfg && cfg.options) || {};
       device.schema = await dm.getDeviceSchema(device.id);
