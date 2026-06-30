@@ -902,38 +902,31 @@ function getDeviceSchemaConfig(device, code, options) {
 
 function buildCommand(commandSchemas, code, value) {
   const schema = commandSchemas.find((s) => s.code === code);
-  if (!schema) return { code, value };
-
-  // Determine scale factor (default 1 = no scaling).
-  const scale =
-    schema.property && schema.property.scale != null
-      ? Math.pow(10, schema.property.scale)
-      : 1;
-
-  // Clamp to min/max range when bounds are defined.
-  if (
-    schema.property &&
-    schema.property.min !== undefined &&
-    schema.property.max !== undefined &&
-    typeof value === "number"
-  ) {
-    const realMin = schema.property.min / scale;
-    const realMax = schema.property.max / scale;
-    value = Math.max(realMin, Math.min(realMax, value));
+  if (schema) {
+    if (
+      schema.property &&
+      schema.property.min !== undefined &&
+      schema.property.max !== undefined
+    ) {
+      const scale =
+        schema.property.scale != null ? Math.pow(10, schema.property.scale) : 1;
+      if (typeof value === "number") {
+        const realMin = schema.property.min / scale;
+        const realMax = schema.property.max / scale;
+        value = Math.max(realMin, Math.min(realMax, value));
+      }
+      if (schema.type === "Enum") {
+        return { code, value: String(value) };
+      } else if (schema.type === "Integer") {
+        return { code, value: Math.round(Number(value) * scale) };
+      } else if (schema.type === "Boolean") {
+        return {
+          code,
+          value: value === true || value === 1 || value === "true",
+        };
+      }
+    }
   }
-
-  if (schema.type === "Enum") {
-    return { code, value: String(value) };
-  } else if (schema.type === "Integer") {
-    return { code, value: Math.round(Number(value) * scale) };
-  } else if (schema.type === "Boolean") {
-    return {
-      code,
-      value: value === true || value === 1 || value === "true",
-    };
-  }
-
-  // Unknown type or no property block — send raw value.
   return { code, value };
 }
 
@@ -1691,7 +1684,11 @@ module.exports = {
         const info = await dm.getDeviceInfo(device.id);
         if (info.success && info.result && info.result.local_key) {
           device.local_key = info.result.local_key;
-          log("info", `Fetched local_key for camera device "${device.name}"`);
+          // TEMP: expose for decode debugging — revert after capture
+          log(
+            "info",
+            `Camera device "${device.name}" id=${device.id} local_key=${info.result.local_key}`,
+          );
         } else {
           log(
             "warn",
@@ -2209,9 +2206,10 @@ module.exports = {
         for (const item of status) {
           if (motionDPs.includes(item.code) && item.value) {
             const valStr = String(item.value);
+            // TEMP: log full value for decode debugging — revert after capture
             log(
               "info",
-              `Motion DP received: device="${device.name}" code=${item.code} len=${valStr.length} preview="${valStr.slice(0, 60)}..."`,
+              `Motion DP RAW: device="${device.name}" code=${item.code} len=${valStr.length} value=${valStr}`,
             );
           }
         }
