@@ -636,6 +636,97 @@ function createPluginInstance() {
   };
 }
 
+/**
+ * Decrypt a camera image from Tuya MQTT status codes.
+ *
+ * Handles two formats:
+ * 1. initiative_message — JSON with hex-encoded AES-128-CBC data (v4.0)
+ * 2. movement_detect_pic / doorbell_pic — base64 AES-128-ECB data
+ *
+ * Returns a JPEG Buffer or null.
+ */
+function tryDecodeCameraImage(device, status, log) {
+  const localKey = device.local_key;
+  if (!localKey) return null;
+
+  for (const item of status) {
+    if (typeof item.value !== "string" || item.value.length === 0) continue;
+
+    const jpeg =
+      tryDecodeInitiativeMessage(item, localKey) ||
+      tryDecodeDoorbellPic(item, localKey);
+
+    if (jpeg) {
+      log(
+        "info",
+        `Camera image captured: device="${device.name}" code=${item.code} size=${jpeg.length}B`,
+      );
+      return jpeg;
+    }
+  }
+  return null;
+}
+
+function tryDecodeInitiativeMessage(item, localKey) {
+  if (item.code !== "initiative_message") return null;
+  try {
+    const msg = JSON.parse(item.value);
+    if (!msg.files || msg.files.length === 0) return null;
+
+    const key = Buffer.from(localKey, "utf8");
+    for (const file of msg.files) {
+      if (!file.data || !file.iv) continue;
+      try {
+        const encrypted = Buffer.from(file.data, "hex");
+        const iv = Buffer.from(file.iv, "hex");
+        const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
+        decipher.setAutoPadding(true);
+        const decrypted = Buffer.concat([
+          decipher.update(encrypted),
+          decipher.final(),
+        ]);
+        if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
+          return decrypted;
+        }
+      } catch (_) {
+        // try next file or key derivation
+      }
+    }
+  } catch (_) {
+    // not valid JSON
+  }
+  return null;
+}
+
+function tryDecodeDoorbellPic(item, localKey) {
+  if (!["movement_detect_pic", "doorbell_pic", "ipc_human"].includes(item.code))
+    return null;
+  try {
+    const encrypted = Buffer.from(item.value, "base64");
+    // Try raw local_key, then MD5(local_key) — Tuya cameras vary
+    const rawKey = Buffer.from(localKey, "utf8");
+    const md5Key = crypto.createHash("md5").update(localKey).digest();
+    for (const key of [rawKey, md5Key]) {
+      try {
+        const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
+        decipher.setAutoPadding(true);
+        const decrypted = Buffer.concat([
+          decipher.update(encrypted),
+          decipher.final(),
+        ]);
+        if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
+          return decrypted;
+        }
+      } catch (_) {
+        // try next key
+      }
+    }
+  } catch (_) {
+    // not valid base64
+  }
+  return null;
+}
+
 // Module-level reference to the current plugin context so stop() can access it.
 let _ctx = null;
 
@@ -1366,6 +1457,14 @@ module.exports = {
           ...ctx.lastKnownState.get(device.id),
           ...state,
         });
+      }
+
+      // Camera / doorbell image capture from MQTT
+      if (["sp", "doorbell"].includes(device.category)) {
+        const jpeg = tryDecodeCameraImage(device, status, log);
+        if (jpeg) {
+          api.sendMjpegFrame(doimusID, "main", jpeg);
+        }
       }
     });
 
