@@ -357,7 +357,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       // Camera PIR/human detection — set motion for camera-type devices only.
       // Doorbell-type devices use doorbell_pic instead (handled below).
       if (
-        ["sp", "mobilecam"].includes(device.category) &&
+        ["sp", "mobilecam", "wxml"].includes(device.category) &&
         typeof value === "string" &&
         value.length > 0
       ) {
@@ -380,12 +380,12 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       // SOS/panic button — mapped to tamper for alarm notification
       state.tamper =
         value === true || value === 1 || value === "alarm" || value === "sos";
-    } else if (
-      code === "percent_control" ||
-      code === "control_back" ||
-      code === "position"
-    ) {
+    } else if (code === "percent_control" || code === "position") {
       state.position = Number(value);
+    } else if (code === "control_back" || code === "control") {
+      // Direction-only DP — don't map to position.
+      // Values like "open"/"close"/"stop" are not numeric.
+      state.control = String(value);
     } else if (code === "work_state" || code === "mode") {
       state.mode = String(value);
       // Also map numeric mode values to heating_mode where applicable.
@@ -468,7 +468,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
   // (the full maintained array) rather than statusList (which may be a
   // partial MQTT update) to reliably detect the absence of motion.
   if (
-    ["sp", "mobilecam", "doorbell"].includes(device.category) &&
+    ["sp", "mobilecam", "doorbell", "wxml"].includes(device.category) &&
     state.motion === undefined
   ) {
     const fullStatus = device.status || [];
@@ -533,15 +533,14 @@ function determineCapabilities(device) {
       }
       break;
     case "blind":
-      // Only add "position" capability for writable DPs — exclude
-      // read-only codes like "percent_state" that can't accept commands.
-      // Uses the same matching logic as onCommand for consistency.
+      // Only add "position" capability for writable position DPs — exclude
+      // read-only codes like "percent_state" and direction-only codes like
+      // "control_back" (which takes "open"/"close"/"stop", not 0-100).
       if (
         device.schema &&
         device.schema.some(
           (s) =>
             (s.code.startsWith("percent") && s.code !== "percent_state") ||
-            s.code === "control_back" ||
             s.code === "position",
         )
       ) {
@@ -953,7 +952,11 @@ function createPluginInstance() {
 function tryDecodeCameraImage(device, status, log) {
   const localKey = device.local_key;
   if (!localKey) {
-    if (log) log("debug", `Camera image decode skipped: no local_key for "${device.name}"`);
+    if (log)
+      log(
+        "debug",
+        `Camera image decode skipped: no local_key for "${device.name}"`,
+      );
     return null;
   }
 
@@ -973,9 +976,14 @@ function tryDecodeCameraImage(device, status, log) {
     }
   }
   if (log) {
-    const codes = status.filter((s) => typeof s.value === "string" && s.value.length > 0).map((s) => s.code);
+    const codes = status
+      .filter((s) => typeof s.value === "string" && s.value.length > 0)
+      .map((s) => s.code);
     if (codes.length > 0) {
-      log("debug", `Camera image decode: no JPEG extracted from codes=[${codes.join(",")}] for "${device.name}"`);
+      log(
+        "debug",
+        `Camera image decode: no JPEG extracted from codes=[${codes.join(",")}] for "${device.name}"`,
+      );
     }
   }
   return null;
@@ -1148,7 +1156,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
   // mobilecam / sp / doorbell devices (Magic S1, video peephole, wireless
   // doorbells) may use different protocol versions, port 6668, or different
   // key derivations (raw, MD5, SHA256). Try all plausible combinations.
-  const isCamera = ["mobilecam", "sp", "doorbell"].includes(
+  const isCamera = ["mobilecam", "sp", "doorbell", "wxml"].includes(
     tuyaDevice.category,
   );
   const configs = isCamera
@@ -1670,7 +1678,7 @@ module.exports = {
     // The bulk device list API omits local_key — must fetch per-device.
     for (const device of dm.devices) {
       if (
-        ["sp", "doorbell", "mobilecam"].includes(device.category) &&
+        ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
         !device.local_key
       ) {
         const info = await dm.getDeviceInfo(device.id);
@@ -1690,7 +1698,7 @@ module.exports = {
     if (options.p2pAutoStart) {
       for (const device of dm.devices) {
         if (
-          ["sp", "doorbell", "mobilecam"].includes(device.category) &&
+          ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
           device.local_key
         ) {
           const doimusID = ctx.doimusDeviceMap.get(device.id);
@@ -1798,7 +1806,7 @@ module.exports = {
     let snapshotTimer = null;
     if (result.dm) {
       const cameraDevices = result.dm.devices.filter((d) =>
-        ["sp", "mobilecam"].includes(d.category),
+        ["sp", "mobilecam", "wxml"].includes(d.category),
       );
       if (cameraDevices.length > 0) {
         log(
@@ -1879,7 +1887,14 @@ module.exports = {
 
     api.onCommand(async (deviceID, key, value) => {
       const tuyaID = ctx.doimusDeviceMap.get(deviceID);
-      if (!tuyaID) return;
+      if (!tuyaID) {
+        log(
+          "warn",
+          `onCommand: no Tuya device mapped for doimusID="${deviceID}" ` +
+            `(key=${key}). Map has ${ctx.doimusDeviceMap.size} entries.`,
+        );
+        return;
+      }
       try {
         const tuyaDevice = dm.getDevice(tuyaID);
         if (!tuyaDevice) return;
@@ -2177,7 +2192,7 @@ module.exports = {
       }
 
       // Camera / doorbell / mobilecam image capture from MQTT
-      if (["sp", "doorbell", "mobilecam"].includes(device.category)) {
+      if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
         // Log raw motion DP data so we can iterate on decryption later.
         const motionDPs = [
           "movement_detect_pic",
@@ -2229,7 +2244,7 @@ module.exports = {
       device.schema = await dm.getDeviceSchema(device.id);
       // Fetch local_key for camera/doorbell/mobilecam devices (needed for image decryption)
       if (
-        ["sp", "doorbell", "mobilecam"].includes(device.category) &&
+        ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
         !device.local_key
       ) {
         const info = await dm.getDeviceInfo(device.id);
