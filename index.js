@@ -297,6 +297,48 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     } else if (code === "battery_percentage" || code === "battery_state") {
       state.battery = Number(value);
     } else if (
+      code === "battery_low" ||
+      code === "low_battery" ||
+      code === "battery_alarm"
+    ) {
+      state.battery_low =
+        value === true || value === 1 || value === "low" || value === "alarm";
+    } else if (
+      code === "water_sensor" ||
+      code === "water_leak" ||
+      code === "flood" ||
+      code === "ws" ||
+      code === "leak"
+    ) {
+      state.leak =
+        value === true || value === 1 || value === "alarm" || value === "leak";
+    } else if (
+      code === "presence_state" ||
+      code === "occupancy" ||
+      code === "human"
+    ) {
+      state.occupancy =
+        value === true ||
+        value === 1 ||
+        value === "presence" ||
+        value === "occupied" ||
+        value === "human";
+    } else if (
+      code === "load_status" ||
+      code === "outlet_in_use" ||
+      code === "usb_state"
+    ) {
+      state.outlet_in_use = value === true || value === 1 || value === "1";
+    } else if (
+      code === "movement_detect_pic" ||
+      code === "doorbell_pic" ||
+      code === "ipc_human"
+    ) {
+      // Camera/doorbell picture code — treat non-empty value as doorbell event.
+      // The jpeg itself is captured and sent via sendMjpegFrame, but we also
+      // set doorbell state so automations (e.g. push notification) can fire.
+      state.doorbell = typeof value === "string" && value.length > 0;
+    } else if (
       code === "percent_control" ||
       code === "control_back" ||
       code === "position"
@@ -304,6 +346,41 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.position = Number(value);
     } else if (code === "work_state" || code === "mode") {
       state.mode = String(value);
+      // Also map numeric mode values to heating_mode where applicable.
+      // Tuya thermostats encode mode as 0=off, 1=auto, 2=cool, 3=heat
+      // (ordering varies — we detect by checking for known strings first).
+      if (typeof value === "number" && Number.isFinite(value)) {
+        state.heating_mode = Number(value);
+      } else if (typeof value === "string") {
+        const modeMap = {
+          auto: 3,
+          heat: 1,
+          hot: 1,
+          warm: 1,
+          cool: 2,
+          cold: 2,
+          off: 0,
+        };
+        const mapped = modeMap[value.toLowerCase()];
+        if (mapped !== undefined) {
+          state.heating_mode = mapped;
+        }
+      }
+    } else if (code === "work_mode" || code === "hvac_mode") {
+      state.mode = String(value);
+      if (typeof value === "number" && Number.isFinite(value)) {
+        state.heating_mode = Number(value);
+      }
+    } else if (code === "switch_hvac") {
+      // HVAC master switch — maps to on state
+      state.on = value === true || value === 1;
+    } else if (code === "heat_state" || code === "heater") {
+      state.heating_state = value === true || value === 1 ? 1 : 0;
+      // Also set heating boolean for direct heating indicator
+      state.heating = value === true || value === 1;
+    } else if (code === "cool_state" || code === "cooler") {
+      state.heating_state = value === true || value === 1 ? 2 : 0;
+      state.cooling = value === true || value === 1;
     } else if (code === "child_lock") {
       state.child_lock = value === true || value === 1;
     } else if (code === "light") {
@@ -421,6 +498,33 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("temperature");
       }
+      // HVAC mode control (heat/cool/auto/off)
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "mode" ||
+            s.code === "work_mode" ||
+            s.code === "hvac_mode" ||
+            s.code === "switch_hvac",
+        )
+      ) {
+        capabilities.add("heating_mode");
+      }
+      // Current heating/cooling state (derived from mode or separate DP)
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "heat_state" ||
+            s.code === "heater" ||
+            s.code === "cool_state" ||
+            s.code === "cooler" ||
+            s.code === "work_state",
+        )
+      ) {
+        capabilities.add("heating_state");
+      }
       break;
     case "sensor":
       capabilities.delete("on");
@@ -485,6 +589,41 @@ function determineCapabilities(device) {
       if (
         device.schema &&
         device.schema.some(
+          (s) =>
+            s.code === "water_sensor" ||
+            s.code === "water_leak" ||
+            s.code === "flood" ||
+            s.code === "ws" ||
+            s.code === "leak",
+        )
+      ) {
+        capabilities.add("leak");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "presence_state" ||
+            s.code === "occupancy" ||
+            s.code === "human",
+        )
+      ) {
+        capabilities.add("occupancy");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "battery_low" ||
+            s.code === "low_battery" ||
+            s.code === "battery_alarm",
+        )
+      ) {
+        capabilities.add("battery_low");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
           (s) => s.code.startsWith("cur_") || s.code === "electricity",
         )
       ) {
@@ -522,6 +661,17 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("energy");
       }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "load_status" ||
+            s.code === "outlet_in_use" ||
+            s.code === "usb_state",
+        )
+      ) {
+        capabilities.add("outlet_in_use");
+      }
       break;
     case "camera":
       capabilities.add("on");
@@ -530,6 +680,42 @@ function determineCapabilities(device) {
       // mobilecam devices (Magic S1 etc.) have directional control
       if (device.category === "mobilecam") {
         capabilities.add("control");
+      }
+      // Doorbell button press (for cameras that act as doorbells)
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "movement_detect_pic" ||
+            s.code === "doorbell_pic" ||
+            s.code === "ipc_human",
+        )
+      ) {
+        capabilities.add("doorbell");
+      }
+      // Camera PIR / motion detection
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "motion_sensor" ||
+            s.code === "pir" ||
+            s.code === "motion_detect",
+        )
+      ) {
+        capabilities.add("motion");
+      }
+      // Battery-powered cameras
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "battery_percentage" ||
+            s.code === "battery_state" ||
+            s.code === "battery_value",
+        )
+      ) {
+        capabilities.add("battery");
       }
       break;
     case "doorbell":
@@ -1537,6 +1723,22 @@ module.exports = {
           if (tempSetSchema) {
             commands.push(
               buildCommand(tuyaDevice.schema, tempSetSchema.code, value),
+            );
+          }
+        } else if (key === "heating_mode") {
+          // Send numeric heating mode (0=off, 1=heat, 2=cool, 3=auto) to
+          // the Tuya mode/work_mode/hvac_mode DP. Value is a Doimus int.
+          const modeSchema = tuyaDevice.schema.find(
+            (s) =>
+              s.code === "mode" ||
+              s.code === "work_mode" ||
+              s.code === "hvac_mode",
+          );
+          if (modeSchema) {
+            // If the schema property defines a range (Enum), send the value
+            // as-is. Tuya expects the raw integer for numeric mode codes.
+            commands.push(
+              buildCommand(tuyaDevice.schema, modeSchema.code, value),
             );
           }
         } else if (key === "locked") {

@@ -255,26 +255,16 @@ class TuyaOpenMQ {
       }
 
       const message = JSON.parse(messageData);
+      const statusCodes = (message.status || []).map((s) => s.code).join(",");
       this.log.info(
-        "MQTT message: topic=%s protocol=%s devId=%s statusCodes=[%s]",
-        topic,
-        protocol,
-        message.devId || "?",
-        (message.status || []).map((s) => s.code).join(","),
-      );
-      this.log.info(
-        "MQTT message detail: " +
-          JSON.stringify(
-            {
-              topic,
-              protocol,
-              devId: message.devId,
-              status: message.status,
-              t,
-            },
-            null,
-            2,
-          ),
+        "MQTT: devId=" +
+          message.devId +
+          " proto=" +
+          protocol +
+          " codes=[" +
+          statusCodes +
+          "] " +
+          JSON.stringify({ topic, t, status: message.status }),
       );
 
       this._fixWrongOrderMessage(protocol, message, t);
