@@ -990,6 +990,12 @@ async function tryFetchMotionImage(device, status, dm, log) {
 
     const bucket = meta.bucket;
     const filePath = meta.files[0][0];
+    // Some devices include a per-event encryption key in the metadata
+    // (e.g. files[0][1] = "532016f85b6f48c9"). When present, the S3 file
+    // is an encrypted binary blob with a 68-byte header:
+    //   [4 bytes version LE][16 bytes IV][48 bytes reserved][ciphertext]
+    // Decrypt with AES-128-CBC using the provided key.
+    const encKey = meta.files[0][1] || null;
 
     log(
       "info",
@@ -1024,9 +1030,9 @@ async function tryFetchMotionImage(device, status, dm, log) {
       continue;
     }
 
-    // Step 2: Download JPEG from S3 presigned URL
+    // Step 2: Download from S3 presigned URL
     try {
-      const jpeg = await new Promise((resolve, reject) => {
+      const raw = await new Promise((resolve, reject) => {
         https
           .get(s3Url, (res) => {
             if (res.statusCode !== 200) {
@@ -1040,17 +1046,45 @@ async function tryFetchMotionImage(device, status, dm, log) {
           .on("error", reject);
       });
 
-      if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
+      // Plain JPEG (no encryption).
+      if (raw[0] === 0xff && raw[1] === 0xd8) {
         log(
           "info",
-          `Motion image fetched: device="${device.name}" size=${jpeg.length}B`,
+          `Motion image fetched: device="${device.name}" size=${raw.length}B`,
         );
-        return jpeg;
+        return raw;
       }
-      log(
-        "debug",
-        `S3 response is not JPEG for "${device.name}": magic=${jpeg.slice(0, 4).toString("hex")}`,
-      );
+
+      // Encrypted blob: [4 bytes version LE][16 bytes IV][48 bytes header][ciphertext]
+      if (encKey && raw.length > 68) {
+        const iv = raw.slice(4, 20);
+        const ciphertext = raw.slice(68);
+        const aesKey = Buffer.from(encKey, "utf8");
+
+        const decipher = crypto.createDecipheriv("aes-128-cbc", aesKey, iv);
+        decipher.setAutoPadding(true);
+        const jpeg = Buffer.concat([
+          decipher.update(ciphertext),
+          decipher.final(),
+        ]);
+
+        if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
+          log(
+            "info",
+            `Motion image decrypted: device="${device.name}" size=${jpeg.length}B`,
+          );
+          return jpeg;
+        }
+        log(
+          "debug",
+          `AES decrypt produced non-JPEG for "${device.name}": magic=${jpeg.slice(0, 4).toString("hex")}`,
+        );
+      } else {
+        log(
+          "debug",
+          `S3 response not JPEG (no encKey) for "${device.name}": magic=${raw.slice(0, 4).toString("hex")}`,
+        );
+      }
     } catch (e) {
       log("warn", `S3 fetch failed for "${device.name}": ${e.message}`);
     }
