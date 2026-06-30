@@ -104,17 +104,17 @@
                   "description": "Category code or `hidden`",
                   "type": "string"
                 },
-                "unbridged": {
-                  "title": "Unbridge",
-                  "type": "boolean"
-                },
                 "schema": {
                   "title": "Schema Override Configs",
                   "type": "array",
                   "items": {
                     "type": "object",
                     "properties": {
-                      "code": { "title": "DP Code", "type": "string", "required": true },
+                      "code": {
+                        "title": "DP Code",
+                        "type": "string",
+                        "required": true
+                      },
                       "newCode": { "title": "New DP Code", "type": "string" },
                       "type": {
                         "title": "New DP Type",
@@ -158,7 +158,7 @@
           },
           "debugLevel": {
             "title": "Debug Level",
-            "description": "Comma-separated list. `api` for API/MQTT logs, device ID for specific device logs.",
+            "description": "Set to `api` to enable verbose API/MQTT request logging. Leave empty for device-level debug only.",
             "type": "string",
             "condition": {
               "functionBody": "return model.options && model.options.debug;"
