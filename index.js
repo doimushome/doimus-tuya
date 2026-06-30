@@ -243,10 +243,14 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       }
     }
 
-    if (code === "switch" || code === "switch_1") {
+    if (
+      code === "switch" ||
+      (code.startsWith("switch_") && !isNaN(Number(code.slice(7))))
+    ) {
       // Defer to relay_status if present — it reflects physical relay state,
-      // while switch_1 is a desired-state cached by Tuya Cloud that may be
+      // while switch_N is a desired-state cached by Tuya Cloud that may be
       // stale when the device is offline.
+      // Matches: switch, switch_1, switch_2, switch_3, etc.
       if (state._relayOverride === undefined) {
         state.on =
           value === true || value === "true" || value === 1 || value === "1";
@@ -1063,7 +1067,11 @@ async function tryFetchMotionImage(device, status, dm, log) {
         const aesKey = Buffer.from(encKey, "utf8");
 
         // Header sizes to try (4+16+header): MG-Sky=64, our guess=68, others.
-        const offsets = [64, 68, 72, 60, 56, 76, 80];
+        // Cache the first working offset per device to skip probing on subsequent events.
+        if (!ctx._snapshotOffsetCache) ctx._snapshotOffsetCache = new Map();
+        const cachedOffset = ctx._snapshotOffsetCache.get(device.id);
+        const offsets =
+          cachedOffset != null ? [cachedOffset] : [64, 68, 72, 60, 56, 76, 80];
         let success = false;
 
         for (const offset of offsets) {
@@ -1079,6 +1087,7 @@ async function tryFetchMotionImage(device, status, dm, log) {
             ]);
 
             if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
+              ctx._snapshotOffsetCache.set(device.id, offset);
               log(
                 "info",
                 `Motion image decrypted: device="${device.name}" size=${jpeg.length}B offset=${offset}`,
