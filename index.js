@@ -296,6 +296,9 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.gas = value === true || value === 1 || value === "alarm";
     } else if (code === "battery_percentage" || code === "battery_state") {
       state.battery = Number(value);
+    } else if (code === "battery_value") {
+      // Some Tuya sensors/cameras use battery_value (0-100)
+      state.battery = Number(value);
     } else if (
       code === "battery_low" ||
       code === "low_battery" ||
@@ -331,12 +334,13 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.outlet_in_use = value === true || value === 1 || value === "1";
     } else if (
       code === "movement_detect_pic" ||
-      code === "doorbell_pic" ||
       code === "ipc_human"
     ) {
-      // Camera/doorbell picture code — treat non-empty value as doorbell event.
-      // The jpeg itself is captured and sent via sendMjpegFrame, but we also
-      // set doorbell state so automations (e.g. push notification) can fire.
+      // Camera PIR/human detection — set motion state for automations.
+      // The jpeg itself is captured and sent via sendMjpegFrame separately.
+      state.motion = typeof value === "string" && value.length > 0;
+    } else if (code === "doorbell_pic") {
+      // Doorbell button press — set doorbell state for automations.
       state.doorbell = typeof value === "string" && value.length > 0;
     } else if (
       code === "percent_control" ||
@@ -568,7 +572,10 @@ function determineCapabilities(device) {
       }
       if (
         device.schema &&
-        device.schema.some((s) => s.code.startsWith("battery"))
+        device.schema.some(
+          (s) =>
+            s.code.startsWith("battery") || s.code === "va_battery",
+        )
       ) {
         capabilities.add("battery");
       }
@@ -624,9 +631,16 @@ function determineCapabilities(device) {
       if (
         device.schema &&
         device.schema.some(
-          (s) => s.code.startsWith("cur_") || s.code === "electricity",
+          (s) =>
+            s.code === "tamper" ||
+            s.code === "tamper_state" ||
+            s.code === "tamper_alarm" ||
+            s.code === "sos" ||
+            s.code === "sos_state",
         )
       ) {
+        capabilities.add("tamper");
+      }
         capabilities.add("current");
         capabilities.add("power");
         capabilities.add("voltage");
