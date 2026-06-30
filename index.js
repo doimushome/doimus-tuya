@@ -93,6 +93,7 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   fskg: "fan",
   yyj: "switch",
   sp: "camera",
+  mobilecam: "camera",
   ywbj: "sensor",
   mcs: "sensor",
   zd: "sensor",
@@ -524,6 +525,12 @@ function determineCapabilities(device) {
       break;
     case "camera":
       capabilities.add("on");
+      capabilities.add("p2p_start");
+      capabilities.add("p2p_stop");
+      // mobilecam devices (Magic S1 etc.) have directional control
+      if (device.category === "mobilecam") {
+        capabilities.add("control");
+      }
       break;
     case "doorbell":
       capabilities.delete("on");
@@ -739,54 +746,91 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
     return;
   }
 
-  log("info", `Starting P2P live view for "${tuyaDevice.name}" (${ip}:554)`);
+  // mobilecam devices (Magic S1) may use port 6668, need different protocol
+  // versions, or require the MD5-hashed local_key instead of the raw key.
+  const configs =
+    tuyaDevice.category === "mobilecam"
+      ? [
+          [554, 3.5, "md5"],
+          [554, 3.5, "raw"],
+          [554, 3.1, "md5"],
+          [554, 3.1, "raw"],
+          [554, 3.3, "md5"],
+          [554, 3.3, "raw"],
+          [6668, 3.5, "md5"],
+          [6668, 3.5, "raw"],
+        ]
+      : [[554, 3.4, "raw"]];
 
-  const p2p = new TuyaP2P({
-    deviceId: tuyaDevice.id,
-    ip,
-    port: 554,
-    localKey: tuyaDevice.local_key,
-    version: 3.4,
-    log: {
-      info: (m) => log("info", `[P2P] ${m}`),
-      debug: (m) => log("debug", `[P2P] ${m}`),
-      warn: (m) => log("warn", `[P2P] ${m}`),
-      error: (m) => log("error", `[P2P] ${m}`),
-    },
-  });
-
-  p2p.on("frame", (jpeg) => {
-    api.sendMjpegFrame(doimusID, "main", jpeg);
-  });
-
-  p2p.on("error", (err) => {
-    log("error", `P2P error for "${tuyaDevice.name}": ${err.message}`);
-    ctx.p2pClients.delete(doimusID);
-  });
-
-  p2p.on("close", () => {
-    log("info", `P2P connection closed for "${tuyaDevice.name}"`);
-    ctx.p2pClients.delete(doimusID);
-  });
-
-  p2p.on("streaming", (active) => {
+  for (const [port, version, keyType] of configs) {
+    const localKey =
+      keyType === "md5"
+        ? crypto.createHash("md5").update(tuyaDevice.local_key).digest("hex")
+        : tuyaDevice.local_key;
     log(
       "info",
-      `P2P streaming ${active ? "started" : "stopped"} for "${tuyaDevice.name}"`,
+      `Trying P2P for "${tuyaDevice.name}" (${ip}:${port} v${version} key=${keyType})`,
     );
-  });
 
-  try {
-    await p2p.connect();
-    await p2p.startVideoStream();
-    ctx.p2pClients.set(doimusID, p2p);
-  } catch (e) {
-    log(
-      "error",
-      `P2P connection failed for "${tuyaDevice.name}": ${e.message || e}`,
-    );
-    p2p.close();
+    const p2p = new TuyaP2P({
+      deviceId: tuyaDevice.id,
+      ip,
+      port,
+      localKey,
+      version,
+      log: {
+        info: (m) => log("info", `[P2P] ${m}`),
+        debug: (m) => log("debug", `[P2P] ${m}`),
+        warn: (m) => log("warn", `[P2P] ${m}`),
+        error: (m) => log("error", `[P2P] ${m}`),
+      },
+    });
+
+    let succeeded = false;
+    p2p.on("frame", (jpeg) => {
+      log(
+        "debug",
+        `P2P frame received for "${tuyaDevice.name}": ${jpeg.length} bytes`,
+      );
+      api.sendMjpegFrame(doimusID, "main", jpeg);
+    });
+
+    p2p.on("error", (err) => {
+      log("error", `P2P error for "${tuyaDevice.name}": ${err.message}`);
+      ctx.p2pClients.delete(doimusID);
+    });
+
+    p2p.on("close", () => {
+      log("info", `P2P connection closed for "${tuyaDevice.name}"`);
+      ctx.p2pClients.delete(doimusID);
+    });
+
+    p2p.on("streaming", (active) => {
+      log(
+        "info",
+        `P2P streaming ${active ? "started" : "stopped"} for "${tuyaDevice.name}"`,
+      );
+    });
+
+    try {
+      await p2p.connect();
+      await p2p.startVideoStream();
+      ctx.p2pClients.set(doimusID, p2p);
+      log(
+        "info",
+        `P2P connected successfully to "${tuyaDevice.name}" (${ip}:${port} v${version})`,
+      );
+      return; // success — stop trying other configs
+    } catch (e) {
+      log("warn", `P2P ${ip}:${port} v${version} failed: ${e.message || e}`);
+      try {
+        p2p.close();
+      } catch (_) {}
+      // continue to next config
+    }
   }
+
+  log("error", `All P2P configs failed for "${tuyaDevice.name}"`);
 }
 
 function stopP2P(doimusID, ctx, log) {
@@ -1181,7 +1225,10 @@ module.exports = {
     // Fetch local_key for camera/doorbell devices (needed for image decryption).
     // The bulk device list API omits local_key — must fetch per-device.
     for (const device of dm.devices) {
-      if (["sp", "doorbell"].includes(device.category) && !device.local_key) {
+      if (
+        ["sp", "doorbell", "mobilecam"].includes(device.category) &&
+        !device.local_key
+      ) {
         const info = await dm.getDeviceInfo(device.id);
         if (info.success && info.result && info.result.local_key) {
           device.local_key = info.result.local_key;
@@ -1198,7 +1245,10 @@ module.exports = {
     // Auto-start P2P for camera devices (opt-in via config.p2pAutoStart for testing)
     if (options.p2pAutoStart) {
       for (const device of dm.devices) {
-        if (["sp", "doorbell"].includes(device.category) && device.local_key) {
+        if (
+          ["sp", "doorbell", "mobilecam"].includes(device.category) &&
+          device.local_key
+        ) {
           const doimusID = ctx.doimusDeviceMap.get(device.id);
           if (doimusID) {
             log("info", `Auto-starting P2P for camera "${device.name}"`);
@@ -1303,8 +1353,8 @@ module.exports = {
     // Periodic MJPEG snapshot for camera devices
     let snapshotTimer = null;
     if (result.dm) {
-      const cameraDevices = result.dm.devices.filter(
-        (d) => d.category === "sp",
+      const cameraDevices = result.dm.devices.filter((d) =>
+        ["sp", "mobilecam"].includes(d.category),
       );
       if (cameraDevices.length > 0) {
         log(
@@ -1582,8 +1632,8 @@ module.exports = {
         });
       }
 
-      // Camera / doorbell image capture from MQTT
-      if (["sp", "doorbell"].includes(device.category)) {
+      // Camera / doorbell / mobilecam image capture from MQTT
+      if (["sp", "doorbell", "mobilecam"].includes(device.category)) {
         const jpeg = tryDecodeCameraImage(device, status, log);
         if (jpeg) {
           api.sendMjpegFrame(doimusID, "main", jpeg);
@@ -1609,8 +1659,11 @@ module.exports = {
       log("info", `New device added: ${device.name}`);
       const options2 = (cfg && cfg.options) || {};
       device.schema = await dm.getDeviceSchema(device.id);
-      // Fetch local_key for camera/doorbell devices (needed for image decryption)
-      if (["sp", "doorbell"].includes(device.category) && !device.local_key) {
+      // Fetch local_key for camera/doorbell/mobilecam devices (needed for image decryption)
+      if (
+        ["sp", "doorbell", "mobilecam"].includes(device.category) &&
+        !device.local_key
+      ) {
         const info = await dm.getDeviceInfo(device.id);
         if (info.success && info.result && info.result.local_key) {
           device.local_key = info.result.local_key;

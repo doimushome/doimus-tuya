@@ -262,12 +262,19 @@ class TuyaOpenMQ {
         message.devId || "?",
         (message.status || []).map((s) => s.code).join(","),
       );
-      this.log.debug(
-        "MQTT message detail:\ntopic = %s\nprotocol = %s\nmessage = %s\nt = %s",
-        topic,
-        protocol,
-        JSON.stringify(message, null, 2),
-        t,
+      this.log.info(
+        "MQTT message detail: " +
+          JSON.stringify(
+            {
+              topic,
+              protocol,
+              devId: message.devId,
+              status: message.status,
+              t,
+            },
+            null,
+            2,
+          ),
       );
 
       this._fixWrongOrderMessage(protocol, message, t);
