@@ -29,7 +29,12 @@ const PREFIX_6699_BIN = Buffer.from("00006699", "hex");
 const SUFFIX_6699 = 0x00009966;
 const SUFFIX_6699_BIN = Buffer.from("00009966", "hex");
 
-const PROTOCOL_VERSION_BYTES = { "3.1": "3.1", "3.3": "3.3", "3.4": "3.4", "3.5": "3.5" };
+const PROTOCOL_VERSION_BYTES = {
+  3.1: "3.1",
+  3.3: "3.3",
+  3.4: "3.4",
+  3.5: "3.5",
+};
 const PROTOCOL_3x_HEADER = Buffer.alloc(12, 0);
 
 // Message commands
@@ -47,8 +52,13 @@ const CMD = {
 };
 
 const NO_PROTOCOL_HEADER_CMDS = new Set([
-  CMD.DP_QUERY, CMD.DP_QUERY_NEW, CMD.UPDATEDPS, CMD.HEART_BEAT,
-  CMD.SESS_KEY_NEG_START, CMD.SESS_KEY_NEG_RESP, CMD.SESS_KEY_NEG_FINISH,
+  CMD.DP_QUERY,
+  CMD.DP_QUERY_NEW,
+  CMD.UPDATEDPS,
+  CMD.HEART_BEAT,
+  CMD.SESS_KEY_NEG_START,
+  CMD.SESS_KEY_NEG_RESP,
+  CMD.SESS_KEY_NEG_FINISH,
   CMD.LAN_EXT_STREAM,
 ]);
 
@@ -70,14 +80,18 @@ function aesDecryptECB(key, ciphertext) {
 }
 
 function aesEncryptGCM(key, plaintext, iv, aad) {
-  const cipher = crypto.createCipheriv("aes-128-gcm", key, iv, { authTagLength: 16 });
+  const cipher = crypto.createCipheriv("aes-128-gcm", key, iv, {
+    authTagLength: 16,
+  });
   if (aad) cipher.setAAD(aad);
   const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   return { encrypted, tag: cipher.getAuthTag() };
 }
 
 function aesDecryptGCM(key, ciphertext, iv, tag, aad) {
-  const decipher = crypto.createDecipheriv("aes-128-gcm", key, iv, { authTagLength: 16 });
+  const decipher = crypto.createDecipheriv("aes-128-gcm", key, iv, {
+    authTagLength: 16,
+  });
   if (aad) decipher.setAAD(aad);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
@@ -109,7 +123,7 @@ function packMessage(msg) {
     const totalPayloadLen = 12 + encrypted.length + 16; // 12B iv + data + 16B tag
     const header = Buffer.alloc(20);
     header.writeUInt32BE(PREFIX_6699, 0);
-    header.writeUInt32BE(0, 4);        // unknown
+    header.writeUInt32BE(0, 4); // unknown
     header.writeUInt32BE(msg.seqno, 8);
     header.writeUInt32BE(msg.cmd, 12);
     header.writeUInt32BE(totalPayloadLen, 16);
@@ -165,7 +179,7 @@ function unpackMessage(data, hmacKey, version) {
     suffixBin = SUFFIX_6699_BIN;
   } else if (prefix === PREFIX_55AA) {
     headerLen = 16;
-    endLen = hmacKey ? (32 + 4) : (4 + 4); // HMAC(32) or CRC(4) + suffix(4)
+    endLen = hmacKey ? 32 + 4 : 4 + 4; // HMAC(32) or CRC(4) + suffix(4)
     prefixVal = PREFIX_55AA;
     suffixBin = SUFFIX_55AA_BIN;
   } else {
@@ -198,11 +212,16 @@ function unpackMessage(data, hmacKey, version) {
     throw new Error("Invalid suffix");
   }
 
-  let payload, iv = null, crcGood = true;
+  let payload,
+    iv = null,
+    crcGood = true;
 
   if (use6699) {
     iv = rawPayload.slice(0, 12);
-    const tag = rawPayload.slice(rawPayload.length - endLen + 4, rawPayload.length - 4); // before suffix
+    const tag = rawPayload.slice(
+      rawPayload.length - endLen + 4,
+      rawPayload.length - 4,
+    ); // before suffix
     const encrypted = rawPayload.slice(12, rawPayload.length - endLen + 4);
 
     const headerArea = Buffer.alloc(12);
@@ -217,10 +236,16 @@ function unpackMessage(data, hmacKey, version) {
       payload = encrypted; // return raw encrypted if decryption fails
     }
   } else if (hmacKey) {
-    const hmac = rawPayload.slice(rawPayload.length - 36, rawPayload.length - 4);
+    const hmac = rawPayload.slice(
+      rawPayload.length - 36,
+      rawPayload.length - 4,
+    );
     payload = rawPayload.slice(0, rawPayload.length - 36);
     const preCRC = data.slice(0, totalLen - 36);
-    const expected = crypto.createHmac("sha256", hmacKey).update(preCRC).digest();
+    const expected = crypto
+      .createHmac("sha256", hmacKey)
+      .update(preCRC)
+      .digest();
     crcGood = hmac.equals(expected);
   } else {
     const crc = rawPayload.readUInt32BE(rawPayload.length - 8);
@@ -237,7 +262,7 @@ function unpackMessage(data, hmacKey, version) {
 const CRC32_TABLE = new Int32Array(256);
 for (let i = 0; i < 256; i++) {
   let c = i;
-  for (let j = 0; j < 8; j++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+  for (let j = 0; j < 8; j++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
   CRC32_TABLE[i] = c;
 }
 
@@ -268,7 +293,12 @@ class TuyaP2P extends EventEmitter {
     this.port = opts.port || DEFAULT_PORT;
     this.realLocalKey = Buffer.from(opts.localKey || "", "utf8");
     this.version = opts.version || 3.4;
-    this.log = opts.log || { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} };
+    this.log = opts.log || {
+      info: () => {},
+      debug: () => {},
+      warn: () => {},
+      error: () => {},
+    };
 
     // Session state
     this.localKey = this.realLocalKey;
@@ -323,6 +353,7 @@ class TuyaP2P extends EventEmitter {
 
   close() {
     this.streaming = false;
+    this._streamDataLogged = false;
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
@@ -347,7 +378,10 @@ class TuyaP2P extends EventEmitter {
     // Step 2: receive remote nonce + HMAC
     const rkey = await this._receiveOne(5000);
     if (!rkey || rkey.cmd !== CMD.SESS_KEY_NEG_RESP) {
-      throw new Error("Session key negotiation failed at step 2: " + (rkey ? `cmd=${rkey.cmd}` : "no response"));
+      throw new Error(
+        "Session key negotiation failed at step 2: " +
+          (rkey ? `cmd=${rkey.cmd}` : "no response"),
+      );
     }
 
     let payload = rkey.payload;
@@ -357,24 +391,33 @@ class TuyaP2P extends EventEmitter {
     }
 
     if (payload.length < 48) {
-      throw new Error("Session key negotiation step 2 payload too short: " + payload.length);
+      throw new Error(
+        "Session key negotiation step 2 payload too short: " + payload.length,
+      );
     }
 
     this.remoteNonce = payload.slice(0, 16);
-    const hmacCheck = crypto.createHmac("sha256", this.localKey).update(this.localNonce).digest();
+    const hmacCheck = crypto
+      .createHmac("sha256", this.localKey)
+      .update(this.localNonce)
+      .digest();
 
     if (!hmacCheck.equals(payload.slice(16, 48))) {
       throw new Error("Session key negotiation step 2 HMAC mismatch");
     }
 
     // Step 3: send HMAC of remote nonce
-    const rkeyHmac = crypto.createHmac("sha256", this.localKey).update(this.remoteNonce).digest();
+    const rkeyHmac = crypto
+      .createHmac("sha256", this.localKey)
+      .update(this.remoteNonce)
+      .digest();
     const step3 = this._buildMessage(CMD.SESS_KEY_NEG_FINISH, rkeyHmac);
     this.socket.write(step3);
 
     // Compute session key: XOR local_nonce ^ remote_nonce, then encrypt
     const xored = Buffer.alloc(16);
-    for (let i = 0; i < 16; i++) xored[i] = this.localNonce[i] ^ this.remoteNonce[i];
+    for (let i = 0; i < 16; i++)
+      xored[i] = this.localNonce[i] ^ this.remoteNonce[i];
 
     if (this.version === 3.4) {
       this.localKey = aesEncryptECB(this.realLocalKey, xored);
@@ -409,6 +452,45 @@ class TuyaP2P extends EventEmitter {
     this.recvBuf = Buffer.concat([this.recvBuf, chunk]);
     // Emit raw data for streaming mode
     if (this.streaming) {
+      // Log first few bytes of data to help diagnose missing frames.
+      if (!this._streamDataLogged) {
+        this._streamDataLogged = true;
+        const preview = this.recvBuf.slice(
+          0,
+          Math.min(16, this.recvBuf.length),
+        );
+        this.log.debug(
+          `[P2P] Streaming data preview (first %d bytes): %s`,
+          preview.length,
+          preview.toString("hex"),
+        );
+      }
+      // Try parsing protocol messages first — some cameras send video data
+      // wrapped in LAN_EXT_STREAM messages rather than raw frames.
+      try {
+        const msg = unpackMessage(this.recvBuf, this.hmacKey, this.version);
+        if (msg) {
+          const consumed = this._consumedLength(msg);
+          this.recvBuf = this.recvBuf.slice(consumed);
+          if (msg.cmd === CMD.LAN_EXT_STREAM && msg.payload) {
+            this.log.debug(
+              `[P2P] LAN_EXT_STREAM msg received during streaming: %d bytes payload`,
+              msg.payload.length,
+            );
+            // The payload may be raw JPEG or H.264 — feed to frame processor.
+            this.videoBuf = Buffer.concat([this.videoBuf, msg.payload]);
+            // Swap recvBuf temporarily so _processStreamData works on payload
+            const saved = this.recvBuf;
+            this.recvBuf = this.videoBuf;
+            this._processStreamData();
+            this.videoBuf = this.recvBuf;
+            this.recvBuf = saved;
+          }
+          return;
+        }
+      } catch (_) {
+        // Not a valid protocol message — fall through to raw frame parsing
+      }
       this._processStreamData();
       return;
     }
@@ -473,17 +555,41 @@ class TuyaP2P extends EventEmitter {
   async startVideoStream() {
     this.log.info("[P2P] Starting video stream...");
 
-    // Try to start video. The exact sub-command varies by device.
-    // Common formats for LAN_EXT_STREAM payload:
-    //   {"reqType": "stream_start", "data": {}}
-    //   {"reqType": "video_start", "data": {"quality": "HD"}}
-    const payload = JSON.stringify({ reqType: "stream_start", data: {} });
-    const response = await this.sendCommand(CMD.LAN_EXT_STREAM, Buffer.from(payload, "utf8"));
+    // Tuya cameras use different LAN_EXT_STREAM payload formats depending on
+    // firmware version and model. Try the most common formats in sequence.
+    const streamPayloads = [
+      { reqType: "stream_start", data: {} },
+      { reqType: "stream_start" },
+      { reqType: "start" },
+      { reqType: "video_start", data: { quality: "HD" } },
+      { reqType: "video_start", data: { quality: "SD" } },
+      { reqType: "start_stream", data: { channel: 0 } },
+    ];
 
-    if (response) {
-      this.log.info(`[P2P] Stream start response: ${response.payload.toString("utf8")}`);
+    for (const payloadObj of streamPayloads) {
+      const payload = JSON.stringify(payloadObj);
+      this.log.debug(`[P2P] Trying LAN_EXT_STREAM payload: %s`, payload);
+      const response = await this.sendCommand(
+        CMD.LAN_EXT_STREAM,
+        Buffer.from(payload, "utf8"),
+      );
+
+      if (response) {
+        this.log.info(
+          `[P2P] Stream start response: ${response.payload.toString("utf8")}`,
+        );
+        this.streaming = true;
+        this.videoBuf = Buffer.alloc(0);
+        this.emit("streaming", true);
+        return;
+      }
     }
 
+    // No response to any payload — set streaming anyway (some cameras start
+    // sending video without acknowledging the command).
+    this.log.info(
+      "[P2P] No stream start response received, enabling streaming anyway",
+    );
     this.streaming = true;
     this.videoBuf = Buffer.alloc(0);
     this.emit("streaming", true);
@@ -491,6 +597,7 @@ class TuyaP2P extends EventEmitter {
 
   stopVideoStream() {
     this.streaming = false;
+    this._streamDataLogged = false;
     this.videoBuf = Buffer.alloc(0);
     this.emit("streaming", false);
   }
@@ -524,7 +631,9 @@ class TuyaP2P extends EventEmitter {
       }
 
       // Look for NAL unit start (00 00 00 01) — H.264
-      const nalIdx = this.recvBuf.indexOf(Buffer.from([0x00, 0x00, 0x00, 0x01]));
+      const nalIdx = this.recvBuf.indexOf(
+        Buffer.from([0x00, 0x00, 0x00, 0x01]),
+      );
       if (nalIdx >= 0 && nalIdx !== this._lastNalIdx) {
         this._lastNalIdx = nalIdx;
         // H.264 detected — for now just pass the raw data through

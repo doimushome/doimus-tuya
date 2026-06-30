@@ -431,23 +431,66 @@ class TuyaOpenAPI {
   }
 
   async getCameraSnapshot(deviceId) {
-    // Try standard IoT Core endpoint first, then fall back to iot-03 (industry project)
-    let res = await this.post(`/v1.0/devices/${deviceId}/snapshot`);
-    if (!res.success) {
-      res = await this.post(`/v1.0/iot-03/devices/${deviceId}/snapshot`);
+    // Try multiple snapshot API endpoint patterns — different device models
+    // and API versions use different paths, HTTP methods, and body formats.
+    const endpoints = [
+      // Standard IoT Core — some devices need a body parameter
+      { method: "post", path: `/v1.0/devices/${deviceId}/snapshot`, body: null },
+      { method: "post", path: `/v1.0/devices/${deviceId}/snapshot`, body: { snapshot_channel: 0 } },
+      { method: "post", path: `/v1.0/devices/${deviceId}/snapshot`, body: { type: 0 } },
+      { method: "get", path: `/v1.0/devices/${deviceId}/snapshot`, body: null },
+      // Industry project (iot-03)
+      { method: "post", path: `/v1.0/iot-03/devices/${deviceId}/snapshot`, body: null },
+      { method: "post", path: `/v1.0/iot-03/devices/${deviceId}/snapshot`, body: { snapshot_channel: 0 } },
+      { method: "get", path: `/v1.0/iot-03/devices/${deviceId}/snapshot`, body: null },
+      // Alternative API versions
+      { method: "post", path: `/v1.1/devices/${deviceId}/snapshot`, body: null },
+    ];
+
+    for (const { method, path, body } of endpoints) {
+      let res;
+      if (method === "get") {
+        res = await this.get(path);
+      } else {
+        res = await this.request("post", path, null, body);
+      }
+      if (res.success && res.result?.url) {
+        this.log.info(
+          "Snapshot URL obtained (method=%s path=%s): %s",
+          method,
+          path,
+          res.result.url,
+        );
+        return new Promise((resolve, reject) => {
+          https
+            .get(res.result.url, (r) => {
+              const chunks = [];
+              r.on("data", (c) => chunks.push(c));
+              r.on("end", () => resolve(Buffer.concat(chunks)));
+              r.on("error", reject);
+            })
+            .on("error", reject);
+        });
+      }
+      if (!res.success) {
+        this.log.debug(
+          "Snapshot attempt failed (method=%s path=%s): code=%s msg=%s",
+          method,
+          path,
+          res.code,
+          res.msg,
+        );
+      } else {
+        this.log.debug(
+          "Snapshot success but no URL (method=%s path=%s): result=%s",
+          method,
+          path,
+          JSON.stringify(res.result),
+        );
+      }
     }
-    if (res.success && res.result?.url) {
-      return new Promise((resolve, reject) => {
-        https
-          .get(res.result.url, (r) => {
-            const chunks = [];
-            r.on("data", (c) => chunks.push(c));
-            r.on("end", () => resolve(Buffer.concat(chunks)));
-            r.on("error", reject);
-          })
-          .on("error", reject);
-      });
-    }
+
+    this.log.debug("All snapshot endpoints exhausted for device %s", deviceId);
     return null;
   }
 }

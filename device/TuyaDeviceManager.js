@@ -258,7 +258,25 @@ class TuyaDeviceManager extends EventEmitter {
         }
         for (const item of device.status) {
           const _item = status.find((s) => s.code === item.code);
-          if (!_item) continue;
+          if (!_item) {
+            // Clear transient camera/doorbell DPs that are absent from this
+            // update. These DPs only appear when an event is active; when
+            // absent, the event has ended but device.status retains the old
+            // value indefinitely, causing perpetual motion/doorbell state.
+            if (
+              [
+                "movement_detect_pic",
+                "doorbell_pic",
+                "ipc_human",
+                "pir",
+                "motion_sensor",
+                "motion_detect",
+              ].includes(item.code)
+            ) {
+              item.value = "";
+            }
+            continue;
+          }
           item.value = _item.value;
         }
         this.log.debug("MQTT status update: devId=%s status=%o", devId, status);

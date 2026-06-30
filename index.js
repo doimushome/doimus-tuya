@@ -952,14 +952,17 @@ function createPluginInstance() {
  */
 function tryDecodeCameraImage(device, status, log) {
   const localKey = device.local_key;
-  if (!localKey) return null;
+  if (!localKey) {
+    if (log) log("debug", `Camera image decode skipped: no local_key for "${device.name}"`);
+    return null;
+  }
 
   for (const item of status) {
     if (typeof item.value !== "string" || item.value.length === 0) continue;
 
     const jpeg =
-      tryDecodeInitiativeMessage(item, localKey) ||
-      tryDecodeDoorbellPic(item, localKey);
+      tryDecodeInitiativeMessage(item, localKey, log) ||
+      tryDecodeDoorbellPic(item, localKey, log);
 
     if (jpeg) {
       log(
@@ -969,10 +972,16 @@ function tryDecodeCameraImage(device, status, log) {
       return jpeg;
     }
   }
+  if (log) {
+    const codes = status.filter((s) => typeof s.value === "string" && s.value.length > 0).map((s) => s.code);
+    if (codes.length > 0) {
+      log("debug", `Camera image decode: no JPEG extracted from codes=[${codes.join(",")}] for "${device.name}"`);
+    }
+  }
   return null;
 }
 
-function tryDecodeInitiativeMessage(item, localKey) {
+function tryDecodeInitiativeMessage(item, localKey, log) {
   if (item.code !== "initiative_message") return null;
   try {
     const msg = JSON.parse(item.value);
@@ -991,10 +1000,24 @@ function tryDecodeInitiativeMessage(item, localKey) {
           decipher.final(),
         ]);
         if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
+          if (log) {
+            log(
+              "info",
+              `Initiative message decoded OK: keyLen=${localKey.length} size=${decrypted.length}B`,
+            );
+          }
           return decrypted;
         }
-      } catch (_) {
-        // try next file or key derivation
+        if (log) {
+          log(
+            "debug",
+            `Initiative message decrypted but no JPEG magic (first 4 bytes: ${decrypted.slice(0, 4).toString("hex")})`,
+          );
+        }
+      } catch (e) {
+        if (log) {
+          log("debug", `Initiative message decrypt failed: error=${e.message}`);
+        }
       }
     }
   } catch (_) {
@@ -1003,7 +1026,7 @@ function tryDecodeInitiativeMessage(item, localKey) {
   return null;
 }
 
-function tryDecodeDoorbellPic(item, localKey) {
+function tryDecodeDoorbellPic(item, localKey, log) {
   if (!["movement_detect_pic", "doorbell_pic", "ipc_human"].includes(item.code))
     return null;
   try {
@@ -1013,7 +1036,10 @@ function tryDecodeDoorbellPic(item, localKey) {
     const rawKey = Buffer.from(localKey, "utf8");
     const md5Key = crypto.createHash("md5").update(localKey).digest();
     const sha256Key = crypto.createHash("sha256").update(localKey).digest();
+    const keyLabels = ["raw", "md5", "sha256"];
+    let keyIdx = 0;
     for (const key of [rawKey, md5Key, sha256Key]) {
+      const label = keyLabels[keyIdx++];
       try {
         const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
         decipher.setAutoPadding(true);
@@ -1022,11 +1048,34 @@ function tryDecodeDoorbellPic(item, localKey) {
           decipher.final(),
         ]);
         if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
+          if (log) {
+            log(
+              "info",
+              `Doorbell pic decoded OK: code=${item.code} key=${label} keyLen=${localKey.length} size=${decrypted.length}B`,
+            );
+          }
           return decrypted;
         }
-      } catch (_) {
-        // try next key
+        if (log) {
+          log(
+            "debug",
+            `Doorbell pic decode: code=${item.code} key=${label} decrypted but no JPEG magic (first 4 bytes: ${decrypted.slice(0, 4).toString("hex")})`,
+          );
+        }
+      } catch (e) {
+        if (log) {
+          log(
+            "debug",
+            `Doorbell pic decrypt failed: code=${item.code} key=${label} error=${e.message}`,
+          );
+        }
       }
+    }
+    if (log) {
+      log(
+        "info",
+        `Doorbell pic decode: ALL keys failed for code=${item.code} dataLen=${encrypted.length} localKeyLen=${localKey.length}`,
+      );
     }
   } catch (_) {
     // not valid base64
@@ -2129,6 +2178,23 @@ module.exports = {
 
       // Camera / doorbell / mobilecam image capture from MQTT
       if (["sp", "doorbell", "mobilecam"].includes(device.category)) {
+        // Log raw motion DP data so we can iterate on decryption later.
+        const motionDPs = [
+          "movement_detect_pic",
+          "doorbell_pic",
+          "ipc_human",
+          "initiative_message",
+        ];
+        for (const item of status) {
+          if (motionDPs.includes(item.code) && item.value) {
+            const valStr = String(item.value);
+            log(
+              "info",
+              `Motion DP received: device="${device.name}" code=${item.code} len=${valStr.length} preview="${valStr.slice(0, 60)}..."`,
+            );
+          }
+        }
+
         const jpeg = tryDecodeCameraImage(device, status, log);
         if (jpeg) {
           api.sendMjpegFrame(doimusID, "main", jpeg);
