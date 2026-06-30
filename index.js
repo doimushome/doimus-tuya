@@ -10,6 +10,31 @@ const TuyaHomeDeviceManager = require("./device/TuyaHomeDeviceManager");
 const TuyaDeviceManager = require("./device/TuyaDeviceManager");
 const TuyaP2P = require("./core/TuyaP2P");
 
+/**
+ * Retry an async function with exponential backoff.
+ * Used for transient failures like network timeouts.
+ */
+async function retryWithBackoff(fn, maxRetries = 4, baseDelayMs = 1000, log) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxRetries) {
+        const delay = baseDelayMs * Math.pow(2, attempt);
+        if (log)
+          log(
+            "warn",
+            `Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${e.message}`,
+          );
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 function createLogger(api, prefix, debug = false) {
   const logger = api.log;
   const call = (level, msg, ...args) => {
@@ -893,7 +918,7 @@ async function initCustomProject(api, options, log) {
   const dm = new TuyaCustomDeviceManager(openAPI, debugMode);
 
   log("info", "Get token.");
-  let res = await openAPI.getToken();
+  let res = await retryWithBackoff(() => openAPI.getToken(), 4, 2000, log);
   if (res.success === false) {
     log("error", `Get token failed. code=${res.code}, msg=${res.msg}`);
     return null;
@@ -1002,7 +1027,12 @@ async function initHomeProject(api, options, log) {
   const dm = new TuyaHomeDeviceManager(openAPI, debugMode);
 
   log("info", "Logging in to Tuya Cloud.");
-  let res = await openAPI.homeLogin(countryCode, username, password, appSchema);
+  let res = await retryWithBackoff(
+    () => openAPI.homeLogin(countryCode, username, password, appSchema),
+    4,
+    2000,
+    log,
+  );
   if (res.success === false) {
     log("error", `Login failed. code=${res.code}, msg=${res.msg}`);
     if (TuyaOpenAPI.LOGIN_ERROR_MESSAGES[res.code]) {
@@ -1169,17 +1199,26 @@ module.exports = {
         return;
       }
     } catch (e) {
-      log("error", `Initialization failed: ${e.message}`);
+      log("warn", `Initialization failed: ${e.message}. Will retry in 60s.`);
+      ctx._retryInit = () => start(cfg, api);
+      ctx._initRetryTimer = setTimeout(() => {
+        ctx._retryInit = null;
+        start(cfg, api);
+      }, 60000);
       return;
     }
 
     if (!result || !result.dm) {
       log("error", "Failed to initialize Tuya connection.");
+      ctx._retryInit = () => start(cfg, api);
+      ctx._initRetryTimer = setTimeout(() => {
+        ctx._retryInit = null;
+        start(cfg, api);
+      }, 60000);
       return;
     }
 
     const { dm, uid, debugMode } = result;
-    ctx.deviceManager = dm;
 
     await persistDeviceList(api, dm, uid, log);
     await registerDevicesWithDoimus(api, dm, options, ctx);
@@ -1704,6 +1743,10 @@ module.exports = {
       if (_ctx._snapshotTimer) {
         clearInterval(_ctx._snapshotTimer);
         _ctx._snapshotTimer = null;
+      }
+      if (_ctx._initRetryTimer) {
+        clearTimeout(_ctx._initRetryTimer);
+        _ctx._initRetryTimer = null;
       }
       if (_ctx.deviceManager && _ctx.deviceManager.mq) {
         try {
