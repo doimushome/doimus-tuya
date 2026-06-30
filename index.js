@@ -1101,6 +1101,23 @@ module.exports = {
     await persistDeviceList(api, dm, uid, log);
     await registerDevicesWithDoimus(api, dm, options, ctx);
 
+    // Fetch local_key for camera/doorbell devices (needed for image decryption).
+    // The bulk device list API omits local_key — must fetch per-device.
+    for (const device of dm.devices) {
+      if (["sp", "doorbell"].includes(device.category) && !device.local_key) {
+        const info = await dm.getDeviceInfo(device.id);
+        if (info.success && info.result && info.result.local_key) {
+          device.local_key = info.result.local_key;
+          log("info", `Fetched local_key for camera device "${device.name}"`);
+        } else {
+          log(
+            "warn",
+            `No local_key for camera device "${device.name}" (api success=${info.success})`,
+          );
+        }
+      }
+    }
+
     // Periodic REST API polling for energy monitoring devices
     // Tuya's MQTT often doesn't push cur_current, cur_power, cur_voltage
     // updates reliably, so we poll the REST API to catch changes.
@@ -1486,6 +1503,17 @@ module.exports = {
       log("info", `New device added: ${device.name}`);
       const options2 = (cfg && cfg.options) || {};
       device.schema = await dm.getDeviceSchema(device.id);
+      // Fetch local_key for camera/doorbell devices (needed for image decryption)
+      if (["sp", "doorbell"].includes(device.category) && !device.local_key) {
+        const info = await dm.getDeviceInfo(device.id);
+        if (info.success && info.result && info.result.local_key) {
+          device.local_key = info.result.local_key;
+          log(
+            "info",
+            `Fetched local_key for new camera device "${device.name}"`,
+          );
+        }
+      }
       applySchemaOverride(device, options2);
       dm.devices.push(device);
 

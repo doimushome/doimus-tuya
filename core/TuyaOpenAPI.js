@@ -431,7 +431,11 @@ class TuyaOpenAPI {
   }
 
   async getCameraSnapshot(deviceId) {
-    const res = await this.post(`/v1.0/iot-03/devices/${deviceId}/snapshot`);
+    // Try standard IoT Core endpoint first, then fall back to iot-03 (industry project)
+    let res = await this.post(`/v1.0/devices/${deviceId}/snapshot`);
+    if (!res.success) {
+      res = await this.post(`/v1.0/iot-03/devices/${deviceId}/snapshot`);
+    }
     if (res.success && res.result?.url) {
       return new Promise((resolve, reject) => {
         https
