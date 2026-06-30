@@ -1407,6 +1407,59 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       api.sendMjpegFrame(doimusID, "main", jpeg);
     });
 
+    // When the camera sends H.264 (not MJPEG), decode it to JPEG via ffmpeg.
+    let ffmpegProc = null;
+    p2p.on("h264_nal", (data) => {
+      if (ffmpegProc) {
+        try {
+          ffmpegProc.stdin.write(data);
+        } catch (_) {}
+        return;
+      }
+      // Spawn ffmpeg: H.264 in, JPEG frames out (one per keyframe)
+      try {
+        const { spawn } = require("child_process");
+        ffmpegProc = spawn(
+          "ffmpeg",
+          [
+            "-i",
+            "pipe:0",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-q:v",
+            "8",
+            "-vsync",
+            "vfr",
+            "-frames:v",
+            "1",
+            "pipe:1",
+          ],
+          { stdio: ["pipe", "pipe", "ignore"] },
+        );
+
+        const chunks = [];
+        ffmpegProc.stdout.on("data", (c) => chunks.push(c));
+        ffmpegProc.stdout.on("end", () => {
+          const jpeg = Buffer.concat(chunks);
+          if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
+            api.sendMjpegFrame(doimusID, "main", jpeg);
+          }
+        });
+
+        ffmpegProc.on("close", () => {
+          ffmpegProc = null;
+        });
+        ffmpegProc.on("error", () => {
+          ffmpegProc = null;
+        });
+
+        ffmpegProc.stdin.write(data);
+        ffmpegProc.stdin.end();
+      } catch (_) {}
+    });
+
     p2p.on("error", (err) => {
       log("error", `P2P error for "${tuyaDevice.name}": ${err.message}`);
       ctx.p2pClients.delete(doimusID);
