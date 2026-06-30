@@ -1055,30 +1055,47 @@ async function tryFetchMotionImage(device, status, dm, log) {
         return raw;
       }
 
-      // Encrypted blob: [4 bytes version LE][16 bytes IV][48 bytes header][ciphertext]
+      // Encrypted blob: [4 bytes version LE][16 bytes IV][N bytes header][ciphertext]
+      // Different Tuya camera models use different header sizes.  Find the
+      // largest header offset that leaves a 16-byte-aligned ciphertext.
       if (encKey && raw.length > 68) {
         const iv = raw.slice(4, 20);
-        const ciphertext = raw.slice(68);
         const aesKey = Buffer.from(encKey, "utf8");
 
-        const decipher = crypto.createDecipheriv("aes-128-cbc", aesKey, iv);
-        decipher.setAutoPadding(true);
-        const jpeg = Buffer.concat([
-          decipher.update(ciphertext),
-          decipher.final(),
-        ]);
+        // Header sizes to try (4+16+header): MG-Sky=64, our guess=68, others.
+        const offsets = [64, 68, 72, 60, 56, 76, 80];
+        let success = false;
 
-        if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
-          log(
-            "info",
-            `Motion image decrypted: device="${device.name}" size=${jpeg.length}B`,
-          );
-          return jpeg;
+        for (const offset of offsets) {
+          const ciphertext = raw.slice(offset);
+          if (ciphertext.length % 16 !== 0) continue;
+
+          try {
+            const decipher = crypto.createDecipheriv("aes-128-cbc", aesKey, iv);
+            decipher.setAutoPadding(true);
+            const jpeg = Buffer.concat([
+              decipher.update(ciphertext),
+              decipher.final(),
+            ]);
+
+            if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
+              log(
+                "info",
+                `Motion image decrypted: device="${device.name}" size=${jpeg.length}B offset=${offset}`,
+              );
+              return jpeg;
+            }
+          } catch (_) {
+            // Try next offset.
+          }
         }
-        log(
-          "debug",
-          `AES decrypt produced non-JPEG for "${device.name}": magic=${jpeg.slice(0, 4).toString("hex")}`,
-        );
+
+        if (!success) {
+          log(
+            "debug",
+            `AES decrypt failed for "${device.name}": tried offsets=${offsets.join(",")} totalLen=${raw.length}`,
+          );
+        }
       } else {
         log(
           "debug",
@@ -1819,6 +1836,7 @@ module.exports = {
     }
 
     const { dm, uid, debugMode } = result;
+    ctx.deviceManager = dm;
 
     // Populate IR remote sub-devices (keys, AC status, etc.) before registration.
     await dm.updateInfraredRemotes(dm.devices);
