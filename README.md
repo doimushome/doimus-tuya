@@ -38,8 +38,19 @@ Before configuring, create a project at [Tuya IoT Platform](https://iot.tuya.com
 
 1. Create a cloud development project
 2. Link your Tuya/Smart Life app account
-3. Subscribe to required APIs: IoT Core, Device Status Notification, Authorization Token Management
-4. For cameras: IoT Video Live Stream. For IR: IR Control Hub Open Service. For locks: Smart Lock Open Service. For scenes: Smart Home Scene Linkage.
+3. Subscribe to required APIs on the Tuya IoT Platform (**Cloud → Development → Your Project → Service API**):
+
+| API Service | Required for |
+|---|---|
+| **Authorization Token Management** | All projects (authentication) |
+| **Device Status Notification** | All projects (MQTT real-time updates) |
+| **IoT Core** | All projects (device listing, control, specifications) |
+| **Industry Project Client Service** | Custom projects only (`projectType: 1`) |
+| **Smart Home Scene Linkage** | Scene/Tap-to-Run support |
+| **IoT Video Live Stream** | Camera live view (WebRTC), doorbell snapshots |
+| **Camera Service** | Camera snapshot capture (`POST /v1.0/cameras/.../actions/capture`) |
+| **IR Control Hub Open Service** | Infrared remote control devices |
+| **Smart Lock Open Service** | Smart lock devices |
 
 ### Required Fields (Smart Home)
 

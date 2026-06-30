@@ -9,6 +9,7 @@ const TuyaCustomDeviceManager = require("./device/TuyaCustomDeviceManager");
 const TuyaHomeDeviceManager = require("./device/TuyaHomeDeviceManager");
 const TuyaDeviceManager = require("./device/TuyaDeviceManager");
 const TuyaP2P = require("./core/TuyaP2P");
+const WebRTCSignaling = require("./core/WebRTCSignaling");
 
 /**
  * Retry an async function with exponential backoff.
@@ -2065,6 +2066,59 @@ module.exports = {
     ctx._snapshotTimer = snapshotTimer;
 
     api.onCommand(async (deviceID, key, value) => {
+      // ── WebRTC signaling relay ────────────────────────────────────
+      if (key === "webrtc" && value && typeof value === "object") {
+        const tuyaDevice = dm.getDevice(ctx.doimusDeviceMap.get(deviceID));
+        if (!tuyaDevice) return;
+        if (!ctx._webrtcClients) ctx._webrtcClients = new Map();
+        let wr = ctx._webrtcClients.get(deviceID);
+
+        if (value.action === "start") {
+          wr = new WebRTCSignaling(dm.api, log);
+          ctx._webrtcClients.set(deviceID, wr);
+
+          wr.on("config", (cfg) => {
+            api.sendWebrtcSignaling(deviceID, { event: "config", ...cfg });
+          });
+          wr.on("answer", (data) => {
+            api.sendWebrtcSignaling(deviceID, { event: "answer", ...data });
+          });
+          wr.on("candidate", (data) => {
+            api.sendWebrtcSignaling(deviceID, { event: "candidate", ...data });
+          });
+          wr.on("disconnect", (data) => {
+            api.sendWebrtcSignaling(deviceID, { event: "disconnect", ...data });
+          });
+          wr.on("error", (err) => {
+            api.sendWebrtcSignaling(deviceID, { event: "error", message: err.message });
+          });
+
+          const configs = await wr.getConfigs(tuyaDevice.id);
+          if (configs) {
+            wr.connect();
+          } else {
+            api.sendWebrtcSignaling(deviceID, { event: "error", message: "WebRTC not supported by this device" });
+            ctx._webrtcClients.delete(deviceID);
+          }
+          return;
+        }
+
+        if (!wr) return;
+
+        if (value.event === "offer") {
+          wr.sendOffer(value.sdp, value.stream_type);
+        } else if (value.event === "answer") {
+          wr.sendAnswer(value.sdp);
+        } else if (value.event === "candidate") {
+          wr.sendCandidate(value.candidate);
+        } else if (value.event === "disconnect") {
+          wr.sendDisconnect();
+          wr.disconnect();
+          ctx._webrtcClients.delete(deviceID);
+        }
+        return;
+      }
+
       const tuyaID = ctx.doimusDeviceMap.get(deviceID);
       if (!tuyaID) {
         log(
