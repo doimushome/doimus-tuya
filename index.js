@@ -2271,63 +2271,66 @@ module.exports = {
       }
     });
 
-    dm.on(TuyaDeviceManager.Events.DEVICE_STATUS_UPDATE, (device, status) => {
-      const doimusID = ctx.doimusDeviceMap.get(device.id);
-      if (!doimusID) {
-        log(
-          "warn",
-          `DEVICE_STATUS_UPDATE: no doimusID for device ${device.id}`,
-        );
-        return;
-      }
-      const state = mapTuyaStatusToDoimusState(device, status, options);
-      log(
-        "info",
-        `DEVICE_STATUS_UPDATE: ${device.name} → stateKeys=[${Object.keys(state).join(",")}]`,
-      );
-      log(
-        "debug",
-        `DEVICE_STATUS_UPDATE full: ${device.name} → ${JSON.stringify(state)}`,
-      );
-      if (Object.keys(state).length > 0) {
-        state.online = device.online;
-        // Only push update if values actually changed — prevents MQTT
-        // heartbeats from overwriting recently-commanded state (e.g. blind
-        // position set to 100 by the app, then a heartbeat arrives with the
-        // old percent_control=0 and reverts it back).
-        const lastKnown = ctx.lastKnownState.get(device.id) || {};
-        const changed = Object.keys(state).some(
-          (k) => JSON.stringify(state[k]) !== JSON.stringify(lastKnown[k]),
-        );
-        if (changed) {
-          api.updateDeviceState(doimusID, state);
-          ctx.lastKnownState.set(device.id, {
-            ...lastKnown,
-            ...state,
-          });
+    dm.on(
+      TuyaDeviceManager.Events.DEVICE_STATUS_UPDATE,
+      async (device, status) => {
+        const doimusID = ctx.doimusDeviceMap.get(device.id);
+        if (!doimusID) {
+          log(
+            "warn",
+            `DEVICE_STATUS_UPDATE: no doimusID for device ${device.id}`,
+          );
+          return;
         }
-      }
-
-      // Camera / doorbell / mobilecam image capture from MQTT
-      if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
-        // Try the v4.0 movement-configs API first (no decryption needed).
-        const motionJpeg = await tryFetchMotionImage(device, status, dm, log);
-        if (motionJpeg) {
-          api.sendMjpegFrame(doimusID, "main", motionJpeg);
-        } else {
-          // Fall back to inline MQTT decode (AES-128-CBC / AES-128-ECB).
-          const jpeg = tryDecodeCameraImage(device, status, log);
-          if (jpeg) {
-            api.sendMjpegFrame(doimusID, "main", jpeg);
-          } else if (state.motion) {
-            // Motion detected but no inline JPEG decoded — the image may be
-            // available via the REST snapshot API. Wait 5s for the camera to
-            // process the image, then fetch it (debounced per-device).
-            triggerSnapshotFetch(device, doimusID, ctx, dm, api, log);
+        const state = mapTuyaStatusToDoimusState(device, status, options);
+        log(
+          "info",
+          `DEVICE_STATUS_UPDATE: ${device.name} → stateKeys=[${Object.keys(state).join(",")}]`,
+        );
+        log(
+          "debug",
+          `DEVICE_STATUS_UPDATE full: ${device.name} → ${JSON.stringify(state)}`,
+        );
+        if (Object.keys(state).length > 0) {
+          state.online = device.online;
+          // Only push update if values actually changed — prevents MQTT
+          // heartbeats from overwriting recently-commanded state (e.g. blind
+          // position set to 100 by the app, then a heartbeat arrives with the
+          // old percent_control=0 and reverts it back).
+          const lastKnown = ctx.lastKnownState.get(device.id) || {};
+          const changed = Object.keys(state).some(
+            (k) => JSON.stringify(state[k]) !== JSON.stringify(lastKnown[k]),
+          );
+          if (changed) {
+            api.updateDeviceState(doimusID, state);
+            ctx.lastKnownState.set(device.id, {
+              ...lastKnown,
+              ...state,
+            });
           }
         }
-      }
-    });
+
+        // Camera / doorbell / mobilecam image capture from MQTT
+        if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
+          // Try the v4.0 movement-configs API first (no decryption needed).
+          const motionJpeg = await tryFetchMotionImage(device, status, dm, log);
+          if (motionJpeg) {
+            api.sendMjpegFrame(doimusID, "main", motionJpeg);
+          } else {
+            // Fall back to inline MQTT decode (AES-128-CBC / AES-128-ECB).
+            const jpeg = tryDecodeCameraImage(device, status, log);
+            if (jpeg) {
+              api.sendMjpegFrame(doimusID, "main", jpeg);
+            } else if (state.motion) {
+              // Motion detected but no inline JPEG decoded — the image may be
+              // available via the REST snapshot API. Wait 5s for the camera to
+              // process the image, then fetch it (debounced per-device).
+              triggerSnapshotFetch(device, doimusID, ctx, dm, api, log);
+            }
+          }
+        }
+      },
+    );
 
     dm.on(TuyaDeviceManager.Events.DEVICE_INFO_UPDATE, (device, info) => {
       const doimusID = ctx.doimusDeviceMap.get(device.id);
