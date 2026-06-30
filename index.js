@@ -332,10 +332,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       code === "usb_state"
     ) {
       state.outlet_in_use = value === true || value === 1 || value === "1";
-    } else if (
-      code === "movement_detect_pic" ||
-      code === "ipc_human"
-    ) {
+    } else if (code === "movement_detect_pic" || code === "ipc_human") {
       // Camera PIR/human detection — set motion state for automations.
       // The jpeg itself is captured and sent via sendMjpegFrame separately.
       state.motion = typeof value === "string" && value.length > 0;
@@ -573,8 +570,7 @@ function determineCapabilities(device) {
       if (
         device.schema &&
         device.schema.some(
-          (s) =>
-            s.code.startsWith("battery") || s.code === "va_battery",
+          (s) => s.code.startsWith("battery") || s.code === "va_battery",
         )
       ) {
         capabilities.add("battery");
@@ -641,6 +637,12 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("tamper");
       }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code.startsWith("cur_") || s.code === "electricity",
+        )
+      ) {
         capabilities.add("current");
         capabilities.add("power");
         capabilities.add("voltage");
