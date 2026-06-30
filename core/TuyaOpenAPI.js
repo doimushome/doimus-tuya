@@ -117,7 +117,7 @@ class TuyaOpenAPI {
   }
 
   isTokenManagementAPI(path) {
-    return path.startsWith("/v1.0/token");
+    return path != null && path.startsWith("/v1.0/token");
   }
 
   async _refreshAccessTokenIfNeed(path) {
@@ -460,16 +460,22 @@ class TuyaOpenAPI {
     const cached = this._snapshotEndpointCache.get(deviceId);
     if (cached) {
       const { method, path, body } = cached;
-      const res = method === "get"
-        ? await this.get(path, null, { suppressErrorLog: true })
-        : await this.request("post", path, null, body, { suppressErrorLog: true });
+      const res =
+        method === "get"
+          ? await this.get(path, null, { suppressErrorLog: true })
+          : await this.request("post", path, null, body, {
+              suppressErrorLog: true,
+            });
       if (res.success && res.result?.url) {
         return this._fetchSnapshotImage(res.result.url);
       }
       // Cached endpoint stopped working — evict and fall through to full probe.
       this.log.debug(
         "Cached snapshot endpoint failed (method=%s path=%s): code=%s msg=%s — re-probing",
-        method, path, res.code, res.msg,
+        method,
+        path,
+        res.code,
+        res.msg,
       );
       this._snapshotEndpointCache.delete(deviceId);
     }
@@ -479,16 +485,44 @@ class TuyaOpenAPI {
     // body formats.
     const endpoints = [
       // Standard IoT Core — some devices need a body parameter
-      { method: "post", path: `/v1.0/devices/${deviceId}/snapshot`, body: null },
-      { method: "post", path: `/v1.0/devices/${deviceId}/snapshot`, body: { snapshot_channel: 0 } },
-      { method: "post", path: `/v1.0/devices/${deviceId}/snapshot`, body: { type: 0 } },
+      {
+        method: "post",
+        path: `/v1.0/devices/${deviceId}/snapshot`,
+        body: null,
+      },
+      {
+        method: "post",
+        path: `/v1.0/devices/${deviceId}/snapshot`,
+        body: { snapshot_channel: 0 },
+      },
+      {
+        method: "post",
+        path: `/v1.0/devices/${deviceId}/snapshot`,
+        body: { type: 0 },
+      },
       { method: "get", path: `/v1.0/devices/${deviceId}/snapshot`, body: null },
       // Industry project (iot-03)
-      { method: "post", path: `/v1.0/iot-03/devices/${deviceId}/snapshot`, body: null },
-      { method: "post", path: `/v1.0/iot-03/devices/${deviceId}/snapshot`, body: { snapshot_channel: 0 } },
-      { method: "get", path: `/v1.0/iot-03/devices/${deviceId}/snapshot`, body: null },
+      {
+        method: "post",
+        path: `/v1.0/iot-03/devices/${deviceId}/snapshot`,
+        body: null,
+      },
+      {
+        method: "post",
+        path: `/v1.0/iot-03/devices/${deviceId}/snapshot`,
+        body: { snapshot_channel: 0 },
+      },
+      {
+        method: "get",
+        path: `/v1.0/iot-03/devices/${deviceId}/snapshot`,
+        body: null,
+      },
       // Alternative API versions
-      { method: "post", path: `/v1.1/devices/${deviceId}/snapshot`, body: null },
+      {
+        method: "post",
+        path: `/v1.1/devices/${deviceId}/snapshot`,
+        body: null,
+      },
     ];
 
     // Suppress error logging in request() — failures are expected when probing
@@ -499,7 +533,9 @@ class TuyaOpenAPI {
       if (method === "get") {
         res = await this.get(path, null, { suppressErrorLog: true });
       } else {
-        res = await this.request("post", path, null, body, { suppressErrorLog: true });
+        res = await this.request("post", path, null, body, {
+          suppressErrorLog: true,
+        });
       }
       if (res.success && res.result?.url) {
         // Cache the winning endpoint so subsequent polls skip the probe.

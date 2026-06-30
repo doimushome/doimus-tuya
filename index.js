@@ -246,7 +246,9 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
 
     if (
       code === "switch" ||
-      (code.startsWith("switch_") && !isNaN(Number(code.slice(7))))
+      (code != null &&
+        code.startsWith("switch_") &&
+        !isNaN(Number(code.slice(7))))
     ) {
       // Defer to relay_status if present — it reflects physical relay state,
       // while switch_N is a desired-state cached by Tuya Cloud that may be
@@ -508,19 +510,19 @@ function determineCapabilities(device) {
     case "light":
       if (
         device.schema &&
-        device.schema.some((s) => s.code.startsWith("bright"))
+        device.schema.some((s) => s.code && s.code.startsWith("bright"))
       ) {
         capabilities.add("brightness");
       }
       if (
         device.schema &&
-        device.schema.some((s) => s.code.startsWith("temp_value"))
+        device.schema.some((s) => s.code && s.code.startsWith("temp_value"))
       ) {
         capabilities.add("color_temp");
       }
       if (
         device.schema &&
-        device.schema.some((s) => s.code.startsWith("colour_data"))
+        device.schema.some((s) => s.code && s.code.startsWith("colour_data"))
       ) {
         capabilities.add("hue");
         capabilities.add("saturation");
@@ -532,7 +534,8 @@ function determineCapabilities(device) {
         device.schema &&
         device.schema.some(
           (s) =>
-            s.code.startsWith("fan_speed") || s.code.startsWith("wind_speed"),
+            (s.code && s.code.startsWith("fan_speed")) ||
+            (s.code && s.code.startsWith("wind_speed")),
         )
       ) {
         capabilities.add("rotation_speed");
@@ -546,7 +549,9 @@ function determineCapabilities(device) {
         device.schema &&
         device.schema.some(
           (s) =>
-            (s.code.startsWith("percent") && s.code !== "percent_state") ||
+            (s.code &&
+              s.code.startsWith("percent") &&
+              s.code !== "percent_state") ||
             s.code === "position",
         )
       ) {
@@ -564,7 +569,7 @@ function determineCapabilities(device) {
     case "lock":
       if (
         device.schema &&
-        device.schema.some((s) => s.code.startsWith("lock"))
+        device.schema.some((s) => s.code && s.code.startsWith("lock"))
       ) {
         capabilities.add("locked");
       }
@@ -573,7 +578,9 @@ function determineCapabilities(device) {
       if (
         device.schema &&
         device.schema.some(
-          (s) => s.code.startsWith("temp_set") || s.code === "target_temp",
+          (s) =>
+            (s.code && s.code.startsWith("temp_set")) ||
+            s.code === "target_temp",
         )
       ) {
         capabilities.add("target_temp");
@@ -582,7 +589,7 @@ function determineCapabilities(device) {
         device.schema &&
         device.schema.some(
           (s) =>
-            s.code.startsWith("temp_current") ||
+            (s.code && s.code.startsWith("temp_current")) ||
             s.code === "temperature" ||
             s.code === "va_temperature",
         )
@@ -623,7 +630,7 @@ function determineCapabilities(device) {
         device.schema &&
         device.schema.some(
           (s) =>
-            s.code.startsWith("va_temperature") ||
+            (s.code && s.code.startsWith("va_temperature")) ||
             s.code === "temperature" ||
             s.code === "temp_current",
         )
@@ -634,7 +641,7 @@ function determineCapabilities(device) {
         device.schema &&
         device.schema.some(
           (s) =>
-            s.code.startsWith("va_humidity") ||
+            (s.code && s.code.startsWith("va_humidity")) ||
             s.code === "humidity" ||
             s.code === "humidity_value",
         )
@@ -660,21 +667,23 @@ function determineCapabilities(device) {
       if (
         device.schema &&
         device.schema.some(
-          (s) => s.code.startsWith("battery") || s.code === "va_battery",
+          (s) =>
+            (s.code && s.code.startsWith("battery")) || s.code === "va_battery",
         )
       ) {
         capabilities.add("battery");
       }
       if (
         device.schema &&
-        device.schema.some((s) => s.code.startsWith("smoke"))
+        device.schema.some((s) => s.code && s.code.startsWith("smoke"))
       ) {
         capabilities.add("smoke");
       }
       if (
         device.schema &&
         device.schema.some(
-          (s) => s.code.startsWith("gas") || s.code === "co_gas_sensor",
+          (s) =>
+            (s.code && s.code.startsWith("gas")) || s.code === "co_gas_sensor",
         )
       ) {
         capabilities.add("gas");
@@ -730,7 +739,8 @@ function determineCapabilities(device) {
       if (
         device.schema &&
         device.schema.some(
-          (s) => s.code.startsWith("cur_") || s.code === "electricity",
+          (s) =>
+            (s.code && s.code.startsWith("cur_")) || s.code === "electricity",
         )
       ) {
         capabilities.add("current");
@@ -743,7 +753,7 @@ function determineCapabilities(device) {
     case "switch":
       if (
         device.schema &&
-        device.schema.some((s) => s.code.startsWith("cur_"))
+        device.schema.some((s) => s.code && s.code.startsWith("cur_"))
       ) {
         if (
           device.schema.some(
@@ -831,7 +841,8 @@ function determineCapabilities(device) {
       if (
         device.schema &&
         device.schema.some(
-          (s) => s.code.startsWith("battery") || s.code === "va_battery",
+          (s) =>
+            (s.code && s.code.startsWith("battery")) || s.code === "va_battery",
         )
       ) {
         capabilities.add("battery");
@@ -2090,14 +2101,20 @@ module.exports = {
             api.sendWebrtcSignaling(deviceID, { event: "disconnect", ...data });
           });
           wr.on("error", (err) => {
-            api.sendWebrtcSignaling(deviceID, { event: "error", message: err.message });
+            api.sendWebrtcSignaling(deviceID, {
+              event: "error",
+              message: err.message,
+            });
           });
 
           const configs = await wr.getConfigs(tuyaDevice.id);
           if (configs) {
             wr.connect();
           } else {
-            api.sendWebrtcSignaling(deviceID, { event: "error", message: "WebRTC not supported by this device" });
+            api.sendWebrtcSignaling(deviceID, {
+              event: "error",
+              message: "WebRTC not supported by this device",
+            });
             ctx._webrtcClients.delete(deviceID);
           }
           return;
@@ -2234,8 +2251,8 @@ module.exports = {
           } else if (tuyaDevice.schema.some((s) => s.code === "switch_led")) {
             commands.push({ code: "switch_led", value: value === true });
           } else {
-            const anySwitch = tuyaDevice.schema.find((s) =>
-              s.code.startsWith("switch"),
+            const anySwitch = tuyaDevice.schema.find(
+              (s) => s.code && s.code.startsWith("switch"),
             );
             if (anySwitch) {
               commands.push({ code: anySwitch.code, value: value === true });
@@ -2326,7 +2343,9 @@ module.exports = {
           // codes ("control_back" — takes "open"/"close"/"stop", not 0-100).
           const posSchema = tuyaDevice.schema.find(
             (s) =>
-              (s.code.startsWith("percent") && s.code !== "percent_state") ||
+              (s.code &&
+                s.code.startsWith("percent") &&
+                s.code !== "percent_state") ||
               s.code === "position",
           );
           if (posSchema) {
@@ -2352,7 +2371,9 @@ module.exports = {
           }
         } else if (key === "rotation_speed") {
           const speedSchema = tuyaDevice.schema.find(
-            (s) => s.code.startsWith("fan_speed") || s.code === "wind_speed",
+            (s) =>
+              (s.code && s.code.startsWith("fan_speed")) ||
+              s.code === "wind_speed",
           );
           if (speedSchema) {
             commands.push(

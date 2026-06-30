@@ -21,7 +21,7 @@ class TuyaDevice {
   }
 
   isVirtualDevice() {
-    return this.id.startsWith("vdevo");
+    return this.id != null && this.id.startsWith("vdevo");
   }
 
   isIRControlHub() {
