@@ -243,8 +243,19 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     }
 
     if (code === "switch" || code === "switch_1") {
-      state.on =
-        value === true || value === "true" || value === 1 || value === "1";
+      // Defer to relay_status if present — it reflects physical relay state,
+      // while switch_1 is a desired-state cached by Tuya Cloud that may be
+      // stale when the device is offline.
+      if (state._relayOverride === undefined) {
+        state.on =
+          value === true || value === "true" || value === 1 || value === "1";
+      }
+    } else if (code === "relay_status") {
+      // relay_status is authoritative: "power_on" → on=true, "power_off" → on=false.
+      // Override any switch_1-derived value and mark the override so switch_1
+      // (which may appear later in the status list) doesn't overwrite it.
+      state.on = value === "power_on" || value === true || value === 1;
+      state._relayOverride = true;
     } else if (
       code === "bright_value" ||
       code === "bright_value_v2" ||
@@ -450,6 +461,26 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
   if (device.online !== undefined) {
     state.online = device.online;
   }
+
+  // ── Camera / doorbell: auto-reset motion from device.status (full state) ──
+  // movement_detect_pic / ipc_human DPs only appear when a motion event is
+  // active. When motion ends, those DPs disappear. We check device.status
+  // (the full maintained array) rather than statusList (which may be a
+  // partial MQTT update) to reliably detect the absence of motion.
+  if (
+    ["sp", "mobilecam", "doorbell"].includes(device.category) &&
+    state.motion === undefined
+  ) {
+    const fullStatus = device.status || [];
+    const hasMotionDP = fullStatus.some((s) =>
+      ["movement_detect_pic", "ipc_human", "pir", "motion_sensor", "motion_detect"].includes(s.code) &&
+      (typeof s.value === "string" ? s.value.length > 0 : !!s.value),
+    );
+    state.motion = hasMotionDP;
+  }
+
+  // Strip internal keys (prefixed with _) before returning.
+  delete state._relayOverride;
 
   return state;
 }
@@ -967,10 +998,12 @@ function tryDecodeDoorbellPic(item, localKey) {
     return null;
   try {
     const encrypted = Buffer.from(item.value, "base64");
-    // Try raw local_key, then MD5(local_key) — Tuya cameras vary
+    // Try raw local_key, MD5(local_key), SHA256(local_key) — Tuya cameras vary.
+    // Some video peephole / doorbell models use SHA256 key derivation.
     const rawKey = Buffer.from(localKey, "utf8");
     const md5Key = crypto.createHash("md5").update(localKey).digest();
-    for (const key of [rawKey, md5Key]) {
+    const sha256Key = crypto.createHash("sha256").update(localKey).digest();
+    for (const key of [rawKey, md5Key, sha256Key]) {
       try {
         const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
         decipher.setAutoPadding(true);
@@ -1014,27 +1047,37 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
     return;
   }
 
-  // mobilecam devices (Magic S1) may use port 6668, need different protocol
-  // versions, or require the MD5-hashed local_key instead of the raw key.
-  const configs =
-    tuyaDevice.category === "mobilecam"
-      ? [
-          [554, 3.5, "md5"],
-          [554, 3.5, "raw"],
-          [554, 3.1, "md5"],
-          [554, 3.1, "raw"],
-          [554, 3.3, "md5"],
-          [554, 3.3, "raw"],
-          [6668, 3.5, "md5"],
-          [6668, 3.5, "raw"],
-        ]
-      : [[554, 3.4, "raw"]];
+  // mobilecam / sp / doorbell devices (Magic S1, video peephole, wireless
+  // doorbells) may use different protocol versions, port 6668, or different
+  // key derivations (raw, MD5, SHA256). Try all plausible combinations.
+  const isCamera = ["mobilecam", "sp", "doorbell"].includes(tuyaDevice.category);
+  const configs = isCamera
+    ? [
+        [554, 3.5, "md5"],
+        [554, 3.5, "raw"],
+        [554, 3.5, "sha256"],
+        [554, 3.4, "md5"],
+        [554, 3.4, "raw"],
+        [554, 3.4, "sha256"],
+        [554, 3.1, "md5"],
+        [554, 3.1, "raw"],
+        [554, 3.1, "sha256"],
+        [554, 3.3, "md5"],
+        [554, 3.3, "raw"],
+        [554, 3.3, "sha256"],
+        [6668, 3.5, "md5"],
+        [6668, 3.5, "raw"],
+        [6668, 3.5, "sha256"],
+      ]
+    : [[554, 3.4, "raw"]];
 
   for (const [port, version, keyType] of configs) {
     const localKey =
       keyType === "md5"
         ? crypto.createHash("md5").update(tuyaDevice.local_key).digest("hex")
-        : tuyaDevice.local_key;
+        : keyType === "sha256"
+          ? crypto.createHash("sha256").update(tuyaDevice.local_key).digest("hex")
+          : tuyaDevice.local_key;
     log(
       "info",
       `Trying P2P for "${tuyaDevice.name}" (${ip}:${port} v${version} key=${keyType})`,
