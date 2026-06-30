@@ -1408,18 +1408,26 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
     });
 
     // When the camera sends H.264 (not MJPEG), decode it to JPEG via ffmpeg.
-    let ffmpegProc = null;
+    // Accumulate H.264 NAL units and periodically spawn ffmpeg to extract a
+    // keyframe.  A single NAL unit is not enough — we need a full GOP.
+    let h264Buffer = [];
+    let ffmpegRunning = false;
+
     p2p.on("h264_nal", (data) => {
-      if (ffmpegProc) {
-        try {
-          ffmpegProc.stdin.write(data);
-        } catch (_) {}
-        return;
-      }
-      // Spawn ffmpeg: H.264 in, JPEG frames out (one per keyframe)
+      h264Buffer.push(
+        Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x01]), data]),
+      );
+
+      if (ffmpegRunning) return;
+      if (h264Buffer.length < 5) return;
+
+      ffmpegRunning = true;
+      const input = Buffer.concat(h264Buffer);
+      h264Buffer = [];
+
       try {
         const { spawn } = require("child_process");
-        ffmpegProc = spawn(
+        const proc = spawn(
           "ffmpeg",
           [
             "-i",
@@ -1429,35 +1437,38 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
             "-vcodec",
             "mjpeg",
             "-q:v",
-            "8",
-            "-vsync",
-            "vfr",
-            "-frames:v",
+            "10",
+            "-vframes",
             "1",
             "pipe:1",
           ],
-          { stdio: ["pipe", "pipe", "ignore"] },
+          { stdio: ["pipe", "pipe", "pipe"] },
         );
 
+        proc.stderr.on("data", () => {});
+
         const chunks = [];
-        ffmpegProc.stdout.on("data", (c) => chunks.push(c));
-        ffmpegProc.stdout.on("end", () => {
+        proc.stdout.on("data", (c) => chunks.push(c));
+        proc.stdout.on("end", () => {
           const jpeg = Buffer.concat(chunks);
           if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
             api.sendMjpegFrame(doimusID, "main", jpeg);
           }
+          ffmpegRunning = false;
         });
 
-        ffmpegProc.on("close", () => {
-          ffmpegProc = null;
+        proc.on("error", () => {
+          ffmpegRunning = false;
         });
-        ffmpegProc.on("error", () => {
-          ffmpegProc = null;
+        proc.on("close", () => {
+          ffmpegRunning = false;
         });
 
-        ffmpegProc.stdin.write(data);
-        ffmpegProc.stdin.end();
-      } catch (_) {}
+        proc.stdin.write(input);
+        proc.stdin.end();
+      } catch (_) {
+        ffmpegRunning = false;
+      }
     });
 
     p2p.on("error", (err) => {
