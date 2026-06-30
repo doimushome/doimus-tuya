@@ -472,9 +472,16 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     state.motion === undefined
   ) {
     const fullStatus = device.status || [];
-    const hasMotionDP = fullStatus.some((s) =>
-      ["movement_detect_pic", "ipc_human", "pir", "motion_sensor", "motion_detect"].includes(s.code) &&
-      (typeof s.value === "string" ? s.value.length > 0 : !!s.value),
+    const hasMotionDP = fullStatus.some(
+      (s) =>
+        [
+          "movement_detect_pic",
+          "ipc_human",
+          "pir",
+          "motion_sensor",
+          "motion_detect",
+        ].includes(s.code) &&
+        (typeof s.value === "string" ? s.value.length > 0 : !!s.value),
     );
     state.motion = hasMotionDP;
   }
@@ -526,11 +533,14 @@ function determineCapabilities(device) {
       }
       break;
     case "blind":
+      // Only add "position" capability for writable DPs — exclude
+      // read-only codes like "percent_state" that can't accept commands.
+      // Uses the same matching logic as onCommand for consistency.
       if (
         device.schema &&
         device.schema.some(
           (s) =>
-            s.code.startsWith("percent") ||
+            (s.code.startsWith("percent") && s.code !== "percent_state") ||
             s.code === "control_back" ||
             s.code === "position",
         )
@@ -1024,6 +1034,45 @@ function tryDecodeDoorbellPic(item, localKey) {
   return null;
 }
 
+// Triggered by motion detection when the inline MQTT image decode fails.
+// Waits 5s for the camera to process the image, then fetches it via the REST
+// snapshot API. Debounced to at most one fetch per 45s per device to avoid
+// spamming the API during rapid motion events.
+function triggerSnapshotFetch(device, doimusID, ctx, dm, api, log) {
+  if (!ctx._snapshotDebounce) ctx._snapshotDebounce = new Map();
+  const lastFetch = ctx._snapshotDebounce.get(device.id) || 0;
+  const now = Date.now();
+  if (now - lastFetch < 45000) return; // debounce: max 1 fetch per 45s
+  ctx._snapshotDebounce.set(device.id, now);
+
+  log(
+    "info",
+    `Motion detected for "${device.name}" — scheduling snapshot fetch in 5s`,
+  );
+  setTimeout(async () => {
+    try {
+      const frame = await dm.api.getCameraSnapshot(device.id);
+      if (frame && frame.length > 0) {
+        log(
+          "info",
+          `Motion-triggered snapshot OK: device="${device.name}" size=${frame.length}B`,
+        );
+        api.sendMjpegFrame(doimusID, "main", frame);
+      } else {
+        log(
+          "debug",
+          `Motion-triggered snapshot returned no frame for "${device.name}"`,
+        );
+      }
+    } catch (e) {
+      log(
+        "warn",
+        `Motion-triggered snapshot failed for "${device.name}": ${e.message || e}`,
+      );
+    }
+  }, 5000);
+}
+
 // ─── P2P Live View ───────────────────────────────────────────────────────────
 
 async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
@@ -1050,7 +1099,9 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
   // mobilecam / sp / doorbell devices (Magic S1, video peephole, wireless
   // doorbells) may use different protocol versions, port 6668, or different
   // key derivations (raw, MD5, SHA256). Try all plausible combinations.
-  const isCamera = ["mobilecam", "sp", "doorbell"].includes(tuyaDevice.category);
+  const isCamera = ["mobilecam", "sp", "doorbell"].includes(
+    tuyaDevice.category,
+  );
   const configs = isCamera
     ? [
         [554, 3.5, "md5"],
@@ -1076,7 +1127,10 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       keyType === "md5"
         ? crypto.createHash("md5").update(tuyaDevice.local_key).digest("hex")
         : keyType === "sha256"
-          ? crypto.createHash("sha256").update(tuyaDevice.local_key).digest("hex")
+          ? crypto
+              .createHash("sha256")
+              .update(tuyaDevice.local_key)
+              .digest("hex")
           : tuyaDevice.local_key;
     log(
       "info",
@@ -1090,10 +1144,10 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       localKey,
       version,
       log: {
-        info: (m) => log("info", `[P2P] ${m}`),
-        debug: (m) => log("debug", `[P2P] ${m}`),
-        warn: (m) => log("warn", `[P2P] ${m}`),
-        error: (m) => log("error", `[P2P] ${m}`),
+        info: (m, ...a) => log("info", `[P2P] ${m}`, ...a),
+        debug: (m, ...a) => log("debug", `[P2P] ${m}`, ...a),
+        warn: (m, ...a) => log("warn", `[P2P] ${m}`, ...a),
+        error: (m, ...a) => log("error", `[P2P] ${m}`, ...a),
       },
     });
 
@@ -1443,11 +1497,37 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
 
     const doimusID = generateUUID(device.id);
     const capabilities = determineCapabilities(device);
+
+    // Temporarily clear cached transient camera/doorbell DPs so the initial
+    // state doesn't show stale motion/doorbell events from the REST API.
+    // These only become meaningful when a fresh MQTT update arrives.
+    const transientDPs = [
+      "movement_detect_pic",
+      "doorbell_pic",
+      "ipc_human",
+      "pir",
+      "motion_sensor",
+      "motion_detect",
+    ];
+    const savedTransient = [];
+    for (const item of device.status) {
+      if (transientDPs.includes(item.code)) {
+        savedTransient.push({ code: item.code, value: item.value });
+        item.value = "";
+      }
+    }
+
     const initialState = mapTuyaStatusToDoimusState(
       device,
       device.status,
       options,
     );
+
+    // Restore transient DP values for future MQTT diffing
+    for (const saved of savedTransient) {
+      const item = device.status.find((s) => s.code === saved.code);
+      if (item) item.value = saved.value;
+    }
 
     const tempSetSchema = device.schema.find(
       (s) => s.code === "temp_set" || s.code === "target_temp",
@@ -1944,15 +2024,27 @@ module.exports = {
             );
           }
         } else if (key === "position") {
+          // Match ALL writable position DPs — consistent with determineCapabilities
+          // which uses startsWith("percent"). We exclude read-only codes
+          // ("percent_state") that can't accept commands.
           const posSchema = tuyaDevice.schema.find(
             (s) =>
-              s.code === "percent_control" ||
+              (s.code.startsWith("percent") && s.code !== "percent_state") ||
               s.code === "control_back" ||
               s.code === "position",
           );
           if (posSchema) {
-            commands.push(
-              buildCommand(tuyaDevice.schema, posSchema.code, value),
+            const cmd = buildCommand(tuyaDevice.schema, posSchema.code, value);
+            log(
+              "info",
+              `POSITION command → DP=${posSchema.code} raw=${value} cmd=${JSON.stringify(cmd)}`,
+            );
+            commands.push(cmd);
+          } else {
+            log(
+              "warn",
+              `No writable position DP found for blind ${deviceID} ` +
+                `(schema: [${(tuyaDevice.schema || []).map((s) => s.code).join(", ")}])`,
             );
           }
         } else if (key === "control") {
@@ -2040,6 +2132,11 @@ module.exports = {
         const jpeg = tryDecodeCameraImage(device, status, log);
         if (jpeg) {
           api.sendMjpegFrame(doimusID, "main", jpeg);
+        } else if (state.motion) {
+          // Motion detected but no inline JPEG decoded — the image may be
+          // available via the REST snapshot API. Wait 5s for the camera to
+          // process the image, then fetch it (debounced per-device).
+          triggerSnapshotFetch(device, doimusID, ctx, dm, api, log);
         }
       }
     });
