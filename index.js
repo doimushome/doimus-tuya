@@ -1225,6 +1225,8 @@ module.exports = {
         let firstSnapshotLogged = false;
         let snapshotOK = 0;
         let snapshotErr = 0;
+        // Track per-device consecutive snapshot errors to suppress noise
+        const _snapshotConsecutiveFails = new Map();
         snapshotTimer = setInterval(async () => {
           for (const device of cameraDevices) {
             try {
@@ -1237,7 +1239,7 @@ module.exports = {
                   if (!firstSnapshotLogged) {
                     log(
                       "info",
-                      `First snapshot OK: device="${device.name}" doimusID="${doimusID}" size=${frame.length}B`,
+                      `First REST snapshot OK: device="${device.name}" doimusID="${doimusID}" size=${frame.length}B`,
                     );
                     firstSnapshotLogged = true;
                   }
@@ -1249,17 +1251,27 @@ module.exports = {
                 }
               } else {
                 snapshotErr++;
-                log(
-                  "debug",
-                  `Snapshot empty for device "${device.name}" (id=${device.id})`,
-                );
+                const fails =
+                  (_snapshotConsecutiveFails.get(device.id) || 0) + 1;
+                _snapshotConsecutiveFails.set(device.id, fails);
+                // Only log every 10th failure or the first one
+                if (fails <= 1 || fails % 10 === 0) {
+                  log(
+                    fails <= 1 ? "debug" : "info",
+                    `REST snapshot unavailable for device "${device.name}" (id=${device.id}, fail #${fails})`,
+                  );
+                }
               }
             } catch (e) {
               snapshotErr++;
-              log(
-                "warn",
-                `Snapshot failed for device "${device.name}" (id=${device.id}): ${e.message || e}`,
-              );
+              const fails = (_snapshotConsecutiveFails.get(device.id) || 0) + 1;
+              _snapshotConsecutiveFails.set(device.id, fails);
+              if (fails <= 1 || fails % 10 === 0) {
+                log(
+                  "warn",
+                  `Snapshot failed for device "${device.name}" (id=${device.id}, fail #${fails}): ${e.message || e}`,
+                );
+              }
             }
           }
           // Periodic summary every 10 cycles (~5 min)
