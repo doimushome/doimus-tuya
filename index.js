@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
+const https = require("https");
 const debounce = require("debounce");
 
 const TuyaOpenAPI = require("./core/TuyaOpenAPI");
@@ -941,6 +942,123 @@ function createPluginInstance() {
 }
 
 /**
+ * Fetch camera image via Tuya movement-configs API (v4.0 protocol).
+ *
+ * When a motion event fires on newer Tuya cameras, the MQTT initiative_message
+ * status item carries a numeric key (e.g. "212") whose base64-decoded JSON
+ * contains a bucket + file_path.  Calling GET /v1.0/devices/{id}/movement-configs
+ * with those params returns a JSON response with an S3 presigned URL pointing
+ * to the JPEG snapshot.  No AES decryption is needed.
+ *
+ * Returns a JPEG Buffer or null.
+ */
+async function tryFetchMotionImage(device, status, dm, log) {
+  for (const item of status) {
+    if (item.code !== "initiative_message") continue;
+
+    // The numeric key (e.g. "212") holds the base64-encoded metadata.
+    const metaKey = Object.keys(item).find(
+      (k) =>
+        /^\d+$/.test(k) && typeof item[k] === "string" && item[k].length > 20,
+    );
+    if (!metaKey) {
+      log(
+        "debug",
+        `initiative_message without numeric metadata key for "${device.name}"`,
+      );
+      continue;
+    }
+
+    let meta;
+    try {
+      meta = JSON.parse(Buffer.from(item[metaKey], "base64").toString("utf8"));
+    } catch (_) {
+      log(
+        "debug",
+        `initiative_message metadata parse failed for "${device.name}"`,
+      );
+      continue;
+    }
+
+    if (!meta.bucket || !meta.files || !meta.files[0] || !meta.files[0][0]) {
+      log(
+        "debug",
+        `initiative_message metadata missing bucket/files for "${device.name}"`,
+      );
+      continue;
+    }
+
+    const bucket = meta.bucket;
+    const filePath = meta.files[0][0];
+
+    log(
+      "info",
+      `Motion image metadata: device="${device.name}" bucket=${bucket} file=${filePath}`,
+    );
+
+    // Step 1: Get S3 presigned URL from Tuya movement-configs API
+    const configRes = await dm.api.get(
+      `/v1.0/devices/${device.id}/movement-configs`,
+      { bucket, file_path: filePath },
+    );
+
+    if (!configRes.success || !configRes.result) {
+      log(
+        "warn",
+        `Movement-configs API failed for "${device.name}": code=${configRes.code} msg=${configRes.msg}`,
+      );
+      continue;
+    }
+
+    // Result may be a string (URL) or an object with url property.
+    const s3Url =
+      typeof configRes.result === "string"
+        ? configRes.result
+        : configRes.result.url;
+
+    if (!s3Url) {
+      log(
+        "warn",
+        `Movement-configs returned no URL for "${device.name}": ${JSON.stringify(configRes.result)}`,
+      );
+      continue;
+    }
+
+    // Step 2: Download JPEG from S3 presigned URL
+    try {
+      const jpeg = await new Promise((resolve, reject) => {
+        https
+          .get(s3Url, (res) => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`S3 status ${res.statusCode}`));
+              return;
+            }
+            const chunks = [];
+            res.on("data", (c) => chunks.push(c));
+            res.on("end", () => resolve(Buffer.concat(chunks)));
+          })
+          .on("error", reject);
+      });
+
+      if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
+        log(
+          "info",
+          `Motion image fetched: device="${device.name}" size=${jpeg.length}B`,
+        );
+        return jpeg;
+      }
+      log(
+        "debug",
+        `S3 response is not JPEG for "${device.name}": magic=${jpeg.slice(0, 4).toString("hex")}`,
+      );
+    } catch (e) {
+      log("warn", `S3 fetch failed for "${device.name}": ${e.message}`);
+    }
+  }
+  return null;
+}
+
+/**
  * Decrypt a camera image from Tuya MQTT status codes.
  *
  * Handles two formats:
@@ -1677,12 +1795,6 @@ module.exports = {
     // Fetch local_key for camera/doorbell devices (needed for image decryption).
     // The bulk device list API omits local_key — must fetch per-device.
     for (const device of dm.devices) {
-      if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
-        log(
-          "info",
-          `TEMP local_key RAW: device="${device.name}" id=${device.id} key=${device.local_key}`,
-        );
-      }
       if (
         ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
         !device.local_key
@@ -1690,11 +1802,7 @@ module.exports = {
         const info = await dm.getDeviceInfo(device.id);
         if (info.success && info.result && info.result.local_key) {
           device.local_key = info.result.local_key;
-          // TEMP: expose for decode debugging — revert after capture
-          log(
-            "info",
-            `Camera device "${device.name}" id=${device.id} local_key=${info.result.local_key}`,
-          );
+          log("info", `Fetched local_key for camera device "${device.name}"`);
         } else {
           log(
             "warn",
@@ -2202,32 +2310,21 @@ module.exports = {
 
       // Camera / doorbell / mobilecam image capture from MQTT
       if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
-        // Log raw motion DP data so we can iterate on decryption later.
-        const motionDPs = [
-          "movement_detect_pic",
-          "doorbell_pic",
-          "ipc_human",
-          "initiative_message",
-        ];
-        for (const item of status) {
-          if (motionDPs.includes(item.code) && item.value) {
-            const valStr = String(item.value);
-            // TEMP: log full value for decode debugging — revert after capture
-            log(
-              "info",
-              `Motion DP RAW: device="${device.name}" code=${item.code} len=${valStr.length} value=${valStr}`,
-            );
+        // Try the v4.0 movement-configs API first (no decryption needed).
+        const motionJpeg = await tryFetchMotionImage(device, status, dm, log);
+        if (motionJpeg) {
+          api.sendMjpegFrame(doimusID, "main", motionJpeg);
+        } else {
+          // Fall back to inline MQTT decode (AES-128-CBC / AES-128-ECB).
+          const jpeg = tryDecodeCameraImage(device, status, log);
+          if (jpeg) {
+            api.sendMjpegFrame(doimusID, "main", jpeg);
+          } else if (state.motion) {
+            // Motion detected but no inline JPEG decoded — the image may be
+            // available via the REST snapshot API. Wait 5s for the camera to
+            // process the image, then fetch it (debounced per-device).
+            triggerSnapshotFetch(device, doimusID, ctx, dm, api, log);
           }
-        }
-
-        const jpeg = tryDecodeCameraImage(device, status, log);
-        if (jpeg) {
-          api.sendMjpegFrame(doimusID, "main", jpeg);
-        } else if (state.motion) {
-          // Motion detected but no inline JPEG decoded — the image may be
-          // available via the REST snapshot API. Wait 5s for the camera to
-          // process the image, then fetch it (debounced per-device).
-          triggerSnapshotFetch(device, doimusID, ctx, dm, api, log);
         }
       }
     });
