@@ -40,6 +40,10 @@ class WebRTCSignaling {
     this.running = false;
     this._listeners = {};
     this._expireTimer = null;
+    // Buffers for offer/candidates that arrive before the MQTT connection
+    // is ready (i.e. while getConfigs() is still fetching from Tuya API).
+    this._pendingOffer = null;
+    this._pendingCandidates = [];
   }
 
   on(event, handler) {
@@ -49,7 +53,9 @@ class WebRTCSignaling {
 
   _emit(event, data) {
     (this._listeners[event] || []).forEach((h) => {
-      try { h(data); } catch (_) {}
+      try {
+        h(data);
+      } catch (_) {}
     });
   }
 
@@ -69,10 +75,7 @@ class WebRTCSignaling {
       `/v1.0/users/${uid}/devices/${deviceId}/webrtc-configs`,
     );
     if (!wrRes.success || !wrRes.result || !wrRes.result.supports_webrtc) {
-      this.log(
-        "debug",
-        `[WebRTC] Device ${deviceId} does not support WebRTC`,
-      );
+      this.log("debug", `[WebRTC] Device ${deviceId} does not support WebRTC`);
       return null;
     }
 
@@ -170,6 +173,16 @@ class WebRTCSignaling {
           }
         });
       }
+
+      // Flush any offer/candidates that arrived before the MQTT connection
+      // was established (the mobile app sends them as soon as the peer
+      // connection creates them, which races with getConfigs()).
+      if (this._pendingOffer) {
+        const { sdp, streamType } = this._pendingOffer;
+        this._pendingOffer = null;
+        this.log("info", "[WebRTC] Flushing buffered offer");
+        this._doSendOffer(sdp, streamType);
+      }
     });
 
     this.mqttClient.on("message", (topic, payload) => {
@@ -199,9 +212,18 @@ class WebRTCSignaling {
 
   /**
    * Send a WebRTC offer to the camera via MQTT.
+   * Buffers the offer if the MQTT connection is not yet ready.
    */
   sendOffer(sdp, streamType = 1) {
-    if (!this.mqttConfig || !this.webrtcConfig) return;
+    if (!this.mqttConfig || !this.webrtcConfig) {
+      this.log("debug", "[WebRTC] Buffering offer (MQTT not ready yet)");
+      this._pendingOffer = { sdp, streamType };
+      return;
+    }
+    this._doSendOffer(sdp, streamType);
+  }
+
+  _doSendOffer(sdp, streamType) {
     this.sessionId = uuidv4().replace(/-/g, "");
 
     const msg = {
@@ -227,6 +249,9 @@ class WebRTCSignaling {
 
     this._publish(JSON.stringify(msg));
     this.log("info", `[WebRTC] Offer sent session=${this.sessionId}`);
+
+    // Flush any candidates that were buffered before the offer was sent.
+    this._flushCandidates();
   }
 
   /**
@@ -260,9 +285,13 @@ class WebRTCSignaling {
 
   /**
    * Send an ICE candidate to the camera via MQTT.
+   * Buffers candidates if the session is not yet established.
    */
   sendCandidate(candidate) {
-    if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) return;
+    if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) {
+      this._pendingCandidates.push(candidate);
+      return;
+    }
 
     const msg = {
       protocol: WEBRTC_PROTOCOL,
@@ -313,6 +342,38 @@ class WebRTCSignaling {
     this.sessionId = null;
   }
 
+  _flushCandidates() {
+    if (this._pendingCandidates.length === 0) return;
+    this.log(
+      "debug",
+      `[WebRTC] Flushing ${this._pendingCandidates.length} buffered candidates`,
+    );
+    for (const c of this._pendingCandidates) {
+      // Re-invoke sendCandidate without the early-return guard.
+      // We know configs and sessionId are set at this point.
+      const msg = {
+        protocol: WEBRTC_PROTOCOL,
+        pv: "2.2",
+        t: Math.floor(Date.now() / 1000),
+        data: {
+          header: {
+            from: this._getFrom(),
+            to: this.webrtcConfig.deviceId,
+            sessionid: this.sessionId,
+            moto_id: this.webrtcConfig.motoId,
+            type: "candidate",
+          },
+          msg: {
+            mode: "webrtc",
+            candidate: c,
+          },
+        },
+      };
+      this._publish(JSON.stringify(msg));
+    }
+    this._pendingCandidates = [];
+  }
+
   disconnect() {
     this.running = false;
     if (this._expireTimer) {
@@ -323,6 +384,8 @@ class WebRTCSignaling {
       this.mqttClient.end(true);
       this.mqttClient = null;
     }
+    this._pendingOffer = null;
+    this._pendingCandidates = [];
   }
 
   // ── Private ──────────────────────────────────────────────────────────
@@ -332,7 +395,9 @@ class WebRTCSignaling {
     const src = this.mqttConfig?.source_topic?.ipc || "";
     const prefix = "/av/u/";
     const idx = src.indexOf(prefix);
-    return idx >= 0 ? src.slice(idx + prefix.length) : this.mqttConfig?.client_id || "";
+    return idx >= 0
+      ? src.slice(idx + prefix.length)
+      : this.mqttConfig?.client_id || "";
   }
 
   _publish(payload) {
@@ -353,10 +418,7 @@ class WebRTCSignaling {
 
       switch (type) {
         case "answer":
-          this.log(
-            "info",
-            `[WebRTC] Answer received session=${sessionid}`,
-          );
+          this.log("info", `[WebRTC] Answer received session=${sessionid}`);
           this._emit("answer", {
             sdp: data.msg?.sdp,
             sessionId: sessionid,
@@ -379,10 +441,7 @@ class WebRTCSignaling {
           break;
 
         default:
-          this.log(
-            "debug",
-            `[WebRTC] Unhandled message type: ${type}`,
-          );
+          this.log("debug", `[WebRTC] Unhandled message type: ${type}`);
       }
     } catch (e) {
       this.log("warn", `[WebRTC] Message parse error: ${e.message}`);

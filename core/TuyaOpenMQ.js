@@ -74,6 +74,13 @@ class TuyaOpenMQ {
   async _connect() {
     if (!this.running) return;
 
+    // Prevent re-entrancy: if a connection attempt is already in progress
+    // (e.g. _expireTimer fired while _scheduleReconnect is pending), bail out.
+    if (this._connecting) {
+      this.log.debug("MQTT _connect skipped: already connecting");
+      return;
+    }
+
     // Prevent close-handler race: signal we're in the connect loop
     // so the old client's async close event doesn't trigger _scheduleReconnect.
     this._connecting = true;
@@ -148,12 +155,15 @@ class TuyaOpenMQ {
     // Store config BEFORE connecting so _onMessage can use it immediately
     this.config = res.result;
 
+    // Disable mqtt.js built-in reconnect — we manage reconnection ourselves
+    // via _scheduleReconnect() which fetches fresh credentials before retrying.
+    // mqtt.js auto-reconnect with stale credentials causes auth errors that
+    // trigger destructive plugin restarts in the Go backend.
     const client = mqtt.connect(url, {
       clientId: client_id,
       username,
       password,
-      // Ensure we reconnect aggressively if the TCP drops
-      reconnectPeriod: 5000,
+      reconnectPeriod: 0,
     });
 
     client.on("connect", () => {
@@ -162,9 +172,9 @@ class TuyaOpenMQ {
 
     client.on("error", (error) => {
       this.log.error("MQTT Error: %s", error.message);
-      // mqtt.js auto-reconnect handles TCP drops, but if credentials are
-      // rejected the built-in loop may fail permanently. Schedule a full
-      // reconnect (including fresh config fetch) so credentials refresh.
+      // mqtt.js auto-reconnect is disabled (reconnectPeriod=0). We handle
+      // all reconnection via _scheduleReconnect() which fetches fresh
+      // MQTT credentials before retrying.
       if (this.running && !this._retryTimer) {
         this.log.info("MQTT error triggered reconnect schedule");
         this._scheduleReconnect();
@@ -176,13 +186,14 @@ class TuyaOpenMQ {
       // Only schedule external reconnect if we're NOT in the middle of
       // _connect()'s own cleanup. When _connecting is true, the close
       // event is from the old client being ended during cleanup — ignore it.
-      // Also skip if either timer is already armed.
-      if (
-        this.running &&
-        !this._connecting &&
-        !this._retryTimer &&
-        !this._expireTimer
-      ) {
+      // Also skip if a retry timer is already armed (prevents duplicates).
+      if (this.running && !this._connecting && !this._retryTimer) {
+        // Clear the expire timer — we're reconnecting now, so the old
+        // credential-expiry schedule is stale.
+        if (this._expireTimer) {
+          clearTimeout(this._expireTimer);
+          this._expireTimer = null;
+        }
         this._scheduleReconnect();
       }
     });
