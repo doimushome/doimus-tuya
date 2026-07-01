@@ -1,6 +1,7 @@
 "use strict";
 
 const mqtt = require("mqtt");
+const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 
 /**
@@ -27,6 +28,22 @@ const { v4: uuidv4 } = require("uuid");
  */
 
 const WEBRTC_PROTOCOL = 302;
+
+/**
+ * CRC32 (IEEE 802.3 / zlib) of a string or Buffer.
+ * Used for the IPC MQTT low-power wake-up message (go2rtc-compatible).
+ */
+function crc32(data) {
+  if (typeof data === "string") data = Buffer.from(data, "utf8");
+  let crc = 0xffffffff;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data[i];
+    for (let j = 0; j < 8; j++) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
 
 class WebRTCSignaling {
   constructor(api, log) {
@@ -139,7 +156,12 @@ class WebRTCSignaling {
   /**
    * Connect to the IPC MQTT broker for WebRTC signaling.
    */
-  connect() {
+  connect(deviceId, localKey, webrtcConfig) {
+    // Store these for the wake-up message and offer Token field.
+    this._deviceId = deviceId;
+    this._localKey = localKey;
+    this._webrtcConfigFull = webrtcConfig;
+
     if (!this.mqttConfig) {
       this.log("warn", "[WebRTC] No MQTT config — call getConfigs() first");
       return;
@@ -181,6 +203,71 @@ class WebRTCSignaling {
             this.log("info", `[WebRTC] Subscribed to: ${topic}`);
           }
         });
+      }
+
+      // Low-power battery camera wake-up via IPC MQTT (go2rtc-compatible).
+      // The cloud DP (wireless_awake) wakes the cloud link; this CRC32
+      // message on the IPC broker activates the WebRTC subsystem.
+      if (this._deviceId && this._localKey && this._webrtcConfigFull) {
+        try {
+          const skill =
+            typeof this._webrtcConfigFull.skill === "string"
+              ? JSON.parse(this._webrtcConfigFull.skill)
+              : this._webrtcConfigFull.skill || {};
+          this.log(
+            "info",
+            `[WebRTC] Skill: lowPower=${skill.lowPower || skill.LowPower || 0} videos=${JSON.stringify(skill.videos || skill.Videos || [])}`,
+          );
+          const lowPower = skill.lowPower || skill.LowPower || 0;
+          if (lowPower > 0) {
+            const crc = crc32(this._localKey);
+            const wakePayload = Buffer.alloc(4);
+            wakePayload.writeUInt32BE(crc, 0);
+            const wakeTopic = `m/w/${this._deviceId}`;
+            this.mqttClient.publish(
+              wakeTopic,
+              wakePayload,
+              { qos: 1 },
+              (err) => {
+                if (err) {
+                  this.log(
+                    "warn",
+                    `[WebRTC] Wake-up publish failed: ${err.message}`,
+                  );
+                } else {
+                  this.log(
+                    "info",
+                    `[WebRTC] Wake-up sent to ${wakeTopic} crc=${crc.toString(16)}`,
+                  );
+                }
+              },
+            );
+            // Also subscribe to decrypt topic for battery ready signal
+            const decryptTopic = `smart/decrypt/in/${this._deviceId}`;
+            this.mqttClient.subscribe(decryptTopic, (err) => {
+              if (!err)
+                this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
+            });
+            // Give the camera 500ms to process the wake before sending offer
+            setTimeout(() => {
+              if (this._pendingOffer) {
+                const { sdp, streamType } = this._pendingOffer;
+                this._pendingOffer = null;
+                this.log(
+                  "info",
+                  "[WebRTC] Flushing buffered offer (after wake)",
+                );
+                this._doSendOffer(sdp, streamType);
+              }
+            }, 500);
+            return; // skip immediate flush, let the timeout handle it
+          }
+        } catch (e) {
+          this.log(
+            "debug",
+            `[WebRTC] Skill parse / wake-up skipped: ${e.message}`,
+          );
+        }
       }
 
       // Flush any offer/candidates that arrived before the MQTT connection
@@ -240,6 +327,14 @@ class WebRTCSignaling {
   _doSendOffer(sdp, streamType) {
     this.sessionId = uuidv4().replace(/-/g, "");
 
+    // Strip a=extmap lines to stay under Tuya's ~8KB MQTT payload limit.
+    // These are optional header extensions the camera doesn't need.
+    sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
+
+    const token = this.webrtcConfig?.iceServers
+      ? JSON.stringify(this.webrtcConfig.iceServers)
+      : "";
+
     const msg = {
       protocol: WEBRTC_PROTOCOL,
       pv: "2.2",
@@ -257,6 +352,7 @@ class WebRTCSignaling {
           sdp,
           stream_type: streamType,
           auth: this.webrtcConfig.auth,
+          token,
         },
       },
     };
