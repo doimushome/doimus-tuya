@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
+const util = require("util");
 const debounce = require("debounce");
 
 const TuyaOpenAPI = require("./core/TuyaOpenAPI");
@@ -1524,10 +1525,10 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       localKey,
       version,
       log: {
-        info: (m, ...a) => log("info", `[P2P] ${m}`, ...a),
-        debug: (m, ...a) => log("debug", `[P2P] ${m}`, ...a),
-        warn: (m, ...a) => log("warn", `[P2P] ${m}`, ...a),
-        error: (m, ...a) => log("error", `[P2P] ${m}`, ...a),
+        info: (m, ...a) => log("info", `[P2P] ${util.format(m, ...a)}`),
+        debug: (m, ...a) => log("debug", `[P2P] ${util.format(m, ...a)}`),
+        warn: (m, ...a) => log("warn", `[P2P] ${util.format(m, ...a)}`),
+        error: (m, ...a) => log("error", `[P2P] ${util.format(m, ...a)}`),
       },
     });
 
