@@ -2565,11 +2565,30 @@ module.exports = {
         );
         if (Object.keys(state).length > 0) {
           state.online = device.online;
+          const lastKnown = ctx.lastKnownState.get(device.id) || {};
+          // ── Startup grace period ────────────────────────────────────
+          // On the first MQTT update after registration, the Tuya broker
+          // may replay cached motion DP values from before the camera
+          // went to sleep.  Suppress the motion=true push so the mobile
+          // app doesn't flash a stale motion event.  The auto-reset timer
+          // will still fire and clear device.status, keeping things clean
+          // for subsequent updates.
+          if (!ctx._firstUpdateSeen) ctx._firstUpdateSeen = new Set();
+          const isFirst = !ctx._firstUpdateSeen.has(device.id);
+          if (isFirst && state.motion === true) {
+            log(
+              "info",
+              `DEVICE_STATUS_UPDATE: ${device.name} → suppressing initial motion=true (grace period)`,
+            );
+            delete state.motion;
+          }
+          if (isFirst) {
+            ctx._firstUpdateSeen.add(device.id);
+          }
           // Only push update if values actually changed — prevents MQTT
           // heartbeats from overwriting recently-commanded state (e.g. blind
           // position set to 100 by the app, then a heartbeat arrives with the
           // old percent_control=0 and reverts it back).
-          const lastKnown = ctx.lastKnownState.get(device.id) || {};
           const changed = Object.keys(state).some(
             (k) => JSON.stringify(state[k]) !== JSON.stringify(lastKnown[k]),
           );
