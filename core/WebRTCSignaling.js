@@ -85,6 +85,10 @@ class WebRTCSignaling {
     }
 
     const wr = wrRes.result;
+    this.log(
+      "info",
+      `[WebRTC] Config: moto_id=${wr.moto_id || ""} auth_len=${(wr.auth || "").length} p2p_config=${JSON.stringify(wr.p2p_config || {}).slice(0, 200)}`,
+    );
     const iceServers = [];
     if (wr.p2p_config && wr.p2p_config.ices) {
       for (const ice of wr.p2p_config.ices) {
@@ -460,15 +464,16 @@ class WebRTCSignaling {
   _handleMessage(topic, payload) {
     try {
       const raw = payload.toString();
+      // Log every received message so we can see if the camera replies at all.
       this.log(
-        "debug",
-        `[WebRTC] MQTT message received on topic=${topic} len=${raw.length}`,
+        "info",
+        `[WebRTC] MQTT rx topic=${topic} len=${raw.length} preview=${raw.slice(0, 200)}`,
       );
       const parsed = JSON.parse(raw);
       if (parsed.protocol !== WEBRTC_PROTOCOL) {
         this.log(
-          "debug",
-          `[WebRTC] Ignoring non-WebRTC message protocol=${parsed.protocol}`,
+          "info",
+          `[WebRTC] Non-WebRTC message protocol=${parsed.protocol} data=${JSON.stringify(parsed.data || parsed).slice(0, 200)}`,
         );
         return;
       }
