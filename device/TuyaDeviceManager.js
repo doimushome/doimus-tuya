@@ -279,6 +279,17 @@ class TuyaDeviceManager extends EventEmitter {
           }
           item.value = _item.value;
         }
+        // Add new DPs from the MQTT update that aren't yet in device.status
+        // (e.g. initiative_message, or movement_detect_pic arriving for the
+        // first time on a doorbell device whose initial status snapshot didn't
+        // include it). Without this, transient DPs never enter device.status
+        // and the auto-reset motion logic in mapTuyaStatusToDoimusState can't
+        // detect them.
+        for (const newItem of status) {
+          if (!device.status.some((s) => s.code === newItem.code)) {
+            device.status.push({ code: newItem.code, value: newItem.value });
+          }
+        }
         this.log.debug("MQTT status update: devId=%s status=%o", devId, status);
         this.emit(Events.DEVICE_STATUS_UPDATE, device, status);
         break;

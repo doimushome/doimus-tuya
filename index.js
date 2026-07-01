@@ -362,10 +362,9 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     ) {
       state.outlet_in_use = value === true || value === 1 || value === "1";
     } else if (code === "movement_detect_pic" || code === "ipc_human") {
-      // Camera PIR/human detection — set motion for camera-type devices only.
-      // Doorbell-type devices use doorbell_pic instead (handled below).
+      // Camera PIR/human detection — set motion for camera and doorbell devices.
       if (
-        ["sp", "mobilecam", "wxml"].includes(device.category) &&
+        ["sp", "mobilecam", "wxml", "doorbell"].includes(device.category) &&
         typeof value === "string" &&
         value.length > 0
       ) {
@@ -968,7 +967,7 @@ function createPluginInstance() {
  *
  * Returns a JPEG Buffer or null.
  */
-async function tryFetchMotionImage(device, status, dm, log) {
+async function tryFetchMotionImage(device, status, dm, ctx, log) {
   for (const item of status) {
     if (item.code !== "initiative_message") continue;
 
@@ -1294,7 +1293,7 @@ function triggerSnapshotFetch(device, doimusID, ctx, dm, api, log) {
 
   log(
     "info",
-    `Motion detected for "${device.name}" — scheduling snapshot fetch in 5s`,
+    `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fetch in 5s`,
   );
   setTimeout(async () => {
     try {
@@ -1302,19 +1301,19 @@ function triggerSnapshotFetch(device, doimusID, ctx, dm, api, log) {
       if (frame && frame.length > 0) {
         log(
           "info",
-          `Motion-triggered snapshot OK: device="${device.name}" size=${frame.length}B`,
+          `Motion-triggered snapshot fetched: device="${device.name}" size=${frame.length}B`,
         );
         api.sendMjpegFrame(doimusID, "main", frame);
       } else {
         log(
-          "debug",
-          `Motion-triggered snapshot returned no frame for "${device.name}"`,
+          "warn",
+          `Motion-triggered snapshot: getCameraSnapshot returned null/empty for "${device.name}"`,
         );
       }
     } catch (e) {
       log(
         "warn",
-        `Motion-triggered snapshot failed for "${device.name}": ${e.message || e}`,
+        `Motion-triggered snapshot fetch error for "${device.name}": ${e.message || e}`,
       );
     }
   }, 5000);
@@ -2066,14 +2065,16 @@ module.exports = {
       if (cameraDevices.length > 0) {
         log(
           "info",
-          `Starting MJPEG snapshot polling for ${cameraDevices.length} camera(s)`,
+          `Starting MJPEG snapshot polling for ${cameraDevices.length} camera(s): ${cameraDevices.map((d) => `"${d.name}" (id=${d.id})`).join(", ")}`,
         );
         let firstSnapshotLogged = false;
         let snapshotOK = 0;
         let snapshotErr = 0;
-        // Track per-device consecutive snapshot errors to suppress noise
+        let lastSnapshotHeartbeat = 0;
+        // Track per-device consecutive snapshot errors
         const _snapshotConsecutiveFails = new Map();
         snapshotTimer = setInterval(async () => {
+          const now = Date.now();
           for (const device of cameraDevices) {
             try {
               const frame = await result.dm.api.getCameraSnapshot(device.id);
@@ -2085,10 +2086,12 @@ module.exports = {
                   if (!firstSnapshotLogged) {
                     log(
                       "info",
-                      `First REST snapshot OK: device="${device.name}" doimusID="${doimusID}" size=${frame.length}B`,
+                      `Snapshot OK: device="${device.name}" doimusID="${doimusID}" size=${frame.length}B`,
                     );
                     firstSnapshotLogged = true;
                   }
+                  // Reset consecutive fails on success.
+                  _snapshotConsecutiveFails.set(device.id, 0);
                 } else {
                   log(
                     "warn",
@@ -2100,33 +2103,37 @@ module.exports = {
                 const fails =
                   (_snapshotConsecutiveFails.get(device.id) || 0) + 1;
                 _snapshotConsecutiveFails.set(device.id, fails);
-                // Only log every 10th failure or the first one
-                if (fails <= 1 || fails % 10 === 0) {
-                  log(
-                    fails <= 1 ? "debug" : "info",
-                    `REST snapshot unavailable for device "${device.name}" (id=${device.id}, fail #${fails})`,
-                  );
-                }
+                // Log every failure at warn — full visibility during debug.
+                log(
+                  "warn",
+                  `REST snapshot unavailable for device "${device.name}" (id=${device.id}, fail #${fails})`,
+                );
               }
             } catch (e) {
               snapshotErr++;
               const fails = (_snapshotConsecutiveFails.get(device.id) || 0) + 1;
               _snapshotConsecutiveFails.set(device.id, fails);
-              if (fails <= 1 || fails % 10 === 0) {
-                log(
-                  "warn",
-                  `Snapshot failed for device "${device.name}" (id=${device.id}, fail #${fails}): ${e.message || e}`,
-                );
-              }
+              log(
+                "warn",
+                `Snapshot fetch error for device "${device.name}" (id=${device.id}, fail #${fails}): ${e.message || e}`,
+              );
             }
           }
-          // Periodic summary every 10 cycles (~5 min)
+          // Heartbeat: confirm the polling loop is alive every 2 min.
+          if (now - lastSnapshotHeartbeat >= 120_000) {
+            lastSnapshotHeartbeat = now;
+            log(
+              "info",
+              `Snapshot heartbeat: ${snapshotOK} ok / ${snapshotErr} failed / ${cameraDevices.length} camera(s)`,
+            );
+          }
+          // Periodic summary every 5 cycles (~2.5 min)
           const cycle = Math.floor(
             (snapshotOK + snapshotErr) / (cameraDevices.length || 1),
           );
           if (
             cycle > 0 &&
-            cycle % 10 === 0 &&
+            cycle % 5 === 0 &&
             (snapshotOK > 0 || snapshotErr > 0)
           ) {
             log(
@@ -2513,7 +2520,13 @@ module.exports = {
         // Camera / doorbell / mobilecam image capture from MQTT
         if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
           // Try the v4.0 movement-configs API first (no decryption needed).
-          const motionJpeg = await tryFetchMotionImage(device, status, dm, log);
+          const motionJpeg = await tryFetchMotionImage(
+            device,
+            status,
+            dm,
+            ctx,
+            log,
+          );
           if (motionJpeg) {
             api.sendMjpegFrame(doimusID, "main", motionJpeg);
           } else {
