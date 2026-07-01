@@ -1010,39 +1010,70 @@ function createPluginInstance() {
 function parseMotionMetadata(status, log, deviceName) {
   for (const item of status) {
     if (item.code !== "initiative_message") continue;
+
+    // Format 1: numeric keys (e.g. "1680000000000") holding base64 JSON.
+    // This is the most common format for newer Tuya camera firmware.
     const metaKey = Object.keys(item).find(
       (k) =>
         /^\d+$/.test(k) && typeof item[k] === "string" && item[k].length > 20,
     );
-    if (!metaKey) {
-      log(
-        "debug",
-        `initiative_message without numeric metadata key for "${deviceName}"`,
-      );
-      continue;
+    if (metaKey) {
+      let meta;
+      try {
+        meta = JSON.parse(
+          Buffer.from(item[metaKey], "base64").toString("utf8"),
+        );
+      } catch (_) {
+        log(
+          "debug",
+          `initiative_message numeric-key metadata parse failed for "${deviceName}"`,
+        );
+        continue;
+      }
+      if (!meta.bucket || !meta.files || !meta.files[0] || !meta.files[0][0]) {
+        log(
+          "debug",
+          `initiative_message numeric-key metadata missing bucket/files for "${deviceName}"`,
+        );
+        continue;
+      }
+      return {
+        bucket: meta.bucket,
+        filePath: meta.files[0][0],
+        encKey: meta.files[0][1] || null,
+      };
     }
-    let meta;
-    try {
-      meta = JSON.parse(Buffer.from(item[metaKey], "base64").toString("utf8"));
-    } catch (_) {
-      log(
-        "debug",
-        `initiative_message metadata parse failed for "${deviceName}"`,
-      );
-      continue;
+
+    // Format 2: .value is a JSON string with S3 coordinates.
+    // Some Tuya firmware versions put S3 metadata directly in the value
+    // field instead of under a numeric key.  The value is a JSON object
+    // with "bucket" and "files" but no inline "data"/"iv" (so
+    // tryDecodeInitiativeMessage would have already skipped it).
+    if (typeof item.value === "string" && item.value.length > 0) {
+      let meta;
+      try {
+        meta = JSON.parse(item.value);
+      } catch (_) {
+        // Not JSON — not S3 metadata.
+        continue;
+      }
+      if (meta.bucket && meta.files && meta.files[0] && meta.files[0][0]) {
+        log(
+          "debug",
+          `initiative_message value-JSON metadata found for "${deviceName}"`,
+        );
+        return {
+          bucket: meta.bucket,
+          filePath: meta.files[0][0],
+          encKey: meta.files[0][1] || null,
+        };
+      }
     }
-    if (!meta.bucket || !meta.files || !meta.files[0] || !meta.files[0][0]) {
-      log(
-        "debug",
-        `initiative_message metadata missing bucket/files for "${deviceName}"`,
-      );
-      continue;
-    }
-    return {
-      bucket: meta.bucket,
-      filePath: meta.files[0][0],
-      encKey: meta.files[0][1] || null,
-    };
+
+    log(
+      "debug",
+      `initiative_message without recognisable metadata for "${deviceName}"`,
+    );
   }
   return null;
 }
@@ -1202,6 +1233,19 @@ function scheduleMotionImageFetch(
     );
   }
 
+  // Also cancel any pending REST fallback timer — the S3 path is preferred.
+  if (ctx._snapshotFallbackTimers) {
+    const fbPending = ctx._snapshotFallbackTimers.get(device.id);
+    if (fbPending) {
+      clearTimeout(fbPending);
+      ctx._snapshotFallbackTimers.delete(device.id);
+      log(
+        "debug",
+        `Cancelled REST fallback for "${device.name}" (S3 metadata arrived)`,
+      );
+    }
+  }
+
   log(
     "info",
     `Scheduling motion image fetch for "${device.name}" in 10s (bucket=${metadata.bucket})`,
@@ -1212,6 +1256,14 @@ function scheduleMotionImageFetch(
     try {
       const jpeg = await fetchMotionImageFromS3(device, metadata, dm, ctx, log);
       if (jpeg) {
+        // Cancel any pending REST fallback timer — S3 fetch succeeded.
+        if (ctx._snapshotFallbackTimers) {
+          const fb = ctx._snapshotFallbackTimers.get(device.id);
+          if (fb) {
+            clearTimeout(fb);
+            ctx._snapshotFallbackTimers.delete(device.id);
+          }
+        }
         api.sendMjpegFrame(doimusID, "main", jpeg);
         api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
         if (!ctx._motionSeq) ctx._motionSeq = new Map();
@@ -2758,6 +2810,22 @@ module.exports = {
           //    Image is embedded in the MQTT payload — no delay needed.
           const jpeg = tryDecodeCameraImage(device, status, log);
           if (jpeg) {
+            // Cancel any pending REST fallback timer — we got the image inline.
+            if (ctx._snapshotFallbackTimers) {
+              const fb = ctx._snapshotFallbackTimers.get(device.id);
+              if (fb) {
+                clearTimeout(fb);
+                ctx._snapshotFallbackTimers.delete(device.id);
+              }
+            }
+            // Also cancel any pending S3 fetch timer — inline image is more current.
+            if (ctx._motionFetchTimers) {
+              const s3 = ctx._motionFetchTimers.get(device.id);
+              if (s3) {
+                clearTimeout(s3);
+                ctx._motionFetchTimers.delete(device.id);
+              }
+            }
             api.sendMjpegFrame(doimusID, "main", jpeg);
             api.updateDeviceImage(
               doimusID,
@@ -2794,9 +2862,57 @@ module.exports = {
               // 3. Motion detected but no JPEG or metadata in this MQTT update.
               //    The image DP may arrive via a separate MQTT message
               //    (movement_detect_pic / doorbell_pic DPs fired asynchronously).
+              //    Wait a short grace period, then fall back to the REST
+              //    snapshot API so snapshot_latest doesn't go stale.
+              if (!ctx._snapshotFallbackTimers)
+                ctx._snapshotFallbackTimers = new Map();
+              const pending = ctx._snapshotFallbackTimers.get(device.id);
+              if (pending) clearTimeout(pending);
+
               log(
                 "info",
-                `Motion detected for "${device.name}" (id=${device.id}) — waiting for image DP`,
+                `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fallback in 12s`,
+              );
+              ctx._snapshotFallbackTimers.set(
+                device.id,
+                setTimeout(async () => {
+                  ctx._snapshotFallbackTimers.delete(device.id);
+                  try {
+                    const jpeg = await dm.api.getCameraSnapshot(device.id);
+                    if (jpeg) {
+                      api.sendMjpegFrame(doimusID, "main", jpeg);
+                      api.updateDeviceImage(
+                        doimusID,
+                        "snapshot_latest",
+                        jpeg,
+                        "image/jpeg",
+                      );
+                      if (!ctx._motionSeq) ctx._motionSeq = new Map();
+                      const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
+                      ctx._motionSeq.set(device.id, seq);
+                      api.updateDeviceImage(
+                        doimusID,
+                        "motion_" + seq,
+                        jpeg,
+                        "image/jpeg",
+                      );
+                      log(
+                        "info",
+                        `REST snapshot fallback captured for "${device.name}" size=${jpeg.length}B`,
+                      );
+                    } else {
+                      log(
+                        "warn",
+                        `REST snapshot fallback returned no image for "${device.name}"`,
+                      );
+                    }
+                  } catch (e) {
+                    log(
+                      "warn",
+                      `REST snapshot fallback failed for "${device.name}": ${e.message || e}`,
+                    );
+                  }
+                }, 12000),
               );
             }
           }
@@ -2957,6 +3073,20 @@ module.exports = {
           clearTimeout(timer);
         }
         _ctx._motionTimers.clear();
+      }
+      // Clear delayed S3 motion image fetch timers
+      if (_ctx._motionFetchTimers) {
+        for (const [, timer] of _ctx._motionFetchTimers) {
+          clearTimeout(timer);
+        }
+        _ctx._motionFetchTimers.clear();
+      }
+      // Clear REST snapshot fallback timers
+      if (_ctx._snapshotFallbackTimers) {
+        for (const [, timer] of _ctx._snapshotFallbackTimers) {
+          clearTimeout(timer);
+        }
+        _ctx._snapshotFallbackTimers.clear();
       }
       _ctx.apiRef = null;
       _ctx = null;
