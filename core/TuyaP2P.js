@@ -291,7 +291,21 @@ class TuyaP2P extends EventEmitter {
     this.deviceId = opts.deviceId;
     this.ip = opts.ip;
     this.port = opts.port || DEFAULT_PORT;
-    this.realLocalKey = Buffer.from(opts.localKey || "", "utf8");
+    // Tuya local_key is a hex string. Accept both hex strings and raw Buffers.
+    let rawKey = opts.localKey || "";
+    if (Buffer.isBuffer(rawKey)) {
+      this.realLocalKey = rawKey;
+    } else if (
+      typeof rawKey === "string" &&
+      /^[0-9a-f]+$/i.test(rawKey) &&
+      rawKey.length >= 16
+    ) {
+      // Looks like a hex string — decode to binary.
+      this.realLocalKey = Buffer.from(rawKey, "hex");
+    } else {
+      // Fallback: treat as UTF-8 (legacy behaviour for non-hex keys).
+      this.realLocalKey = Buffer.from(rawKey, "utf8");
+    }
     this.version = opts.version || 3.4;
     this.log = opts.log || {
       info: () => {},

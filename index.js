@@ -1003,21 +1003,13 @@ function createPluginInstance() {
 }
 
 /**
- * Fetch camera image via Tuya movement-configs API (v4.0 protocol).
- *
- * When a motion event fires on newer Tuya cameras, the MQTT initiative_message
- * status item carries a numeric key (e.g. "212") whose base64-decoded JSON
- * contains a bucket + file_path.  Calling GET /v1.0/devices/{id}/movement-configs
- * with those params returns a JSON response with an S3 presigned URL pointing
- * to the JPEG snapshot.  No AES decryption is needed.
- *
- * Returns a JPEG Buffer or null.
+ * Parse initiative_message metadata from a Tuya MQTT status array.
+ * Extracts bucket, file_path, and optional encryption key without
+ * performing any network requests.
  */
-async function tryFetchMotionImage(device, status, dm, ctx, log) {
+function parseMotionMetadata(status, log, deviceName) {
   for (const item of status) {
     if (item.code !== "initiative_message") continue;
-
-    // The numeric key (e.g. "212") holds the base64-encoded metadata.
     const metaKey = Object.keys(item).find(
       (k) =>
         /^\d+$/.test(k) && typeof item[k] === "string" && item[k].length > 20,
@@ -1025,154 +1017,222 @@ async function tryFetchMotionImage(device, status, dm, ctx, log) {
     if (!metaKey) {
       log(
         "debug",
-        `initiative_message without numeric metadata key for "${device.name}"`,
+        `initiative_message without numeric metadata key for "${deviceName}"`,
       );
       continue;
     }
-
     let meta;
     try {
       meta = JSON.parse(Buffer.from(item[metaKey], "base64").toString("utf8"));
     } catch (_) {
       log(
         "debug",
-        `initiative_message metadata parse failed for "${device.name}"`,
+        `initiative_message metadata parse failed for "${deviceName}"`,
       );
       continue;
     }
-
     if (!meta.bucket || !meta.files || !meta.files[0] || !meta.files[0][0]) {
       log(
         "debug",
-        `initiative_message metadata missing bucket/files for "${device.name}"`,
+        `initiative_message metadata missing bucket/files for "${deviceName}"`,
       );
       continue;
     }
+    return {
+      bucket: meta.bucket,
+      filePath: meta.files[0][0],
+      encKey: meta.files[0][1] || null,
+    };
+  }
+  return null;
+}
 
-    const bucket = meta.bucket;
-    const filePath = meta.files[0][0];
-    // Some devices include a per-event encryption key in the metadata
-    // (e.g. files[0][1] = "532016f85b6f48c9"). When present, the S3 file
-    // is an encrypted binary blob with a 68-byte header:
-    //   [4 bytes version LE][16 bytes IV][48 bytes reserved][ciphertext]
-    // Decrypt with AES-128-CBC using the provided key.
-    const encKey = meta.files[0][1] || null;
+/**
+ * Fetch and decrypt a camera image via Tuya movement-configs API + S3.
+ * Network-heavy — call after a delay to let the camera finish uploading.
+ */
+async function fetchMotionImageFromS3(device, metadata, dm, ctx, log) {
+  const { bucket, filePath, encKey } = metadata;
 
+  log(
+    "info",
+    `Fetching motion image: device="${device.name}" bucket=${bucket} file=${filePath}`,
+  );
+
+  // Step 1: Get S3 presigned URL from Tuya movement-configs API
+  const configRes = await dm.api.get(
+    `/v1.0/devices/${device.id}/movement-configs`,
+    { bucket, file_path: filePath },
+  );
+
+  if (!configRes.success || !configRes.result) {
     log(
-      "info",
-      `Motion image metadata: device="${device.name}" bucket=${bucket} file=${filePath}`,
+      "warn",
+      `Movement-configs API failed for "${device.name}": code=${configRes.code} msg=${configRes.msg}`,
     );
+    return null;
+  }
 
-    // Step 1: Get S3 presigned URL from Tuya movement-configs API
-    const configRes = await dm.api.get(
-      `/v1.0/devices/${device.id}/movement-configs`,
-      { bucket, file_path: filePath },
+  // Result may be a string (URL) or an object with url property.
+  const s3Url =
+    typeof configRes.result === "string"
+      ? configRes.result
+      : configRes.result.url;
+
+  if (!s3Url) {
+    log(
+      "warn",
+      `Movement-configs returned no URL for "${device.name}": ${JSON.stringify(configRes.result)}`,
     );
+    return null;
+  }
 
-    if (!configRes.success || !configRes.result) {
+  // Step 2: Download from S3 presigned URL
+  try {
+    const raw = await new Promise((resolve, reject) => {
+      https
+        .get(s3Url, (res) => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`S3 status ${res.statusCode}`));
+            return;
+          }
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => resolve(Buffer.concat(chunks)));
+        })
+        .on("error", reject);
+    });
+
+    // Plain JPEG (no encryption).
+    if (raw[0] === 0xff && raw[1] === 0xd8) {
       log(
-        "warn",
-        `Movement-configs API failed for "${device.name}": code=${configRes.code} msg=${configRes.msg}`,
+        "info",
+        `Motion image fetched: device="${device.name}" size=${raw.length}B`,
       );
-      continue;
+      return raw;
     }
 
-    // Result may be a string (URL) or an object with url property.
-    const s3Url =
-      typeof configRes.result === "string"
-        ? configRes.result
-        : configRes.result.url;
+    // Encrypted blob: [4 bytes version LE][16 bytes IV][N bytes header][ciphertext]
+    // Different Tuya camera models use different header sizes.  Find the
+    // largest header offset that leaves a 16-byte-aligned ciphertext.
+    if (encKey && raw.length > 68) {
+      const iv = raw.slice(4, 20);
+      const aesKey = Buffer.from(encKey, "utf8");
 
-    if (!s3Url) {
-      log(
-        "warn",
-        `Movement-configs returned no URL for "${device.name}": ${JSON.stringify(configRes.result)}`,
-      );
-      continue;
-    }
+      // Header sizes to try (4+16+header): MG-Sky=64, our guess=68, others.
+      // Cache the first working offset per device to skip probing on subsequent events.
+      if (!ctx._snapshotOffsetCache) ctx._snapshotOffsetCache = new Map();
+      const cachedOffset = ctx._snapshotOffsetCache.get(device.id);
+      const offsets =
+        cachedOffset != null ? [cachedOffset] : [64, 68, 72, 60, 56, 76, 80];
+      let success = false;
 
-    // Step 2: Download from S3 presigned URL
-    try {
-      const raw = await new Promise((resolve, reject) => {
-        https
-          .get(s3Url, (res) => {
-            if (res.statusCode !== 200) {
-              reject(new Error(`S3 status ${res.statusCode}`));
-              return;
-            }
-            const chunks = [];
-            res.on("data", (c) => chunks.push(c));
-            res.on("end", () => resolve(Buffer.concat(chunks)));
-          })
-          .on("error", reject);
-      });
+      for (const offset of offsets) {
+        const ciphertext = raw.slice(offset);
+        if (ciphertext.length % 16 !== 0) continue;
 
-      // Plain JPEG (no encryption).
-      if (raw[0] === 0xff && raw[1] === 0xd8) {
-        log(
-          "info",
-          `Motion image fetched: device="${device.name}" size=${raw.length}B`,
-        );
-        return raw;
+        try {
+          const decipher = crypto.createDecipheriv("aes-128-cbc", aesKey, iv);
+          decipher.setAutoPadding(true);
+          const jpeg = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+          ]);
+
+          if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
+            ctx._snapshotOffsetCache.set(device.id, offset);
+            log(
+              "info",
+              `Motion image decrypted: device="${device.name}" size=${jpeg.length}B offset=${offset}`,
+            );
+            return jpeg;
+          }
+        } catch (_) {
+          // Try next offset.
+        }
       }
 
-      // Encrypted blob: [4 bytes version LE][16 bytes IV][N bytes header][ciphertext]
-      // Different Tuya camera models use different header sizes.  Find the
-      // largest header offset that leaves a 16-byte-aligned ciphertext.
-      if (encKey && raw.length > 68) {
-        const iv = raw.slice(4, 20);
-        const aesKey = Buffer.from(encKey, "utf8");
-
-        // Header sizes to try (4+16+header): MG-Sky=64, our guess=68, others.
-        // Cache the first working offset per device to skip probing on subsequent events.
-        if (!ctx._snapshotOffsetCache) ctx._snapshotOffsetCache = new Map();
-        const cachedOffset = ctx._snapshotOffsetCache.get(device.id);
-        const offsets =
-          cachedOffset != null ? [cachedOffset] : [64, 68, 72, 60, 56, 76, 80];
-        let success = false;
-
-        for (const offset of offsets) {
-          const ciphertext = raw.slice(offset);
-          if (ciphertext.length % 16 !== 0) continue;
-
-          try {
-            const decipher = crypto.createDecipheriv("aes-128-cbc", aesKey, iv);
-            decipher.setAutoPadding(true);
-            const jpeg = Buffer.concat([
-              decipher.update(ciphertext),
-              decipher.final(),
-            ]);
-
-            if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
-              ctx._snapshotOffsetCache.set(device.id, offset);
-              log(
-                "info",
-                `Motion image decrypted: device="${device.name}" size=${jpeg.length}B offset=${offset}`,
-              );
-              return jpeg;
-            }
-          } catch (_) {
-            // Try next offset.
-          }
-        }
-
-        if (!success) {
-          log(
-            "debug",
-            `AES decrypt failed for "${device.name}": tried offsets=${offsets.join(",")} totalLen=${raw.length}`,
-          );
-        }
-      } else {
+      if (!success) {
         log(
           "debug",
-          `S3 response not JPEG (no encKey) for "${device.name}": magic=${raw.slice(0, 4).toString("hex")}`,
+          `AES decrypt failed for "${device.name}": tried offsets=${offsets.join(",")} totalLen=${raw.length}`,
+        );
+      }
+    } else {
+      log(
+        "debug",
+        `S3 response not JPEG (no encKey) for "${device.name}": magic=${raw.slice(0, 4).toString("hex")}`,
+      );
+    }
+  } catch (e) {
+    log("warn", `S3 fetch failed for "${device.name}": ${e.message}`);
+  }
+  return null;
+}
+
+/**
+ * Schedule a delayed motion image fetch from Tuya's S3.
+ *
+ * The camera sends the initiative_message MQTT notification before the
+ * image finishes uploading to Tuya's cloud storage.  A 10-second delay
+ * gives the upload time to complete so we fetch the correct (new) image
+ * instead of the previous one.
+ *
+ * Debounced per device: if a new initiative_message arrives while a timer
+ * is pending, the old timer is cancelled and a new 10s timer starts.
+ */
+function scheduleMotionImageFetch(
+  device,
+  metadata,
+  doimusID,
+  ctx,
+  dm,
+  api,
+  log,
+) {
+  if (!ctx._motionFetchTimers) ctx._motionFetchTimers = new Map();
+
+  // Cancel any pending timer for this device (new metadata supersedes old).
+  const existing = ctx._motionFetchTimers.get(device.id);
+  if (existing) {
+    clearTimeout(existing);
+    log(
+      "debug",
+      `Reset motion fetch timer for "${device.name}" (new metadata arrived)`,
+    );
+  }
+
+  log(
+    "info",
+    `Scheduling motion image fetch for "${device.name}" in 10s (bucket=${metadata.bucket})`,
+  );
+
+  const timer = setTimeout(async () => {
+    ctx._motionFetchTimers.delete(device.id);
+    try {
+      const jpeg = await fetchMotionImageFromS3(device, metadata, dm, ctx, log);
+      if (jpeg) {
+        api.sendMjpegFrame(doimusID, "main", jpeg);
+        api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
+        if (!ctx._motionSeq) ctx._motionSeq = new Map();
+        const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
+        ctx._motionSeq.set(device.id, seq);
+        api.updateDeviceImage(doimusID, "motion_" + seq, jpeg, "image/jpeg");
+      } else {
+        log(
+          "warn",
+          `Delayed motion image fetch returned no image for "${device.name}"`,
         );
       }
     } catch (e) {
-      log("warn", `S3 fetch failed for "${device.name}": ${e.message}`);
+      log(
+        "warn",
+        `Delayed motion image fetch failed for "${device.name}": ${e.message || e}`,
+      );
     }
-  }
-  return null;
+  }, 10000);
+
+  ctx._motionFetchTimers.set(device.id, timer);
 }
 
 /**
@@ -1230,7 +1290,7 @@ function tryDecodeInitiativeMessage(item, localKey, log) {
     const msg = JSON.parse(item.value);
     if (!msg.files || msg.files.length === 0) return null;
 
-    const key = Buffer.from(localKey, "utf8");
+    const key = Buffer.from(localKey, "hex");
     for (const file of msg.files) {
       if (!file.data || !file.iv) continue;
       try {
@@ -1276,7 +1336,7 @@ function tryDecodeDoorbellPic(item, localKey, log) {
     const encrypted = Buffer.from(item.value, "base64");
     // Try raw local_key, MD5(local_key), SHA256(local_key) — Tuya cameras vary.
     // Some video peephole / doorbell models use SHA256 key derivation.
-    const rawKey = Buffer.from(localKey, "utf8");
+    const rawKey = Buffer.from(localKey, "hex");
     const md5Key = crypto.createHash("md5").update(localKey).digest();
     const sha256Key = crypto.createHash("sha256").update(localKey).digest();
     const keyLabels = ["raw", "md5", "sha256"];
@@ -1348,6 +1408,10 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
     log("warn", `No IP for device "${tuyaDevice.name}", cannot start P2P`);
     return;
   }
+  log(
+    "info",
+    `[P2P] Device "${tuyaDevice.name}" IP=${ip} localKeyLen=${(tuyaDevice.local_key || "").length} category=${tuyaDevice.category}`,
+  );
 
   // mobilecam / sp / doorbell devices (Magic S1, video peephole, wireless
   // doorbells) may use different protocol versions, port 6668, or different
@@ -1355,17 +1419,19 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
   const isCamera = ["mobilecam", "sp", "doorbell", "wxml"].includes(
     tuyaDevice.category,
   );
+  // v3.1 first: no session-key negotiation → works even with quirky local_key
+  // encoding common on battery cameras.  v3.4+ preferred when key is correct.
   const configs = isCamera
     ? [
-        [554, 3.5, "md5"],
-        [554, 3.5, "raw"],
-        [554, 3.5, "sha256"],
-        [554, 3.4, "md5"],
-        [554, 3.4, "raw"],
-        [554, 3.4, "sha256"],
         [554, 3.1, "md5"],
         [554, 3.1, "raw"],
         [554, 3.1, "sha256"],
+        [554, 3.4, "md5"],
+        [554, 3.4, "raw"],
+        [554, 3.4, "sha256"],
+        [554, 3.5, "md5"],
+        [554, 3.5, "raw"],
+        [554, 3.5, "sha256"],
         [554, 3.3, "md5"],
         [554, 3.3, "raw"],
         [554, 3.3, "sha256"],
@@ -1373,18 +1439,27 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
         [6668, 3.5, "raw"],
         [6668, 3.5, "sha256"],
       ]
-    : [[554, 3.4, "raw"]];
+    : [
+        [554, 3.1, "raw"],
+        [554, 3.4, "raw"],
+      ];
 
   for (const [port, version, keyType] of configs) {
-    const localKey =
-      keyType === "md5"
-        ? crypto.createHash("md5").update(tuyaDevice.local_key).digest("hex")
-        : keyType === "sha256"
-          ? crypto
-              .createHash("sha256")
-              .update(tuyaDevice.local_key)
-              .digest("hex")
-          : tuyaDevice.local_key;
+    // Tuya local_key is a hex string. Derive binary keys for P2P crypto.
+    // Use .digest() (binary Buffer) NOT .digest("hex") so TuyaP2P receives
+    // a compact 16-byte (MD5) / 32-byte (SHA256) key suitable for AES-128-ECB.
+    let localKey;
+    if (keyType === "md5") {
+      localKey = crypto.createHash("md5").update(tuyaDevice.local_key).digest();
+    } else if (keyType === "sha256") {
+      localKey = crypto
+        .createHash("sha256")
+        .update(tuyaDevice.local_key)
+        .digest();
+    } else {
+      // "raw" — pass the hex string; TuyaP2P will decode it.
+      localKey = tuyaDevice.local_key;
+    }
     log(
       "info",
       `Trying P2P for "${tuyaDevice.name}" (${ip}:${port} v${version} key=${keyType})`,
@@ -1411,6 +1486,9 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
         `P2P frame received for "${tuyaDevice.name}": ${jpeg.length} bytes`,
       );
       api.sendMjpegFrame(doimusID, "main", jpeg);
+      // Also store as snapshot_latest so the mobile app's P2P fallback
+      // (which reads from deviceImageUrl) shows the live frame.
+      api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
     });
 
     // When the camera sends H.264 (not MJPEG), decode it to JPEG via ffmpeg.
@@ -1459,6 +1537,12 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
           const jpeg = Buffer.concat(chunks);
           if (jpeg[0] === 0xff && jpeg[1] === 0xd8) {
             api.sendMjpegFrame(doimusID, "main", jpeg);
+            api.updateDeviceImage(
+              doimusID,
+              "snapshot_latest",
+              jpeg,
+              "image/jpeg",
+            );
           }
           ffmpegRunning = false;
         });
@@ -2052,7 +2136,7 @@ module.exports = {
     }
 
     // Snapshots are captured on-demand when MQTT motion events arrive
-    // (tryFetchMotionImage / tryDecodeCameraImage).
+    // (tryDecodeCameraImage / parseMotionMetadata + scheduleMotionImageFetch).
     // Periodic REST polling is disabled — Tuya cameras don't reliably
     // serve snapshots on a timer, and constant polling drowns out real
     // motion events with noise.
@@ -2078,6 +2162,10 @@ module.exports = {
         let wr = ctx._webrtcClients.get(deviceID);
 
         if (value.action === "start") {
+          log(
+            "info",
+            `[WebRTC] START command received for deviceID=${deviceID} tuyaID=${tuyaDevice.id} name="${tuyaDevice.name}" category=${tuyaDevice.category}`,
+          );
           try {
             // Disconnect any existing session before creating a new one.
             const existing = ctx._webrtcClients.get(deviceID);
@@ -2129,29 +2217,42 @@ module.exports = {
             // Battery-powered cameras (peephole, doorbell) sleep to
             // conserve power and will not connect to the IPC MQTT broker
             // until woken.  Two-phase wake-up:
-            //  1. Try a direct Tuya cloud command (cruise/basic_awake)
-            //  2. getConfigs() calls access-config which also triggers a
-            //     cloud push to the camera.
+            //  1. Try a direct Tuya cloud command (cruise/basic_awake/video_call)
+            //  2. getConfigs() calls the access-config API which also triggers
+            //     a cloud push to the camera.
             // After both, poll for the camera to report online.
+            //
+            // Always wake battery cameras proactively — the cached online
+            // status from the last MQTT heartbeat may be stale (the camera
+            // enters low-power sleep between events).  The wake command is a
+            // cheap cloud push the camera ignores if already awake.
             const isCamera = ["sp", "mobilecam", "wxml", "doorbell"].includes(
               tuyaDevice.category,
             );
-            const hasBattery =
-              tuyaDevice.schema &&
-              tuyaDevice.schema.some(
-                (s) =>
-                  s.code === "battery_percentage" ||
-                  s.code === "battery_state" ||
-                  s.code === "battery_value" ||
-                  s.code === "va_battery" ||
-                  (s.code && s.code.startsWith("battery")),
-              );
-            const needsWake = isCamera && hasBattery && !tuyaDevice.online;
+            const batteryCodes =
+              tuyaDevice.schema
+                ?.filter(
+                  (s) =>
+                    s.code === "battery_percentage" ||
+                    s.code === "battery_state" ||
+                    s.code === "battery_value" ||
+                    s.code === "va_battery" ||
+                    (s.code && s.code.startsWith("battery")),
+                )
+                .map((s) => s.code) || [];
+            const hasBattery = batteryCodes.length > 0;
+            // Always wake battery cameras — even if they appear online now,
+            // they may have entered low-power sleep since the last MQTT heartbeat.
+            const needsWake = isCamera && hasBattery;
+            log(
+              "info",
+              `[WebRTC] Camera check: category=${tuyaDevice.category} isCamera=${isCamera} hasBattery=${hasBattery} batteryCodes=[${batteryCodes.join(",")}] online=${tuyaDevice.online} needsWake=${needsWake}`,
+            );
 
             if (needsWake) {
               log(
                 "info",
-                `[WebRTC] Camera "${tuyaDevice.name}" is offline (battery), attempting wake-up...`,
+                `[WebRTC] Camera "${tuyaDevice.name}" is battery-powered, sending wake-up...`,
               );
               const wakeDp = tuyaDevice.schema.find((s) =>
                 ["cruise", "basic_awake", "video_call"].includes(s.code),
@@ -2169,17 +2270,12 @@ module.exports = {
                   );
                 }
               } else {
-                try {
-                  await dm.sendCommands(tuyaDevice.id, [
-                    { code: "cruise", value: true },
-                  ]);
-                  log("info", "[WebRTC] Wake-up sent (blind cruise)");
-                } catch (e) {
-                  log(
-                    "debug",
-                    `[WebRTC] Blind wake-up skipped: ${e.message || e}`,
-                  );
-                }
+                // No known wake DP — the access-config API call in getConfigs()
+                // will still trigger a cloud push that may wake the camera.
+                log(
+                  "info",
+                  `[WebRTC] No wake DP (cruise/basic_awake/video_call) in schema codes=[${(tuyaDevice.schema || []).map((s) => s.code).join(",")}] — relying on access-config push`,
+                );
               }
             }
 
@@ -2650,20 +2746,15 @@ module.exports = {
 
         // Camera / doorbell / mobilecam image capture from MQTT
         if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
-          // Try the v4.0 movement-configs API first (no decryption needed).
-          const motionJpeg = await tryFetchMotionImage(
-            device,
-            status,
-            dm,
-            ctx,
-            log,
-          );
-          if (motionJpeg) {
-            api.sendMjpegFrame(doimusID, "main", motionJpeg);
+          // 1. Try inline MQTT decode first (movement_detect_pic / doorbell_pic DPs).
+          //    Image is embedded in the MQTT payload — no delay needed.
+          const jpeg = tryDecodeCameraImage(device, status, log);
+          if (jpeg) {
+            api.sendMjpegFrame(doimusID, "main", jpeg);
             api.updateDeviceImage(
               doimusID,
               "snapshot_latest",
-              motionJpeg,
+              jpeg,
               "image/jpeg",
             );
             if (!ctx._motionSeq) ctx._motionSeq = new Map();
@@ -2672,33 +2763,29 @@ module.exports = {
             api.updateDeviceImage(
               doimusID,
               "motion_" + seq,
-              motionJpeg,
+              jpeg,
               "image/jpeg",
             );
           } else {
-            // Fall back to inline MQTT decode (AES-128-CBC / AES-128-ECB).
-            const jpeg = tryDecodeCameraImage(device, status, log);
-            if (jpeg) {
-              api.sendMjpegFrame(doimusID, "main", jpeg);
-              api.updateDeviceImage(
+            // 2. Check for initiative_message metadata — schedule a delayed S3 fetch.
+            //    The camera sends the MQTT notification before the image finishes
+            //    uploading to Tuya's cloud.  A 10-second delay gives the upload
+            //    time to complete so we fetch the correct (new) image.
+            const metadata = parseMotionMetadata(status, log, device.name);
+            if (metadata) {
+              scheduleMotionImageFetch(
+                device,
+                metadata,
                 doimusID,
-                "snapshot_latest",
-                jpeg,
-                "image/jpeg",
-              );
-              if (!ctx._motionSeq) ctx._motionSeq = new Map();
-              const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
-              ctx._motionSeq.set(device.id, seq);
-              api.updateDeviceImage(
-                doimusID,
-                "motion_" + seq,
-                jpeg,
-                "image/jpeg",
+                ctx,
+                dm,
+                api,
+                log,
               );
             } else if (state.motion) {
-              // Motion detected but no JPEG embedded in the MQTT payload.
-              // The camera image may arrive via a separate MQTT update
-              // (movement_detect_pic / doorbell_pic DPs fired asynchronously).
+              // 3. Motion detected but no JPEG or metadata in this MQTT update.
+              //    The image DP may arrive via a separate MQTT message
+              //    (movement_detect_pic / doorbell_pic DPs fired asynchronously).
               log(
                 "info",
                 `Motion detected for "${device.name}" (id=${device.id}) — waiting for image DP`,
