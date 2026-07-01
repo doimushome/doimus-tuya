@@ -154,12 +154,13 @@
           "debug": {
             "title": "Enable Debug Logging",
             "type": "boolean",
-            "default": false
+            "default": true
           },
           "debugLevel": {
             "title": "Debug Level",
             "description": "Set to `api` to enable verbose API/MQTT request logging. Leave empty for device-level debug only.",
             "type": "string",
+            "default": "api",
             "condition": {
               "functionBody": "return model.options && model.options.debug;"
             }
