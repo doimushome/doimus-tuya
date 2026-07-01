@@ -1825,6 +1825,12 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
       "pir",
       "motion_sensor",
       "motion_detect",
+      "doorbell_active",
+      "motion_switch",
+      "human_detect",
+      "person_detect",
+      "movement_detect",
+      "ipc_motion",
     ];
     const savedTransient = [];
     for (const item of device.status) {
@@ -2604,6 +2610,32 @@ module.exports = {
                     ...current,
                     ...resetState,
                   });
+                  // Clear transient motion DPs in device.status so the
+                  // next heartbeat doesn't re-trigger motion=true from
+                  // stale DP values (especially for battery cameras that
+                  // sleep after a motion event and never send the clearing
+                  // MQTT update).
+                  if (Array.isArray(device.status)) {
+                    const transientCodes = [
+                      "movement_detect_pic",
+                      "doorbell_pic",
+                      "ipc_human",
+                      "pir",
+                      "motion_sensor",
+                      "motion_detect",
+                      "doorbell_active",
+                      "motion_switch",
+                      "human_detect",
+                      "person_detect",
+                      "movement_detect",
+                      "ipc_motion",
+                    ];
+                    for (const dp of device.status) {
+                      if (transientCodes.includes(dp.code)) {
+                        dp.value = "";
+                      }
+                    }
+                  }
                 }
                 ctx._motionTimers.delete(device.id);
               }, 5000),
@@ -2699,6 +2731,11 @@ module.exports = {
           "motion_sensor",
           "motion_detect",
           "doorbell_active",
+          "motion_switch",
+          "human_detect",
+          "person_detect",
+          "movement_detect",
+          "ipc_motion",
         ];
         for (const dp of device.status) {
           if (transientDPs.includes(dp.code)) {

@@ -271,6 +271,12 @@ class TuyaDeviceManager extends EventEmitter {
                 "pir",
                 "motion_sensor",
                 "motion_detect",
+                "doorbell_active",
+                "motion_switch",
+                "human_detect",
+                "person_detect",
+                "movement_detect",
+                "ipc_motion",
               ].includes(item.code)
             ) {
               item.value = "";
