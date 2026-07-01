@@ -2255,7 +2255,12 @@ module.exports = {
                 `[WebRTC] Camera "${tuyaDevice.name}" is battery-powered, sending wake-up...`,
               );
               const wakeDp = tuyaDevice.schema.find((s) =>
-                ["cruise", "basic_awake", "video_call"].includes(s.code),
+                [
+                  "cruise",
+                  "basic_awake",
+                  "video_call",
+                  "wireless_awake",
+                ].includes(s.code),
               );
               if (wakeDp) {
                 try {
@@ -2263,6 +2268,9 @@ module.exports = {
                     { code: wakeDp.code, value: true },
                   ]);
                   log("info", `[WebRTC] Wake-up sent (dp=${wakeDp.code})`);
+                  // Give the camera 2s to activate its WebRTC/video subsystem
+                  // before fetching configs and connecting to IPC MQTT.
+                  await new Promise((r) => setTimeout(r, 2000));
                 } catch (e) {
                   log(
                     "debug",
@@ -2274,7 +2282,7 @@ module.exports = {
                 // will still trigger a cloud push that may wake the camera.
                 log(
                   "info",
-                  `[WebRTC] No wake DP (cruise/basic_awake/video_call) in schema codes=[${(tuyaDevice.schema || []).map((s) => s.code).join(",")}] — relying on access-config push`,
+                  `[WebRTC] No wake DP (cruise/basic_awake/video_call/wireless_awake) in schema codes=[${(tuyaDevice.schema || []).map((s) => s.code).join(",")}] — relying on access-config push`,
                 );
               }
             }
