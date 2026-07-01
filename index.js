@@ -2090,42 +2090,171 @@ module.exports = {
         let wr = ctx._webrtcClients.get(deviceID);
 
         if (value.action === "start") {
-          wr = new WebRTCSignaling(dm.api, log);
-          ctx._webrtcClients.set(deviceID, wr);
+          try {
+            // Disconnect any existing session before creating a new one.
+            const existing = ctx._webrtcClients.get(deviceID);
+            if (existing) {
+              log(
+                "info",
+                "[WebRTC] Disconnecting previous session before restart",
+              );
+              existing.disconnect();
+              ctx._webrtcClients.delete(deviceID);
+            }
 
-          wr.on("config", (cfg) => {
-            api.sendWebrtcSignaling(deviceID, { event: "config", ...cfg });
-          });
-          wr.on("answer", (data) => {
-            api.sendWebrtcSignaling(deviceID, { event: "answer", ...data });
-          });
-          wr.on("candidate", (data) => {
-            api.sendWebrtcSignaling(deviceID, { event: "candidate", ...data });
-          });
-          wr.on("disconnect", (data) => {
-            api.sendWebrtcSignaling(deviceID, { event: "disconnect", ...data });
-          });
-          wr.on("error", (err) => {
+            wr = new WebRTCSignaling(dm.api, log);
+            ctx._webrtcClients.set(deviceID, wr);
+
+            wr.on("config", (cfg) => {
+              api.sendWebrtcSignaling(deviceID, { event: "config", ...cfg });
+            });
+            wr.on("answer", (data) => {
+              api.sendWebrtcSignaling(deviceID, { event: "answer", ...data });
+            });
+            wr.on("candidate", (data) => {
+              api.sendWebrtcSignaling(deviceID, {
+                event: "candidate",
+                ...data,
+              });
+            });
+            wr.on("disconnect", (data) => {
+              api.sendWebrtcSignaling(deviceID, {
+                event: "disconnect",
+                ...data,
+              });
+            });
+            wr.on("error", (err) => {
+              api.sendWebrtcSignaling(deviceID, {
+                event: "error",
+                message: err.message,
+              });
+            });
+
+            // Battery-powered cameras (peephole, doorbell) sleep to
+            // conserve power and will not connect to the IPC MQTT broker
+            // until woken.  Two-phase wake-up:
+            //  1. Try a direct Tuya cloud command (cruise/basic_awake)
+            //  2. getConfigs() calls access-config which also triggers a
+            //     cloud push to the camera.
+            // After both, poll for the camera to report online.
+            const isCamera = ["sp", "mobilecam", "wxml", "doorbell"].includes(
+              tuyaDevice.category,
+            );
+            const hasBattery =
+              tuyaDevice.schema &&
+              tuyaDevice.schema.some(
+                (s) =>
+                  s.code === "battery_percentage" ||
+                  s.code === "battery_state" ||
+                  s.code === "battery_value" ||
+                  s.code === "va_battery" ||
+                  (s.code && s.code.startsWith("battery")),
+              );
+            const needsWake = isCamera && hasBattery && !tuyaDevice.online;
+
+            if (needsWake) {
+              log(
+                "info",
+                `[WebRTC] Camera "${tuyaDevice.name}" is offline (battery), attempting wake-up...`,
+              );
+              const wakeDp = tuyaDevice.schema.find((s) =>
+                ["cruise", "basic_awake", "video_call"].includes(s.code),
+              );
+              if (wakeDp) {
+                try {
+                  await dm.sendCommands(tuyaDevice.id, [
+                    { code: wakeDp.code, value: true },
+                  ]);
+                  log("info", `[WebRTC] Wake-up sent (dp=${wakeDp.code})`);
+                } catch (e) {
+                  log(
+                    "debug",
+                    `[WebRTC] Wake-up (dp=${wakeDp.code}) skipped: ${e.message || e}`,
+                  );
+                }
+              } else {
+                try {
+                  await dm.sendCommands(tuyaDevice.id, [
+                    { code: "cruise", value: true },
+                  ]);
+                  log("info", "[WebRTC] Wake-up sent (blind cruise)");
+                } catch (e) {
+                  log(
+                    "debug",
+                    `[WebRTC] Blind wake-up skipped: ${e.message || e}`,
+                  );
+                }
+              }
+            }
+
+            log(
+              "info",
+              `[WebRTC] Fetching configs for Tuya device ${tuyaDevice.id}`,
+            );
+            const configs = await wr.getConfigs(tuyaDevice.id);
+
+            // Phase 2: after getConfigs (sends cloud push to camera),
+            // wait for it to report online before connecting.
+            if (needsWake && configs) {
+              log(
+                "info",
+                "[WebRTC] Waiting for camera to come online (max 15s)...",
+              );
+              await new Promise((resolve) => {
+                let waited = 0;
+                const poll = setInterval(() => {
+                  waited += 500;
+                  if (tuyaDevice.online || waited >= 15000) {
+                    clearInterval(poll);
+                    resolve();
+                  }
+                }, 500);
+              });
+              log("info", "[WebRTC] Camera online: " + tuyaDevice.online);
+              if (!tuyaDevice.online) {
+                log("warn", "[WebRTC] Camera did not wake up within 15s");
+                api.sendWebrtcSignaling(deviceID, {
+                  event: "error",
+                  message: "Camera did not wake up in time. Please try again.",
+                });
+                ctx._webrtcClients.delete(deviceID);
+                return;
+              }
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+
+            if (configs) {
+              log("info", `[WebRTC] Configs fetched, connecting to IPC MQTT`);
+              wr.connect();
+            } else {
+              log(
+                "warn",
+                `[WebRTC] WebRTC not supported for device ${tuyaDevice.id}`,
+              );
+              api.sendWebrtcSignaling(deviceID, {
+                event: "error",
+                message: "WebRTC not supported by this device",
+              });
+              ctx._webrtcClients.delete(deviceID);
+            }
+          } catch (e) {
+            log("error", `[WebRTC] Start failed: ${e.message || e}`);
             api.sendWebrtcSignaling(deviceID, {
               event: "error",
-              message: err.message,
+              message: `WebRTC start failed: ${e.message || e}`,
             });
-          });
-
-          const configs = await wr.getConfigs(tuyaDevice.id);
-          if (configs) {
-            wr.connect();
-          } else {
-            api.sendWebrtcSignaling(deviceID, {
-              event: "error",
-              message: "WebRTC not supported by this device",
-            });
-            ctx._webrtcClients.delete(deviceID);
+            if (ctx._webrtcClients) ctx._webrtcClients.delete(deviceID);
           }
           return;
         }
 
-        if (!wr) return;
+        if (!wr) {
+          api.sendWebrtcSignaling(deviceID, {
+            event: "error",
+            message: "No active WebRTC session — call 'start' first",
+          });
+          return;
+        }
 
         if (value.event === "offer") {
           wr.sendOffer(value.sdp, value.stream_type);
@@ -2449,6 +2578,45 @@ module.exports = {
               ...state,
             });
           }
+
+          // ── Motion auto-reset timer (camera / doorbell / sensor) ──
+          // When motion fires, schedule a 5-second reset. If the device
+          // clears the motion DP on its own via MQTT before the timer fires,
+          // the timer is harmless (it checks lastKnownState first).
+          if (state.motion === true && !lastKnown.motion) {
+            if (!ctx._motionTimers) ctx._motionTimers = new Map();
+            const existing = ctx._motionTimers.get(device.id);
+            if (existing) clearTimeout(existing);
+            ctx._motionTimers.set(
+              device.id,
+              setTimeout(() => {
+                const current = ctx.lastKnownState.get(device.id);
+                // Only reset if motion is still true — device may have
+                // already cleared it via MQTT.
+                if (current && current.motion === true) {
+                  log(
+                    "info",
+                    `Motion auto-reset for "${device.name}" (5s timeout)`,
+                  );
+                  const resetState = { motion: false };
+                  api.updateDeviceState(doimusID, resetState);
+                  ctx.lastKnownState.set(device.id, {
+                    ...current,
+                    ...resetState,
+                  });
+                }
+                ctx._motionTimers.delete(device.id);
+              }, 5000),
+            );
+          }
+          // If motion cleared before timer fires, cancel the pending reset.
+          if (state.motion === false && ctx._motionTimers) {
+            const pending = ctx._motionTimers.get(device.id);
+            if (pending) {
+              clearTimeout(pending);
+              ctx._motionTimers.delete(device.id);
+            }
+          }
         }
 
         // Camera / doorbell / mobilecam image capture from MQTT
@@ -2666,6 +2834,13 @@ module.exports = {
           } catch (_) {}
         }
         _ctx.p2pClients.clear();
+      }
+      // Clear motion auto-reset timers
+      if (_ctx._motionTimers) {
+        for (const [, timer] of _ctx._motionTimers) {
+          clearTimeout(timer);
+        }
+        _ctx._motionTimers.clear();
       }
       _ctx.apiRef = null;
       _ctx = null;

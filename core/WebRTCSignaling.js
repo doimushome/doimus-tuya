@@ -55,7 +55,12 @@ class WebRTCSignaling {
     (this._listeners[event] || []).forEach((h) => {
       try {
         h(data);
-      } catch (_) {}
+      } catch (e) {
+        this.log(
+          "error",
+          `[WebRTC] Event handler error (${event}): ${e.message || e}`,
+        );
+      }
     });
   }
 
@@ -215,8 +220,13 @@ class WebRTCSignaling {
    * Buffers the offer if the MQTT connection is not yet ready.
    */
   sendOffer(sdp, streamType = 1) {
-    if (!this.mqttConfig || !this.webrtcConfig) {
-      this.log("debug", "[WebRTC] Buffering offer (MQTT not ready yet)");
+    if (!this.mqttConfig || !this.webrtcConfig || !this.mqttClient) {
+      const reason = !this.mqttConfig
+        ? "no MQTT config"
+        : !this.webrtcConfig
+          ? "no WebRTC config"
+          : "MQTT client not connected yet";
+      this.log("info", `[WebRTC] Buffering offer (${reason})`);
       this._pendingOffer = { sdp, streamType };
       return;
     }
@@ -247,8 +257,13 @@ class WebRTCSignaling {
       },
     };
 
-    this._publish(JSON.stringify(msg));
-    this.log("info", `[WebRTC] Offer sent session=${this.sessionId}`);
+    const payload = JSON.stringify(msg);
+    const topic = this.mqttConfig?.sink_topic?.ipc || "<missing>";
+    this.log(
+      "info",
+      `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"})`,
+    );
+    this._publish(payload);
 
     // Flush any candidates that were buffered before the offer was sent.
     this._flushCandidates();
@@ -402,19 +417,48 @@ class WebRTCSignaling {
 
   _publish(payload) {
     const topic = this.mqttConfig?.sink_topic?.ipc;
-    if (!topic || !this.mqttClient) return;
-    this.mqttClient.publish(topic, payload);
+    if (!topic) {
+      this.log(
+        "error",
+        "[WebRTC] Cannot publish: sink_topic.ipc is missing from MQTT config",
+      );
+      return;
+    }
+    if (!this.mqttClient) {
+      this.log("error", "[WebRTC] Cannot publish: MQTT client not connected");
+      return;
+    }
+    this.mqttClient.publish(topic, payload, (err) => {
+      if (err) {
+        this.log("error", `[WebRTC] Publish failed: ${err.message || err}`);
+      }
+    });
   }
 
   _handleMessage(topic, payload) {
     try {
-      const parsed = JSON.parse(payload.toString());
-      if (parsed.protocol !== WEBRTC_PROTOCOL) return;
+      const raw = payload.toString();
+      this.log(
+        "debug",
+        `[WebRTC] MQTT message received on topic=${topic} len=${raw.length}`,
+      );
+      const parsed = JSON.parse(raw);
+      if (parsed.protocol !== WEBRTC_PROTOCOL) {
+        this.log(
+          "debug",
+          `[WebRTC] Ignoring non-WebRTC message protocol=${parsed.protocol}`,
+        );
+        return;
+      }
 
       const { data } = parsed;
       if (!data || !data.header) return;
 
       const { type, sessionid } = data.header;
+      this.log(
+        "info",
+        `[WebRTC] Camera message type=${type} session=${sessionid}`,
+      );
 
       switch (type) {
         case "answer":
