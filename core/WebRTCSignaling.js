@@ -258,7 +258,7 @@ class WebRTCSignaling {
     };
 
     const payload = JSON.stringify(msg);
-    const topic = this.mqttConfig?.sink_topic?.ipc || "<missing>";
+    const topic = this._resolveTopic();
     this.log(
       "info",
       `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"})`,
@@ -428,7 +428,7 @@ class WebRTCSignaling {
   }
 
   _publish(payload) {
-    const topic = this.mqttConfig?.sink_topic?.ipc;
+    const topic = this._resolveTopic();
     if (!topic) {
       this.log(
         "error",
@@ -445,6 +445,16 @@ class WebRTCSignaling {
         this.log("error", `[WebRTC] Publish failed: ${err.message || err}`);
       }
     });
+  }
+
+  // Resolve the publish topic, replacing {device_id} placeholder with the
+  // actual device ID.  The Tuya access-config API returns a template string.
+  _resolveTopic() {
+    let topic = this.mqttConfig?.sink_topic?.ipc || "";
+    if (topic.includes("{device_id}") && this.webrtcConfig?.deviceId) {
+      topic = topic.replace("{device_id}", this.webrtcConfig.deviceId);
+    }
+    return topic;
   }
 
   _handleMessage(topic, payload) {
