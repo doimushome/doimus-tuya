@@ -2104,8 +2104,11 @@ module.exports = {
       if (ctx._energyPollTimer.unref) ctx._energyPollTimer.unref();
     }
 
-    // Periodic MJPEG snapshot for camera devices
-    let snapshotTimer = null;
+    // Snapshots are captured on-demand when MQTT motion events arrive
+    // (tryFetchMotionImage / tryDecodeCameraImage / triggerSnapshotFetch).
+    // Periodic REST polling is disabled — Tuya cameras don't reliably
+    // serve snapshots on a timer, and constant polling drowns out real
+    // motion events with noise.
     if (result.dm) {
       const cameraDevices = result.dm.devices.filter((d) =>
         ["sp", "mobilecam", "wxml", "doorbell"].includes(d.category),
@@ -2113,93 +2116,11 @@ module.exports = {
       if (cameraDevices.length > 0) {
         log(
           "info",
-          `Starting MJPEG snapshot polling for ${cameraDevices.length} camera(s): ${cameraDevices.map((d) => `"${d.name}" (id=${d.id})`).join(", ")}`,
+          `Camera snapshot capture is event-driven (MQTT motion triggers). ${cameraDevices.length} camera(s): ${cameraDevices.map((d) => `"${d.name}" (id=${d.id})`).join(", ")}`,
         );
-        let firstSnapshotLogged = false;
-        let snapshotOK = 0;
-        let snapshotErr = 0;
-        let lastSnapshotHeartbeat = 0;
-        // Track per-device consecutive snapshot errors
-        const _snapshotConsecutiveFails = new Map();
-        snapshotTimer = setInterval(async () => {
-          const now = Date.now();
-          for (const device of cameraDevices) {
-            try {
-              const frame = await result.dm.api.getCameraSnapshot(device.id);
-              if (frame) {
-                const doimusID = ctx.doimusDeviceMap.get(device.id);
-                if (doimusID) {
-                  api.sendMjpegFrame(doimusID, "main", frame);
-                  api.updateDeviceImage(
-                    doimusID,
-                    "snapshot_latest",
-                    frame,
-                    "image/jpeg",
-                  );
-                  snapshotOK++;
-                  if (!firstSnapshotLogged) {
-                    log(
-                      "info",
-                      `Snapshot OK: device="${device.name}" doimusID="${doimusID}" size=${frame.length}B`,
-                    );
-                    firstSnapshotLogged = true;
-                  }
-                  // Reset consecutive fails on success.
-                  _snapshotConsecutiveFails.set(device.id, 0);
-                } else {
-                  log(
-                    "warn",
-                    `Snapshot skipped: no Doimus device ID for Tuya device "${device.name}" (id=${device.id})`,
-                  );
-                }
-              } else {
-                snapshotErr++;
-                const fails =
-                  (_snapshotConsecutiveFails.get(device.id) || 0) + 1;
-                _snapshotConsecutiveFails.set(device.id, fails);
-                // Log every failure at warn — full visibility during debug.
-                log(
-                  "warn",
-                  `REST snapshot unavailable for device "${device.name}" (id=${device.id}, fail #${fails})`,
-                );
-              }
-            } catch (e) {
-              snapshotErr++;
-              const fails = (_snapshotConsecutiveFails.get(device.id) || 0) + 1;
-              _snapshotConsecutiveFails.set(device.id, fails);
-              log(
-                "warn",
-                `Snapshot fetch error for device "${device.name}" (id=${device.id}, fail #${fails}): ${e.message || e}`,
-              );
-            }
-          }
-          // Heartbeat: confirm the polling loop is alive every 2 min.
-          if (now - lastSnapshotHeartbeat >= 120_000) {
-            lastSnapshotHeartbeat = now;
-            log(
-              "info",
-              `Snapshot heartbeat: ${snapshotOK} ok / ${snapshotErr} failed / ${cameraDevices.length} camera(s)`,
-            );
-          }
-          // Periodic summary every 25 cycles (~50s)
-          const cycle = Math.floor(
-            (snapshotOK + snapshotErr) / (cameraDevices.length || 1),
-          );
-          if (
-            cycle > 0 &&
-            cycle % 25 === 0 &&
-            (snapshotOK > 0 || snapshotErr > 0)
-          ) {
-            log(
-              "info",
-              `Snapshot summary (${cycle} cycles): ${snapshotOK} ok, ${snapshotErr} failed`,
-            );
-          }
-        }, 2000);
-        if (snapshotTimer.unref) snapshotTimer.unref();
       }
     }
-    ctx._snapshotTimer = snapshotTimer;
+    ctx._snapshotTimer = null;
 
     api.onCommand(async (deviceID, key, value) => {
       // ── WebRTC signaling relay ────────────────────────────────────
@@ -2738,7 +2659,7 @@ module.exports = {
     log("info", "Tuya Platform plugin ready.");
     log(
       "info",
-      `Energy polling: ${energyPollDevices.length} device(s) monitored, MJPEG snapshot: ${(snapshotTimer !== null).toString()}`,
+      `Energy polling: ${energyPollDevices.length} device(s) monitored, MJPEG snapshot: event-driven`,
     );
   },
 
