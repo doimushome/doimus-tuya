@@ -267,6 +267,14 @@ class WebRTCSignaling {
 
     // Flush any candidates that were buffered before the offer was sent.
     this._flushCandidates();
+
+    // Start a 5s fallback timer — if the camera doesn't answer the
+    // offer, emit "fallback" so the plugin can switch to P2P streaming.
+    if (this._fallbackTimer) clearTimeout(this._fallbackTimer);
+    this._fallbackTimer = setTimeout(() => {
+      this.log("info", "[WebRTC] No answer within 5s — emitting fallback");
+      this._emit("fallback", { sessionId: this.sessionId });
+    }, 5000);
   }
 
   /**
@@ -395,6 +403,10 @@ class WebRTCSignaling {
       clearTimeout(this._expireTimer);
       this._expireTimer = null;
     }
+    if (this._fallbackTimer) {
+      clearTimeout(this._fallbackTimer);
+      this._fallbackTimer = null;
+    }
     if (this.mqttClient) {
       this.mqttClient.end(true);
       this.mqttClient = null;
@@ -462,6 +474,10 @@ class WebRTCSignaling {
 
       switch (type) {
         case "answer":
+          if (this._fallbackTimer) {
+            clearTimeout(this._fallbackTimer);
+            this._fallbackTimer = null;
+          }
           this.log("info", `[WebRTC] Answer received session=${sessionid}`);
           this._emit("answer", {
             sdp: data.msg?.sdp,

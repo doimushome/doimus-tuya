@@ -2117,6 +2117,14 @@ module.exports = {
                 message: err.message,
               });
             });
+            wr.on("fallback", () => {
+              log(
+                "info",
+                `[WebRTC] WebRTC timed out, falling back to P2P for "${tuyaDevice.name}"`,
+              );
+              api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
+              startP2P(deviceID, tuyaDevice, ctx, log, api);
+            });
 
             // Battery-powered cameras (peephole, doorbell) sleep to
             // conserve power and will not connect to the IPC MQTT broker
