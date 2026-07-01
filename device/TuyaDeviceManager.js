@@ -263,22 +263,8 @@ class TuyaDeviceManager extends EventEmitter {
             // update. These DPs only appear when an event is active; when
             // absent, the event has ended but device.status retains the old
             // value indefinitely, causing perpetual motion/doorbell state.
-            if (
-              [
-                "movement_detect_pic",
-                "doorbell_pic",
-                "ipc_human",
-                "pir",
-                "motion_sensor",
-                "motion_detect",
-                "doorbell_active",
-                "motion_switch",
-                "human_detect",
-                "person_detect",
-                "movement_detect",
-                "ipc_motion",
-              ].includes(item.code)
-            ) {
+            const motionPattern = /motion|movement|doorbell|human|person|pir/i;
+            if (motionPattern.test(item.code)) {
               item.value = "";
             }
             continue;

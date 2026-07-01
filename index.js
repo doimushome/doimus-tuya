@@ -1815,29 +1815,15 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
     const doimusID = generateUUID(device.id);
     const capabilities = determineCapabilities(device);
 
-    // Permanently clear cached transient camera/doorbell DPs so the
-    // initial state doesn't show stale motion/doorbell events from the
-    // REST API.  Transient DPs only become meaningful when a fresh MQTT
-    // update arrives with a non-empty value.  Unlike heartbeat DPs
-    // (switch, temp, etc.), transient DPs do NOT need their old value
-    // preserved for diffing — the absence of the DP in the MQTT update
-    // means the event has ended.
-    const transientDPs = [
-      "movement_detect_pic",
-      "doorbell_pic",
-      "ipc_human",
-      "pir",
-      "motion_sensor",
-      "motion_detect",
-      "doorbell_active",
-      "motion_switch",
-      "human_detect",
-      "person_detect",
-      "movement_detect",
-      "ipc_motion",
-    ];
+    // Permanently clear all motion/doorbell-related transient DP values
+    // so the initial state starts clean.  Match using the same regex
+    // pattern that mapTuyaStatusToDoimusState uses in its generic
+    // fallback — this catches both known codes (movement_detect_pic, etc.)
+    // and device-specific codes (motion_alert, iot_motion, etc.) that
+    // aren't in any hardcoded list.
+    const motionPattern = /motion|movement|doorbell|human|person|pir/i;
     for (const item of device.status) {
-      if (transientDPs.includes(item.code)) {
+      if (motionPattern.test(item.code)) {
         item.value = "";
       }
     }
@@ -2631,22 +2617,10 @@ module.exports = {
                   // sleep after a motion event and never send the clearing
                   // MQTT update).
                   if (Array.isArray(device.status)) {
-                    const transientCodes = [
-                      "movement_detect_pic",
-                      "doorbell_pic",
-                      "ipc_human",
-                      "pir",
-                      "motion_sensor",
-                      "motion_detect",
-                      "doorbell_active",
-                      "motion_switch",
-                      "human_detect",
-                      "person_detect",
-                      "movement_detect",
-                      "ipc_motion",
-                    ];
+                    const motionPattern =
+                      /motion|movement|doorbell|human|person|pir/i;
                     for (const dp of device.status) {
-                      if (transientCodes.includes(dp.code)) {
+                      if (motionPattern.test(dp.code)) {
                         dp.value = "";
                       }
                     }
@@ -2738,22 +2712,9 @@ module.exports = {
       // in device.status so that when it comes back online it starts
       // with a clean state.
       if (device.online === false && Array.isArray(device.status)) {
-        const transientDPs = [
-          "movement_detect_pic",
-          "doorbell_pic",
-          "ipc_human",
-          "pir",
-          "motion_sensor",
-          "motion_detect",
-          "doorbell_active",
-          "motion_switch",
-          "human_detect",
-          "person_detect",
-          "movement_detect",
-          "ipc_motion",
-        ];
+        const motionPattern = /motion|movement|doorbell|human|person|pir/i;
         for (const dp of device.status) {
-          if (transientDPs.includes(dp.code)) {
+          if (motionPattern.test(dp.code)) {
             dp.value = "";
           }
         }
