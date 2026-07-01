@@ -488,6 +488,14 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     state.online = device.online;
   }
 
+  // ── Offline guard: a device that is offline cannot have active motion. ──
+  // When device.online is false, force-reset motion/doorbell immediately
+  // without consulting device.status (which retains stale values).
+  if (state.online === false) {
+    state.motion = false;
+    state.doorbell = false;
+  }
+
   // ── Camera / doorbell: auto-reset motion from device.status (full state) ──
   // Known motion/doorbell DPs only appear when a motion event is active.
   // When motion ends, those DPs disappear. We check device.status (the full
@@ -2627,6 +2635,25 @@ module.exports = {
       const state = { online: device.online };
       if (info && info.name) {
         log("info", `Device renamed: ${device.name}`);
+      }
+      // When a device goes offline, clear transient motion/doorbell DPs
+      // in device.status so that when it comes back online it starts
+      // with a clean state.
+      if (device.online === false && Array.isArray(device.status)) {
+        const transientDPs = [
+          "movement_detect_pic",
+          "doorbell_pic",
+          "ipc_human",
+          "pir",
+          "motion_sensor",
+          "motion_detect",
+          "doorbell_active",
+        ];
+        for (const dp of device.status) {
+          if (transientDPs.includes(dp.code)) {
+            dp.value = "";
+          }
+        }
       }
       api.updateDeviceState(doimusID, state);
       ctx.lastKnownState.set(device.id, {
