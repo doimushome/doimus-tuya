@@ -1815,9 +1815,13 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
     const doimusID = generateUUID(device.id);
     const capabilities = determineCapabilities(device);
 
-    // Temporarily clear cached transient camera/doorbell DPs so the initial
-    // state doesn't show stale motion/doorbell events from the REST API.
-    // These only become meaningful when a fresh MQTT update arrives.
+    // Permanently clear cached transient camera/doorbell DPs so the
+    // initial state doesn't show stale motion/doorbell events from the
+    // REST API.  Transient DPs only become meaningful when a fresh MQTT
+    // update arrives with a non-empty value.  Unlike heartbeat DPs
+    // (switch, temp, etc.), transient DPs do NOT need their old value
+    // preserved for diffing — the absence of the DP in the MQTT update
+    // means the event has ended.
     const transientDPs = [
       "movement_detect_pic",
       "doorbell_pic",
@@ -1832,10 +1836,8 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
       "movement_detect",
       "ipc_motion",
     ];
-    const savedTransient = [];
     for (const item of device.status) {
       if (transientDPs.includes(item.code)) {
-        savedTransient.push({ code: item.code, value: item.value });
         item.value = "";
       }
     }
@@ -1845,12 +1847,6 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
       device.status,
       options,
     );
-
-    // Restore transient DP values for future MQTT diffing
-    for (const saved of savedTransient) {
-      const item = device.status.find((s) => s.code === saved.code);
-      if (item) item.value = saved.value;
-    }
 
     const tempSetSchema = device.schema.find(
       (s) => s.code === "temp_set" || s.code === "target_temp",
