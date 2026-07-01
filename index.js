@@ -1323,50 +1323,6 @@ function tryDecodeDoorbellPic(item, localKey, log) {
   return null;
 }
 
-// Triggered by motion detection when the inline MQTT image decode fails.
-// Waits 2s for the camera to process the image, then fetches it via the REST
-// snapshot API. Debounced to at most one fetch per 10s per device to avoid
-// spamming the API during rapid motion events.
-function triggerSnapshotFetch(device, doimusID, ctx, dm, api, log) {
-  if (!ctx._snapshotDebounce) ctx._snapshotDebounce = new Map();
-  if (!ctx._motionSeq) ctx._motionSeq = new Map();
-  const lastFetch = ctx._snapshotDebounce.get(device.id) || 0;
-  const now = Date.now();
-  if (now - lastFetch < 10000) return; // debounce: max 1 fetch per 10s
-  ctx._snapshotDebounce.set(device.id, now);
-
-  log(
-    "info",
-    `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fetch in 2s`,
-  );
-  setTimeout(async () => {
-    try {
-      const frame = await dm.api.getCameraSnapshot(device.id);
-      if (frame && frame.length > 0) {
-        log(
-          "info",
-          `Motion-triggered snapshot fetched: device="${device.name}" size=${frame.length}B`,
-        );
-        api.sendMjpegFrame(doimusID, "main", frame);
-        api.updateDeviceImage(doimusID, "snapshot_latest", frame, "image/jpeg");
-        const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
-        ctx._motionSeq.set(device.id, seq);
-        api.updateDeviceImage(doimusID, "motion_" + seq, frame, "image/jpeg");
-      } else {
-        log(
-          "warn",
-          `Motion-triggered snapshot: getCameraSnapshot returned null/empty for "${device.name}"`,
-        );
-      }
-    } catch (e) {
-      log(
-        "warn",
-        `Motion-triggered snapshot fetch error for "${device.name}": ${e.message || e}`,
-      );
-    }
-  }, 2000);
-}
-
 // ─── P2P Live View ───────────────────────────────────────────────────────────
 
 async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
@@ -2105,7 +2061,7 @@ module.exports = {
     }
 
     // Snapshots are captured on-demand when MQTT motion events arrive
-    // (tryFetchMotionImage / tryDecodeCameraImage / triggerSnapshotFetch).
+    // (tryFetchMotionImage / tryDecodeCameraImage).
     // Periodic REST polling is disabled — Tuya cameras don't reliably
     // serve snapshots on a timer, and constant polling drowns out real
     // motion events with noise.
@@ -2540,10 +2496,13 @@ module.exports = {
                 "image/jpeg",
               );
             } else if (state.motion) {
-              // Motion detected but no inline JPEG decoded — the image may be
-              // available via the REST snapshot API. Wait 2s for the camera to
-              // process the image, then fetch it (debounced per-device).
-              triggerSnapshotFetch(device, doimusID, ctx, dm, api, log);
+              // Motion detected but no JPEG embedded in the MQTT payload.
+              // The camera image may arrive via a separate MQTT update
+              // (movement_detect_pic / doorbell_pic DPs fired asynchronously).
+              log(
+                "info",
+                `Motion detected for "${device.name}" (id=${device.id}) — waiting for image DP`,
+              );
             }
           }
         }
