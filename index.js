@@ -317,7 +317,11 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.target_temp = Number(value);
     } else if (code === "switch_fan" || code === "fan_switch") {
       if (state.on === undefined) state.on = value === true || value === 1;
-    } else if (code === "pir" || code === "motion_sensor") {
+    } else if (
+      code === "pir" ||
+      code === "motion_sensor" ||
+      code === "motion_detect"
+    ) {
       state.motion = value === true || value === "pir" || value === 1;
     } else if (code === "smoke_sensor" || code === "smoke_sensor_status") {
       state.smoke = value === true || value === 1 || value === "alarm";
@@ -1281,19 +1285,20 @@ function tryDecodeDoorbellPic(item, localKey, log) {
 }
 
 // Triggered by motion detection when the inline MQTT image decode fails.
-// Waits 5s for the camera to process the image, then fetches it via the REST
-// snapshot API. Debounced to at most one fetch per 45s per device to avoid
+// Waits 2s for the camera to process the image, then fetches it via the REST
+// snapshot API. Debounced to at most one fetch per 10s per device to avoid
 // spamming the API during rapid motion events.
 function triggerSnapshotFetch(device, doimusID, ctx, dm, api, log) {
   if (!ctx._snapshotDebounce) ctx._snapshotDebounce = new Map();
+  if (!ctx._motionSeq) ctx._motionSeq = new Map();
   const lastFetch = ctx._snapshotDebounce.get(device.id) || 0;
   const now = Date.now();
-  if (now - lastFetch < 45000) return; // debounce: max 1 fetch per 45s
+  if (now - lastFetch < 10000) return; // debounce: max 1 fetch per 10s
   ctx._snapshotDebounce.set(device.id, now);
 
   log(
     "info",
-    `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fetch in 5s`,
+    `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fetch in 2s`,
   );
   setTimeout(async () => {
     try {
@@ -1304,6 +1309,10 @@ function triggerSnapshotFetch(device, doimusID, ctx, dm, api, log) {
           `Motion-triggered snapshot fetched: device="${device.name}" size=${frame.length}B`,
         );
         api.sendMjpegFrame(doimusID, "main", frame);
+        api.updateDeviceImage(doimusID, "snapshot_latest", frame, "image/jpeg");
+        const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
+        ctx._motionSeq.set(device.id, seq);
+        api.updateDeviceImage(doimusID, "motion_" + seq, frame, "image/jpeg");
       } else {
         log(
           "warn",
@@ -1316,7 +1325,7 @@ function triggerSnapshotFetch(device, doimusID, ctx, dm, api, log) {
         `Motion-triggered snapshot fetch error for "${device.name}": ${e.message || e}`,
       );
     }
-  }, 5000);
+  }, 2000);
 }
 
 // ─── P2P Live View ───────────────────────────────────────────────────────────
@@ -2060,7 +2069,7 @@ module.exports = {
     let snapshotTimer = null;
     if (result.dm) {
       const cameraDevices = result.dm.devices.filter((d) =>
-        ["sp", "mobilecam", "wxml"].includes(d.category),
+        ["sp", "mobilecam", "wxml", "doorbell"].includes(d.category),
       );
       if (cameraDevices.length > 0) {
         log(
@@ -2082,6 +2091,12 @@ module.exports = {
                 const doimusID = ctx.doimusDeviceMap.get(device.id);
                 if (doimusID) {
                   api.sendMjpegFrame(doimusID, "main", frame);
+                  api.updateDeviceImage(
+                    doimusID,
+                    "snapshot_latest",
+                    frame,
+                    "image/jpeg",
+                  );
                   snapshotOK++;
                   if (!firstSnapshotLogged) {
                     log(
@@ -2127,13 +2142,13 @@ module.exports = {
               `Snapshot heartbeat: ${snapshotOK} ok / ${snapshotErr} failed / ${cameraDevices.length} camera(s)`,
             );
           }
-          // Periodic summary every 5 cycles (~2.5 min)
+          // Periodic summary every 25 cycles (~50s)
           const cycle = Math.floor(
             (snapshotOK + snapshotErr) / (cameraDevices.length || 1),
           );
           if (
             cycle > 0 &&
-            cycle % 5 === 0 &&
+            cycle % 25 === 0 &&
             (snapshotOK > 0 || snapshotErr > 0)
           ) {
             log(
@@ -2141,7 +2156,7 @@ module.exports = {
               `Snapshot summary (${cycle} cycles): ${snapshotOK} ok, ${snapshotErr} failed`,
             );
           }
-        }, 30000);
+        }, 2000);
         if (snapshotTimer.unref) snapshotTimer.unref();
       }
     }
@@ -2529,14 +2544,44 @@ module.exports = {
           );
           if (motionJpeg) {
             api.sendMjpegFrame(doimusID, "main", motionJpeg);
+            api.updateDeviceImage(
+              doimusID,
+              "snapshot_latest",
+              motionJpeg,
+              "image/jpeg",
+            );
+            if (!ctx._motionSeq) ctx._motionSeq = new Map();
+            const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
+            ctx._motionSeq.set(device.id, seq);
+            api.updateDeviceImage(
+              doimusID,
+              "motion_" + seq,
+              motionJpeg,
+              "image/jpeg",
+            );
           } else {
             // Fall back to inline MQTT decode (AES-128-CBC / AES-128-ECB).
             const jpeg = tryDecodeCameraImage(device, status, log);
             if (jpeg) {
               api.sendMjpegFrame(doimusID, "main", jpeg);
+              api.updateDeviceImage(
+                doimusID,
+                "snapshot_latest",
+                jpeg,
+                "image/jpeg",
+              );
+              if (!ctx._motionSeq) ctx._motionSeq = new Map();
+              const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
+              ctx._motionSeq.set(device.id, seq);
+              api.updateDeviceImage(
+                doimusID,
+                "motion_" + seq,
+                jpeg,
+                "image/jpeg",
+              );
             } else if (state.motion) {
               // Motion detected but no inline JPEG decoded — the image may be
-              // available via the REST snapshot API. Wait 5s for the camera to
+              // available via the REST snapshot API. Wait 2s for the camera to
               // process the image, then fetch it (debounced per-device).
               triggerSnapshotFetch(device, doimusID, ctx, dm, api, log);
             }
