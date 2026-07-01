@@ -365,8 +365,17 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       code === "usb_state"
     ) {
       state.outlet_in_use = value === true || value === 1 || value === "1";
-    } else if (code === "movement_detect_pic" || code === "ipc_human") {
-      // Camera PIR/human detection — set motion for camera and doorbell devices.
+    } else if (
+      code === "movement_detect_pic" ||
+      code === "ipc_human" ||
+      code === "doorbell_active" ||
+      code === "motion_switch" ||
+      code === "human_detect" ||
+      code === "person_detect" ||
+      code === "movement_detect" ||
+      code === "ipc_motion"
+    ) {
+      // Camera / doorbell: motion, human/person, or doorbell event detection.
       if (
         ["sp", "mobilecam", "wxml", "doorbell"].includes(device.category) &&
         typeof value === "string" &&
@@ -374,6 +383,12 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       ) {
         state.motion = true;
       }
+    } else if (
+      /motion|movement|doorbell|human|person|pir/i.test(code) &&
+      (typeof value === "string" ? value.length > 0 : !!value)
+    ) {
+      // Generic fallback: any DP code matching motion-related patterns.
+      state.motion = true;
     } else if (code === "doorbell_pic") {
       // Doorbell button press (or camera doorbell pic) — set doorbell state.
       state.doorbell = typeof value === "string" && value.length > 0;
@@ -474,15 +489,16 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
   }
 
   // ── Camera / doorbell: auto-reset motion from device.status (full state) ──
-  // movement_detect_pic / ipc_human DPs only appear when a motion event is
-  // active. When motion ends, those DPs disappear. We check device.status
-  // (the full maintained array) rather than statusList (which may be a
-  // partial MQTT update) to reliably detect the absence of motion.
+  // Known motion/doorbell DPs only appear when a motion event is active.
+  // When motion ends, those DPs disappear. We check device.status (the full
+  // maintained array) rather than statusList (which may be a partial MQTT
+  // update) to reliably detect the absence of motion.
   if (
     ["sp", "mobilecam", "doorbell", "wxml"].includes(device.category) &&
     state.motion === undefined
   ) {
     const fullStatus = device.status || [];
+    const motionPattern = /motion|movement|doorbell|human|person|pir/i;
     const hasMotionDP = fullStatus.some(
       (s) =>
         [
@@ -491,10 +507,25 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
           "pir",
           "motion_sensor",
           "motion_detect",
+          "doorbell_active",
+          "motion_switch",
+          "human_detect",
+          "person_detect",
+          "movement_detect",
+          "ipc_motion",
         ].includes(s.code) &&
         (typeof s.value === "string" ? s.value.length > 0 : !!s.value),
     );
-    state.motion = hasMotionDP;
+    // Generic fallback: iterate all status items and match any unknown DP
+    // code that contains motion-related patterns (case-insensitive).
+    const hasMotionPattern =
+      hasMotionDP ||
+      fullStatus.some(
+        (s) =>
+          motionPattern.test(s.code) &&
+          (typeof s.value === "string" ? s.value.length > 0 : !!s.value),
+      );
+    state.motion = hasMotionPattern;
   }
 
   // Strip internal keys (prefixed with _) before returning.
