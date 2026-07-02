@@ -466,8 +466,10 @@ class TuyaOpenAPI {
           : await this.request("post", path, null, body, {
               suppressErrorLog: true,
             });
-      if (res.success && res.result?.url) {
-        return this._fetchSnapshotImage(res.result.url);
+      const cachedUrl =
+        typeof res.result === "string" ? res.result : res.result?.url;
+      if (res.success && cachedUrl) {
+        return this._fetchSnapshotImage(cachedUrl);
       }
       // Cached endpoint stopped working — evict and fall through to full probe.
       this.log.debug(
@@ -484,6 +486,13 @@ class TuyaOpenAPI {
     // device models and API versions use different paths, HTTP methods, and
     // body formats.
     const endpoints = [
+      // Camera-specific capture endpoint (used by IPC/doorbell/peephole, e.g.
+      // sp-category devices). Confirmed working via Node-RED reference.
+      {
+        method: "post",
+        path: `/v1.0/cameras/${deviceId}/actions/capture`,
+        body: {},
+      },
       // Standard IoT Core — some devices need a body parameter
       {
         method: "post",
@@ -537,16 +546,19 @@ class TuyaOpenAPI {
           suppressErrorLog: true,
         });
       }
-      if (res.success && res.result?.url) {
+      // result may be a plain URL string (cameras/actions/capture) or {url: "..."}
+      const snapshotUrl =
+        typeof res.result === "string" ? res.result : res.result?.url;
+      if (res.success && snapshotUrl) {
         // Cache the winning endpoint so subsequent polls skip the probe.
         this._snapshotEndpointCache.set(deviceId, { method, path, body });
         this.log.info(
           "Snapshot URL obtained (method=%s path=%s, cached): %s",
           method,
           path,
-          res.result.url,
+          snapshotUrl,
         );
-        return this._fetchSnapshotImage(res.result.url);
+        return this._fetchSnapshotImage(snapshotUrl);
       }
       if (!res.success) {
         this.log.debug(
@@ -566,7 +578,7 @@ class TuyaOpenAPI {
       }
     }
 
-    this.log.debug("All snapshot endpoints exhausted for device %s", deviceId);
+    this.log.warn("All snapshot endpoints exhausted for device %s", deviceId);
     return null;
   }
 
