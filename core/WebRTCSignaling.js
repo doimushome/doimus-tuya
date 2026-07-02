@@ -61,6 +61,7 @@ class WebRTCSignaling {
     // is ready (i.e. while getConfigs() is still fetching from Tuya API).
     this._pendingOffer = null;
     this._pendingCandidates = [];
+    this._offerBufferTimer = null;
   }
 
   on(event, handler) {
@@ -321,12 +322,30 @@ class WebRTCSignaling {
           : "MQTT client not connected yet";
       this.log("info", `[WebRTC] Buffering offer (${reason})`);
       this._pendingOffer = { sdp, streamType };
+
+      // Surface a clear timeout when the offer stays buffered too long.
+      // This makes "no answer" stalls easier to debug in the UI.
+      if (!this._offerBufferTimer) {
+        this._offerBufferTimer = setTimeout(() => {
+          this._offerBufferTimer = null;
+          if (!this._pendingOffer) return;
+          const msg =
+            "WebRTC offer is still buffered after 12s (IPC MQTT not ready).";
+          this.log("warn", `[WebRTC] ${msg}`);
+          this._emit("error", new Error(msg));
+        }, 12000);
+      }
       return;
     }
     this._doSendOffer(sdp, streamType);
   }
 
   _doSendOffer(sdp, streamType) {
+    if (this._offerBufferTimer) {
+      clearTimeout(this._offerBufferTimer);
+      this._offerBufferTimer = null;
+    }
+
     this.sessionId = uuidv4().replace(/-/g, "");
 
     // Strip a=extmap lines to stay under Tuya's ~8KB MQTT payload limit.
@@ -508,6 +527,10 @@ class WebRTCSignaling {
     if (this._fallbackTimer) {
       clearTimeout(this._fallbackTimer);
       this._fallbackTimer = null;
+    }
+    if (this._offerBufferTimer) {
+      clearTimeout(this._offerBufferTimer);
+      this._offerBufferTimer = null;
     }
     if (this.mqttClient) {
       this.mqttClient.end(true);
