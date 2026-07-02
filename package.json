@@ -7,6 +7,9 @@
   "doimus": {
     "type": "native"
   },
+  "scripts": {
+    "test:webrtc": "node --test test/webrtc-signaling.test.js"
+  },
   "dependencies": {
     "async-await-retry": "^2.0.1",
     "crypto-js": "^4.1.1",

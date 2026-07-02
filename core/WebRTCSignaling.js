@@ -119,6 +119,9 @@ class WebRTCSignaling {
 
     this.webrtcConfig = {
       auth: wr.auth,
+      // Tuya signaling token used in the offer payload. Some devices use
+      // dedicated token fields, others accept auth.
+      token: wr.token || wr.webrtc_token || wr.p2p_config?.token || wr.auth,
       motoId: wr.moto_id || "",
       iceServers,
       deviceId,
@@ -195,12 +198,26 @@ class WebRTCSignaling {
     this.mqttClient.on("connect", () => {
       this.log("info", "[WebRTC] IPC MQTT connected");
 
-      // Subscribe to the source topic (camera → client messages)
-      const topic = source_topic?.ipc;
-      if (topic) {
+      // Subscribe to source topic(s) (camera → client messages).
+      // Tuya may return templates like .../{device_id}; resolve placeholders.
+      const sourceTopicRaw = source_topic?.ipc;
+      const sourceTopicResolved = this._resolveSourceTopic(sourceTopicRaw);
+      const subscribeTopics = Array.from(
+        new Set([sourceTopicRaw, sourceTopicResolved].filter(Boolean)),
+      );
+      if (subscribeTopics.length === 0) {
+        this.log(
+          "warn",
+          "[WebRTC] source_topic.ipc is missing from MQTT config",
+        );
+      }
+      for (const topic of subscribeTopics) {
         this.mqttClient.subscribe(topic, (err) => {
           if (err) {
-            this.log("error", `[WebRTC] Subscribe error: ${err.message}`);
+            this.log(
+              "error",
+              `[WebRTC] Subscribe error (${topic}): ${err.message}`,
+            );
           } else {
             this.log("info", `[WebRTC] Subscribed to: ${topic}`);
           }
@@ -352,9 +369,9 @@ class WebRTCSignaling {
     // These are optional header extensions the camera doesn't need.
     sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
 
-    const token = this.webrtcConfig?.iceServers
-      ? JSON.stringify(this.webrtcConfig.iceServers)
-      : "";
+    // Important: Tuya expects a signaling token in offer.msg.token.
+    // Using ICE server JSON here can cause the camera to ignore the offer.
+    const token = this.webrtcConfig?.token || this.webrtcConfig?.auth || "";
 
     const msg = {
       protocol: WEBRTC_PROTOCOL,
@@ -382,7 +399,7 @@ class WebRTCSignaling {
     const topic = this._resolveTopic();
     this.log(
       "info",
-      `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"})`,
+      `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"}, authLen=${(this.webrtcConfig.auth || "").length}, tokenLen=${token.length})`,
     );
     this._publish(payload);
 
@@ -543,13 +560,11 @@ class WebRTCSignaling {
   // ── Private ──────────────────────────────────────────────────────────
 
   _getFrom() {
-    // The "from" field is the unique client ID from the MQTT config's source_topic
+    // The "from" field is the unique client ID from source_topic.ipc.
+    // Extract only the segment after /av/u/ (stop at next slash if present).
     const src = this.mqttConfig?.source_topic?.ipc || "";
-    const prefix = "/av/u/";
-    const idx = src.indexOf(prefix);
-    return idx >= 0
-      ? src.slice(idx + prefix.length)
-      : this.mqttConfig?.client_id || "";
+    const m = src.match(/\/av\/u\/([^/]+)/);
+    return m && m[1] ? m[1] : this.mqttConfig?.client_id || "";
   }
 
   _publish(payload) {
@@ -572,14 +587,28 @@ class WebRTCSignaling {
     });
   }
 
-  // Resolve the publish topic, replacing {device_id} placeholder with the
-  // actual device ID.  The Tuya access-config API returns a template string.
-  _resolveTopic() {
-    let topic = this.mqttConfig?.sink_topic?.ipc || "";
-    if (topic.includes("{device_id}") && this.webrtcConfig?.deviceId) {
-      topic = topic.replace("{device_id}", this.webrtcConfig.deviceId);
+  _resolveTemplateTopic(topic) {
+    if (!topic) return "";
+    let out = topic;
+    if (out.includes("{device_id}") && this.webrtcConfig?.deviceId) {
+      out = out.replace(/\{device_id\}/g, this.webrtcConfig.deviceId);
     }
-    return topic;
+    if (out.includes("{dev_id}") && this.webrtcConfig?.deviceId) {
+      out = out.replace(/\{dev_id\}/g, this.webrtcConfig.deviceId);
+    }
+    return out;
+  }
+
+  // Resolve the publish topic from sink_topic.ipc.
+  _resolveTopic() {
+    return this._resolveTemplateTopic(this.mqttConfig?.sink_topic?.ipc || "");
+  }
+
+  // Resolve the subscribe topic from source_topic.ipc.
+  _resolveSourceTopic(topic) {
+    return this._resolveTemplateTopic(
+      topic || this.mqttConfig?.source_topic?.ipc || "",
+    );
   }
 
   _handleMessage(topic, payload) {
@@ -591,7 +620,8 @@ class WebRTCSignaling {
         `[WebRTC] MQTT rx topic=${topic} len=${raw.length} preview=${raw.slice(0, 200)}`,
       );
       const parsed = JSON.parse(raw);
-      if (parsed.protocol !== WEBRTC_PROTOCOL) {
+      const protocolNum = Number(parsed.protocol);
+      if (protocolNum !== WEBRTC_PROTOCOL) {
         this.log(
           "info",
           `[WebRTC] Non-WebRTC message protocol=${parsed.protocol} data=${JSON.stringify(parsed.data || parsed).slice(0, 200)}`,
@@ -599,8 +629,11 @@ class WebRTCSignaling {
         return;
       }
 
-      const { data } = parsed;
-      if (!data || !data.header) return;
+      const data = parsed?.data?.header ? parsed.data : parsed?.data?.data;
+      if (!data || !data.header) {
+        this.log("debug", "[WebRTC] WebRTC payload without header");
+        return;
+      }
 
       const { type, sessionid } = data.header;
       this.log(
