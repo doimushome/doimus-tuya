@@ -94,7 +94,7 @@ function makeApiMock() {
         password: "p",
         expire_time: 7200,
         source_topic: { ipc: "/av/u/clientX/{device_id}" },
-        sink_topic: { ipc: "/av/moto/{device_id}/u" },
+        sink_topic: { ipc: "/av/moto/moto_id/u/{device_id}" },
       },
     }),
   };
@@ -184,7 +184,7 @@ test("sendOffer publishes to resolved sink topic with expected shape", async (t)
 
       assert.equal(fakeClient.publications.length, 1);
       const sent = fakeClient.publications[0];
-      assert.equal(sent.topic, "/av/moto/dev-123/u");
+      assert.equal(sent.topic, "/av/moto/moto-123/u/dev-123");
 
       const payload = JSON.parse(sent.payload);
       assert.equal(payload.protocol, 302);

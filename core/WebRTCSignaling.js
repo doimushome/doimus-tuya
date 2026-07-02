@@ -590,12 +590,38 @@ class WebRTCSignaling {
   _resolveTemplateTopic(topic) {
     if (!topic) return "";
     let out = topic;
-    if (out.includes("{device_id}") && this.webrtcConfig?.deviceId) {
-      out = out.replace(/\{device_id\}/g, this.webrtcConfig.deviceId);
+
+    const deviceId = this.webrtcConfig?.deviceId || "";
+    const motoId = this.webrtcConfig?.motoId || "";
+
+    if (deviceId) {
+      if (out.includes("{device_id}")) {
+        out = out.replace(/\{device_id\}/g, deviceId);
+      }
+      if (out.includes("{dev_id}")) {
+        out = out.replace(/\{dev_id\}/g, deviceId);
+      }
+      // Some Tuya templates use bare tokens instead of brace placeholders.
+      if (out.includes("/device_id/")) {
+        out = out.replace(/\/device_id\//g, `/${deviceId}/`);
+      }
+      if (out.endsWith("/device_id")) {
+        out = out.replace(/\/device_id$/, `/${deviceId}`);
+      }
     }
-    if (out.includes("{dev_id}") && this.webrtcConfig?.deviceId) {
-      out = out.replace(/\{dev_id\}/g, this.webrtcConfig.deviceId);
+
+    if (motoId) {
+      if (out.includes("{moto_id}")) {
+        out = out.replace(/\{moto_id\}/g, motoId);
+      }
+      if (out.includes("/moto_id/")) {
+        out = out.replace(/\/moto_id\//g, `/${motoId}/`);
+      }
+      if (out.endsWith("/moto_id")) {
+        out = out.replace(/\/moto_id$/, `/${motoId}`);
+      }
     }
+
     return out;
   }
 
