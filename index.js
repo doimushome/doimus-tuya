@@ -1341,19 +1341,6 @@ function scheduleMotionImageFetch(
     );
   }
 
-  // Also cancel any pending REST fallback timer — the S3 path is preferred.
-  if (ctx._snapshotFallbackTimers) {
-    const fbPending = ctx._snapshotFallbackTimers.get(device.id);
-    if (fbPending) {
-      clearTimeout(fbPending);
-      ctx._snapshotFallbackTimers.delete(device.id);
-      log(
-        "debug",
-        `Cancelled REST fallback for "${device.name}" (S3 metadata arrived)`,
-      );
-    }
-  }
-
   log(
     "info",
     `Scheduling motion image fetch for "${device.name}" in 10s (bucket=${metadata.bucket})`,
