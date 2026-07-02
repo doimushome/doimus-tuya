@@ -242,6 +242,7 @@ test("sendOffer publishes to resolved sink topic with correct shape", async (t) 
       assert.equal(m.auth, "auth-token-base64==");
       // token must be ICE server array (not a string) — go2rtc uses []ICEServer
       assert.deepEqual(m.token, ICE_SERVERS);
+      assert.equal(m.datachannel_enable, true);
       // extmap lines stripped
       assert.ok(!m.sdp.includes("a=extmap"));
 

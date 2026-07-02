@@ -437,7 +437,11 @@ class WebRTCSignaling {
           sdp,
           stream_type: streamType,
           auth: this.webrtcConfig.auth,
-          datachannel_enable: false,
+          // HEVC cameras (common in newer Tuya battery devices) require
+          // datachannel_enable: true.  H264 cameras use false.  Since we
+          // can't detect codec from the (often-empty) skill object, we
+          // default to true — the more compatible option for modern cams.
+          datachannel_enable: true,
           token,
         },
       },
@@ -454,13 +458,19 @@ class WebRTCSignaling {
     // Flush any candidates that were buffered before the offer was sent.
     this._flushCandidates();
 
-    // Start a 10s fallback timer — if the camera doesn't answer the
-    // offer, emit "fallback" so the plugin can switch to P2P streaming.
+    // Battery cameras (peephole, doorbell) can take 10-20s to fully
+    // initialise their video subsystem after the CRC32 wake.  Start a
+    // generous fallback timer — if the camera doesn't answer, emit
+    // "fallback" so the plugin can switch to P2P streaming.
     if (this._fallbackTimer) clearTimeout(this._fallbackTimer);
+    const FALLBACK_TIMEOUT = this._needsWake ? 20000 : 15000;
     this._fallbackTimer = setTimeout(() => {
-      this.log("info", "[WebRTC] No answer within 10s — emitting fallback");
+      this.log(
+        "info",
+        `[WebRTC] No answer within ${FALLBACK_TIMEOUT / 1000}s — emitting fallback`,
+      );
       this._emit("fallback", { sessionId: this.sessionId });
-    }, 10000);
+    }, FALLBACK_TIMEOUT);
   }
 
   /**
