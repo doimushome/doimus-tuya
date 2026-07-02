@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
+const http = require("http");
 const https = require("https");
 const util = require("util");
 const debounce = require("debounce");
@@ -1077,6 +1078,108 @@ function parseMotionMetadata(status, log, deviceName) {
     );
   }
   return null;
+}
+
+function detectImageMime(data) {
+  if (!data || data.length < 4) return "application/octet-stream";
+  if (data[0] === 0xff && data[1] === 0xd8) return "image/jpeg";
+  if (
+    data[0] === 0x89 &&
+    data[1] === 0x50 &&
+    data[2] === 0x4e &&
+    data[3] === 0x47
+  ) {
+    return "image/png";
+  }
+  if (
+    data[0] === 0x47 &&
+    data[1] === 0x49 &&
+    data[2] === 0x46 &&
+    data[3] === 0x38
+  ) {
+    return "image/gif";
+  }
+  if (
+    data.length > 12 &&
+    data.slice(0, 4).toString("ascii") === "RIFF" &&
+    data.slice(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return "application/octet-stream";
+}
+
+function extractSnapshotUrlFromStatus(status) {
+  for (const item of status || []) {
+    if (!item || typeof item.value !== "string" || item.value.length < 8)
+      continue;
+
+    const raw = item.value.trim();
+    if (/^https?:\/\//i.test(raw)) {
+      return raw;
+    }
+
+    try {
+      const decoded = Buffer.from(raw, "base64").toString("utf8").trim();
+      if (/^https?:\/\//i.test(decoded)) {
+        return decoded;
+      }
+    } catch (_) {
+      // ignore invalid base64
+    }
+  }
+  return null;
+}
+
+async function downloadImageFromUrl(url, log, deviceName, depth = 0) {
+  if (!url || depth > 2) return null;
+  return new Promise((resolve) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      resolve(null);
+      return;
+    }
+
+    const client = parsed.protocol === "http:" ? http : https;
+    client
+      .get(url, (res) => {
+        if (
+          [301, 302, 303, 307, 308].includes(res.statusCode) &&
+          res.headers.location
+        ) {
+          res.resume();
+          const redirect = new URL(res.headers.location, url).toString();
+          downloadImageFromUrl(redirect, log, deviceName, depth + 1).then(
+            resolve,
+          );
+          return;
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          resolve(null);
+          return;
+        }
+
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const data = Buffer.concat(chunks);
+          const mime = detectImageMime(data);
+          if (!mime.startsWith("image/")) {
+            log(
+              "debug",
+              `Snapshot URL payload is not an image for "${deviceName}": mime=${mime} size=${data.length}`,
+            );
+            resolve(null);
+            return;
+          }
+          resolve({ data, mime });
+        });
+      })
+      .on("error", () => resolve(null));
+  });
 }
 
 /**
@@ -2832,15 +2935,57 @@ module.exports = {
         }
 
         // Camera / doorbell / mobilecam image capture from MQTT.
-        // Capture only on motion activation to avoid stale/duplicate snapshots.
+        // Trigger capture on motion activation OR when this MQTT packet carries
+        // an active motion/image DP (e.g. movement_detect_pic / initiative_message)
+        // that can arrive after the first motion=true edge packet.
+        const hasMotionSignalInPacket = (status || []).some((s) => {
+          if (!s || typeof s.code !== "string") return false;
+          const code = s.code;
+          const value = s.value;
+          const active = typeof value === "string" ? value.length > 0 : !!value;
+          if (!active) return false;
+          return (
+            code === "movement_detect_pic" ||
+            code === "doorbell_pic" ||
+            code === "ipc_human" ||
+            code === "initiative_message" ||
+            /motion|movement|doorbell|human|person|pir/i.test(code)
+          );
+        });
+        const shouldCaptureMotionImage =
+          motionActivated || state.motion === true || hasMotionSignalInPacket;
+
         if (
           ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
-          motionActivated
+          shouldCaptureMotionImage
         ) {
           // 1. Try inline MQTT decode first (movement_detect_pic / doorbell_pic DPs).
           //    Image is embedded in the MQTT payload — no delay needed.
-          const jpeg = tryDecodeCameraImage(device, status, log);
-          if (jpeg) {
+          let imageData = tryDecodeCameraImage(device, status, log);
+          let imageMime = imageData ? "image/jpeg" : null;
+
+          // 1b. Some doorbells send a base64-encoded URL in a DP value
+          // (e.g. classic local-Tuya flows with dps["154"]).
+          if (!imageData) {
+            const directUrl = extractSnapshotUrlFromStatus(status);
+            if (directUrl) {
+              const downloaded = await downloadImageFromUrl(
+                directUrl,
+                log,
+                device.name,
+              );
+              if (downloaded && downloaded.data) {
+                imageData = downloaded.data;
+                imageMime = downloaded.mime || "image/jpeg";
+                log(
+                  "info",
+                  `Motion image fetched from DP URL for "${device.name}": mime=${imageMime} size=${imageData.length}B`,
+                );
+              }
+            }
+          }
+
+          if (imageData) {
             // Cancel any pending REST fallback timer — we got the image inline.
             if (ctx._snapshotFallbackTimers) {
               const fb = ctx._snapshotFallbackTimers.get(device.id);
@@ -2857,12 +3002,14 @@ module.exports = {
                 ctx._motionFetchTimers.delete(device.id);
               }
             }
-            api.sendMjpegFrame(doimusID, "main", jpeg);
+            if (imageMime === "image/jpeg") {
+              api.sendMjpegFrame(doimusID, "main", imageData);
+            }
             api.updateDeviceImage(
               doimusID,
               "snapshot_latest",
-              jpeg,
-              "image/jpeg",
+              imageData,
+              imageMime || "image/jpeg",
             );
             if (!ctx._motionSeq) ctx._motionSeq = new Map();
             const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
@@ -2870,8 +3017,8 @@ module.exports = {
             api.updateDeviceImage(
               doimusID,
               "motion_" + seq,
-              jpeg,
-              "image/jpeg",
+              imageData,
+              imageMime || "image/jpeg",
             );
           } else {
             // 2. Check for initiative_message metadata — schedule a delayed S3 fetch.
