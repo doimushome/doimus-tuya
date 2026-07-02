@@ -410,15 +410,13 @@ class WebRTCSignaling {
     // These are optional header extensions the camera doesn't need.
     sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
 
-    // Tuya camera firmware reads msg.token as a JSON array of ICE servers.
-    // go2rtc serialises Token as []ICEServer (native JSON array). If token is
-    // a string the camera would need to JSON.parse() it again — some firmware
-    // versions skip that second parse, silently dropping the offer.
-    // Also include datachannel_enable (go2rtc always sets it; required by
-    // newer Tuya WebRTC camera firmware).
-    const token = this.webrtcConfig?.iceServers?.length
-      ? this.webrtcConfig.iceServers
-      : [];
+    // ICE server config is passed through the auth/token exchange — the
+    // camera's WebRTC engine already knows its own ICE config from the
+    // Tuya p2p_config handshake.  Including token here can confuse some
+    // camera firmware that expects the basic Tuya offer format (no token,
+    // no datachannel_enable per Tuya developer docs).  go2rtc includes
+    // both and works with many cameras, but battery / sp-category cameras
+    // may use stricter parsing.
 
     const msg = {
       protocol: WEBRTC_PROTOCOL,
@@ -437,12 +435,6 @@ class WebRTCSignaling {
           sdp,
           stream_type: streamType,
           auth: this.webrtcConfig.auth,
-          // HEVC cameras (common in newer Tuya battery devices) require
-          // datachannel_enable: true.  H264 cameras use false.  Since we
-          // can't detect codec from the (often-empty) skill object, we
-          // default to true — the more compatible option for modern cams.
-          datachannel_enable: true,
-          token,
         },
       },
     };
@@ -451,7 +443,7 @@ class WebRTCSignaling {
     const topic = this._resolveTopic();
     this.log(
       "info",
-      `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"}, authLen=${(this.webrtcConfig.auth || "").length}, tokenLen=${token.length})`,
+      `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"}, authLen=${(this.webrtcConfig.auth || "").length})`,
     );
     this._publish(payload);
 

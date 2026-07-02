@@ -240,15 +240,16 @@ test("sendOffer publishes to resolved sink topic with correct shape", async (t) 
       assert.equal(m.mode, "webrtc");
       assert.equal(m.stream_type, 1);
       assert.equal(m.auth, "auth-token-base64==");
-      // token must be ICE server array (not a string) — go2rtc uses []ICEServer
-      assert.deepEqual(m.token, ICE_SERVERS);
-      assert.equal(m.datachannel_enable, true);
+      // Per Tuya docs the offer msg contains only: mode, sdp, stream_type, auth.
+      // No token or datachannel_enable — some camera firmware rejects extras.
+      assert.equal(m.token, undefined);
+      assert.equal(m.datachannel_enable, undefined);
       // extmap lines stripped
       assert.ok(!m.sdp.includes("a=extmap"));
 
       // ── log payload size for manual inspection ──
       console.log(
-        `  [debug] offer payloadLen=${offerPub.payload.length} iceCount=${Array.isArray(m.token) ? m.token.length : typeof m.token}`,
+        `  [debug] offer payloadLen=${offerPub.payload.length} fields=${Object.keys(m).join(",")}`,
       );
       console.log(`  [debug] offer JSON:\n${JSON.stringify(pl, null, 2)}`);
     },
