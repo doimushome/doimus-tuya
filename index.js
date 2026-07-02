@@ -2321,6 +2321,23 @@ module.exports = {
                     { code: wakeDp.code, value: true },
                   ]);
                   log("info", `[WebRTC] Wake-up sent (dp=${wakeDp.code})`);
+                  // Also try setting ipc_work_mode to enable the video subsystem.
+                  const ipcModeDp = tuyaDevice.schema.find(
+                    (s) => s.code === "ipc_work_mode",
+                  );
+                  if (ipcModeDp) {
+                    try {
+                      await dm.sendCommands(tuyaDevice.id, [
+                        { code: "ipc_work_mode", value: "live" },
+                      ]);
+                      log("info", "[WebRTC] IPC work mode set to live");
+                    } catch (e) {
+                      log(
+                        "debug",
+                        `[WebRTC] IPC work mode skipped: ${e.message}`,
+                      );
+                    }
+                  }
                   // Give the camera 2s to activate its WebRTC/video subsystem
                   // before fetching configs and connecting to IPC MQTT.
                   await new Promise((r) => setTimeout(r, 2000));
