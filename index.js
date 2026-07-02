@@ -2736,6 +2736,7 @@ module.exports = {
           "debug",
           `DEVICE_STATUS_UPDATE full: ${device.name} → ${JSON.stringify(state)}`,
         );
+        let motionActivated = false;
         if (Object.keys(state).length > 0) {
           state.online = device.online;
           const lastKnown = ctx.lastKnownState.get(device.id) || {};
@@ -2758,6 +2759,9 @@ module.exports = {
           if (isFirst) {
             ctx._firstUpdateSeen.add(device.id);
           }
+          // Motion activation edge (false/nil -> true) for this update.
+          motionActivated = state.motion === true && !lastKnown.motion;
+
           // Only push update if values actually changed — prevents MQTT
           // heartbeats from overwriting recently-commanded state (e.g. blind
           // position set to 100 by the app, then a heartbeat arrives with the
@@ -2777,7 +2781,7 @@ module.exports = {
           // When motion fires, schedule a 5-second reset. If the device
           // clears the motion DP on its own via MQTT before the timer fires,
           // the timer is harmless (it checks lastKnownState first).
-          if (state.motion === true && !lastKnown.motion) {
+          if (motionActivated) {
             if (!ctx._motionTimers) ctx._motionTimers = new Map();
             const existing = ctx._motionTimers.get(device.id);
             if (existing) clearTimeout(existing);
@@ -2827,8 +2831,12 @@ module.exports = {
           }
         }
 
-        // Camera / doorbell / mobilecam image capture from MQTT
-        if (["sp", "doorbell", "mobilecam", "wxml"].includes(device.category)) {
+        // Camera / doorbell / mobilecam image capture from MQTT.
+        // Capture only on motion activation to avoid stale/duplicate snapshots.
+        if (
+          ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
+          motionActivated
+        ) {
           // 1. Try inline MQTT decode first (movement_detect_pic / doorbell_pic DPs).
           //    Image is embedded in the MQTT payload — no delay needed.
           const jpeg = tryDecodeCameraImage(device, status, log);
@@ -2881,7 +2889,7 @@ module.exports = {
                 api,
                 log,
               );
-            } else if (state.motion) {
+            } else {
               // 3. Motion detected but no JPEG or metadata in this MQTT update.
               //    The image DP may arrive via a separate MQTT message
               //    (movement_detect_pic / doorbell_pic DPs fired asynchronously).
