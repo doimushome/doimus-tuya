@@ -156,11 +156,12 @@ class WebRTCSignaling {
   /**
    * Connect to the IPC MQTT broker for WebRTC signaling.
    */
-  connect(deviceId, localKey, webrtcConfig) {
+  connect(deviceId, localKey, webrtcConfig, needsWake) {
     // Store these for the wake-up message and offer Token field.
     this._deviceId = deviceId;
     this._localKey = localKey;
     this._webrtcConfigFull = webrtcConfig;
+    this._needsWake = !!needsWake;
 
     if (!this.mqttConfig) {
       this.log("warn", "[WebRTC] No MQTT config — call getConfigs() first");
@@ -208,18 +209,20 @@ class WebRTCSignaling {
       // Low-power battery camera wake-up via IPC MQTT (go2rtc-compatible).
       // The cloud DP (wireless_awake) wakes the cloud link; this CRC32
       // message on the IPC broker activates the WebRTC subsystem.
-      if (this._deviceId && this._localKey && this._webrtcConfigFull) {
+      // Always send for battery cameras — the skill.lowPower field may be
+      // 0 even on battery devices that need IPC-level wake-up.
+      if (this._deviceId && this._localKey) {
         try {
           const skill =
-            typeof this._webrtcConfigFull.skill === "string"
+            typeof this._webrtcConfigFull?.skill === "string"
               ? JSON.parse(this._webrtcConfigFull.skill)
-              : this._webrtcConfigFull.skill || {};
+              : this._webrtcConfigFull?.skill || {};
+          const lowPower = skill.lowPower || skill.LowPower || 0;
           this.log(
             "info",
-            `[WebRTC] Skill: lowPower=${skill.lowPower || skill.LowPower || 0} videos=${JSON.stringify(skill.videos || skill.Videos || [])}`,
+            `[WebRTC] Skill: lowPower=${lowPower} videos=${JSON.stringify(skill.videos || skill.Videos || [])} full=${JSON.stringify(skill).slice(0, 300)}`,
           );
-          const lowPower = skill.lowPower || skill.LowPower || 0;
-          if (lowPower > 0) {
+          if (this._needsWake) {
             const crc = crc32(this._localKey);
             const wakePayload = Buffer.alloc(4);
             wakePayload.writeUInt32BE(crc, 0);
@@ -242,7 +245,6 @@ class WebRTCSignaling {
                 }
               },
             );
-            // Also subscribe to decrypt topic for battery ready signal
             const decryptTopic = `smart/decrypt/in/${this._deviceId}`;
             this.mqttClient.subscribe(decryptTopic, (err) => {
               if (!err)
@@ -260,7 +262,7 @@ class WebRTCSignaling {
                 this._doSendOffer(sdp, streamType);
               }
             }, 500);
-            return; // skip immediate flush, let the timeout handle it
+            return;
           }
         } catch (e) {
           this.log(

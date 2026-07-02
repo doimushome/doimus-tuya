@@ -2378,7 +2378,12 @@ module.exports = {
 
             if (configs) {
               log("info", `[WebRTC] Configs fetched, connecting to IPC MQTT`);
-              wr.connect(tuyaDevice.id, tuyaDevice.local_key, configs);
+              wr.connect(
+                tuyaDevice.id,
+                tuyaDevice.local_key,
+                configs,
+                needsWake,
+              );
             } else {
               log(
                 "warn",
