@@ -107,14 +107,27 @@ class WebRTCSignaling {
       "info",
       `[WebRTC] Config: moto_id=${wr.moto_id || ""} auth_len=${(wr.auth || "").length} p2p_config=${JSON.stringify(wr.p2p_config || {}).slice(0, 200)}`,
     );
+    // Build ICE server list from Tuya config. If empty, provide a default
+    // STUN server so the camera has at least one ICE server config — Tuya
+    // firmware JSON.parses(msg.token) to get ICE servers, and a non-JSON
+    // value causes a silent parse error that drops the offer.
     const iceServers = [];
-    if (wr.p2p_config && wr.p2p_config.ices) {
+    if (wr.p2p_config && wr.p2p_config.ices && wr.p2p_config.ices.length > 0) {
       for (const ice of wr.p2p_config.ices) {
         const server = { urls: ice.urls };
         if (ice.username) server.username = ice.username;
         if (ice.credential) server.credential = ice.credential;
         iceServers.push(server);
       }
+    } else {
+      // Tuya returned empty ICE servers — add a default STUN so the
+      // camera's WebRTC stack can still attempt NAT traversal and the
+      // token field is valid JSON.
+      iceServers.push({ urls: "stun:stun.l.google.com:19302" });
+      this.log(
+        "info",
+        "[WebRTC] Tuya returned empty ICE servers — using default Google STUN",
+      );
     }
 
     this.webrtcConfig = {

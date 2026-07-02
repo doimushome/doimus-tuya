@@ -884,6 +884,10 @@ function determineCapabilities(device) {
     case "doorbell":
       capabilities.delete("on");
       capabilities.add("doorbell");
+      // Video peepholes and wireless doorbells with camera capabilities
+      // need p2p_start/p2p_stop for live view streaming.
+      capabilities.add("p2p_start");
+      capabilities.add("p2p_stop");
       // Wireless doorbells often have battery
       if (
         device.schema &&
