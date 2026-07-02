@@ -3105,10 +3105,22 @@ module.exports = {
     dm.on(TuyaDeviceManager.Events.DEVICE_INFO_UPDATE, (device, info) => {
       const doimusID = ctx.doimusDeviceMap.get(device.id);
       if (!doimusID) return;
+
+      const prevOnline = ctx.lastKnownState.get(device.id)?.online;
       const state = { online: device.online };
+
       if (info && info.name) {
         log("info", `Device renamed: ${device.name}`);
       }
+
+      // Log online transitions for debugging
+      if (prevOnline !== undefined && prevOnline !== device.online) {
+        log(
+          "info",
+          `Camera "${device.name}" online transition: ${prevOnline} → ${device.online}`,
+        );
+      }
+
       // When a device goes offline, clear transient motion/doorbell DPs
       // in device.status so that when it comes back online it starts
       // with a clean state.
@@ -3120,6 +3132,66 @@ module.exports = {
           }
         }
       }
+
+      // When a battery camera comes online, it was woken by PIR/doorbell.
+      // Try to capture a snapshot while the device is reachable.
+      if (
+        device.online === true &&
+        prevOnline === false &&
+        ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
+        device.id
+      ) {
+        log(
+          "info",
+          `Camera "${device.name}" came online — scheduling REST snapshot fallback in 4s`,
+        );
+        if (!ctx._snapshotFallbackTimers)
+          ctx._snapshotFallbackTimers = new Map();
+        const pending = ctx._snapshotFallbackTimers.get(device.id);
+        if (pending) clearTimeout(pending);
+        ctx._snapshotFallbackTimers.set(
+          device.id,
+          setTimeout(async () => {
+            ctx._snapshotFallbackTimers.delete(device.id);
+            try {
+              const jpeg = await dm.api.getCameraSnapshot(device.id);
+              if (jpeg) {
+                api.sendMjpegFrame(doimusID, "main", jpeg);
+                api.updateDeviceImage(
+                  doimusID,
+                  "snapshot_latest",
+                  jpeg,
+                  "image/jpeg",
+                );
+                if (!ctx._motionSeq) ctx._motionSeq = new Map();
+                const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
+                ctx._motionSeq.set(device.id, seq);
+                api.updateDeviceImage(
+                  doimusID,
+                  "motion_" + seq,
+                  jpeg,
+                  "image/jpeg",
+                );
+                log(
+                  "info",
+                  `Online snapshot captured for "${device.name}" size=${jpeg.length}B`,
+                );
+              } else {
+                log(
+                  "warn",
+                  `Online snapshot returned no image for "${device.name}"`,
+                );
+              }
+            } catch (e) {
+              log(
+                "warn",
+                `Online snapshot failed for "${device.name}": ${e.message || e}`,
+              );
+            }
+          }, 4000),
+        );
+      }
+
       api.updateDeviceState(doimusID, state);
       ctx.lastKnownState.set(device.id, {
         ...ctx.lastKnownState.get(device.id),
