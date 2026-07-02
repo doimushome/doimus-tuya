@@ -1450,37 +1450,55 @@ function tryDecodeInitiativeMessage(item, localKey, log) {
     const msg = JSON.parse(item.value);
     if (!msg.files || msg.files.length === 0) return null;
 
-    const key = Buffer.from(localKey, "hex");
+    // Try raw local_key, MD5(local_key), SHA256(local_key) — Tuya
+    // initiative_message encryption varies by firmware version.
+    const rawKey = Buffer.from(localKey, "hex");
+    const md5Key = crypto.createHash("md5").update(localKey).digest();
+    const sha256Key = crypto.createHash("sha256").update(localKey).digest();
+    const keyLabels = ["raw", "md5", "sha256"];
+
     for (const file of msg.files) {
       if (!file.data || !file.iv) continue;
       try {
         const encrypted = Buffer.from(file.data, "hex");
         const iv = Buffer.from(file.iv, "hex");
-        const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
-        decipher.setAutoPadding(true);
-        const decrypted = Buffer.concat([
-          decipher.update(encrypted),
-          decipher.final(),
-        ]);
-        if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
-          if (log) {
-            log(
-              "info",
-              `Initiative message decoded OK: keyLen=${localKey.length} size=${decrypted.length}B`,
-            );
+
+        let keyIdx = 0;
+        for (const key of [rawKey, md5Key, sha256Key]) {
+          const label = keyLabels[keyIdx++];
+          try {
+            const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
+            decipher.setAutoPadding(true);
+            const decrypted = Buffer.concat([
+              decipher.update(encrypted),
+              decipher.final(),
+            ]);
+            if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
+              if (log) {
+                log(
+                  "info",
+                  `Initiative message decoded OK: key=${label} keyLen=${localKey.length} size=${decrypted.length}B`,
+                );
+              }
+              return decrypted;
+            }
+            if (log) {
+              log(
+                "debug",
+                `Initiative message decode: key=${label} decrypted but no JPEG magic (first 4 bytes: ${decrypted.slice(0, 4).toString("hex")})`,
+              );
+            }
+          } catch (e) {
+            if (log) {
+              log(
+                "debug",
+                `Initiative message decrypt failed: key=${label} error=${e.message}`,
+              );
+            }
           }
-          return decrypted;
         }
-        if (log) {
-          log(
-            "debug",
-            `Initiative message decrypted but no JPEG magic (first 4 bytes: ${decrypted.slice(0, 4).toString("hex")})`,
-          );
-        }
-      } catch (e) {
-        if (log) {
-          log("debug", `Initiative message decrypt failed: error=${e.message}`);
-        }
+      } catch (_) {
+        // file.data or file.iv not valid hex
       }
     }
   } catch (_) {
