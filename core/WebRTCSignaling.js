@@ -370,13 +370,13 @@ class WebRTCSignaling {
     // Flush any candidates that were buffered before the offer was sent.
     this._flushCandidates();
 
-    // Start a 5s fallback timer — if the camera doesn't answer the
+    // Start a 10s fallback timer — if the camera doesn't answer the
     // offer, emit "fallback" so the plugin can switch to P2P streaming.
     if (this._fallbackTimer) clearTimeout(this._fallbackTimer);
     this._fallbackTimer = setTimeout(() => {
-      this.log("info", "[WebRTC] No answer within 5s — emitting fallback");
+      this.log("info", "[WebRTC] No answer within 10s — emitting fallback");
       this._emit("fallback", { sessionId: this.sessionId });
-    }, 5000);
+    }, 10000);
   }
 
   /**
