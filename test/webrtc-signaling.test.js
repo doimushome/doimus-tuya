@@ -230,7 +230,7 @@ test("sendOffer publishes to resolved sink topic with correct shape", async (t) 
       // ── header ──
       const h = pl.data.header;
       assert.equal(h.type, "offer");
-      assert.equal(h.from, "/av/u/clientX"); // full source topic path
+      assert.equal(h.from, "clientX"); // UID per Tuya docs (string after /av/u/)
       assert.equal(h.to, "dev-123");
       assert.equal(h.moto_id, "moto-123");
       assert.ok(typeof h.sessionid === "string" && h.sessionid.length === 32);
@@ -240,14 +240,14 @@ test("sendOffer publishes to resolved sink topic with correct shape", async (t) 
       assert.equal(m.mode, "webrtc");
       assert.equal(m.stream_type, 1);
       assert.equal(m.auth, "auth-token-base64==");
-      // token must be JSON-serialised ICE servers for camera to call JSON.parse(token)
-      assert.deepEqual(JSON.parse(m.token), ICE_SERVERS);
+      // token must be ICE server array (not a string) — go2rtc uses []ICEServer
+      assert.deepEqual(m.token, ICE_SERVERS);
       // extmap lines stripped
       assert.ok(!m.sdp.includes("a=extmap"));
 
       // ── log payload size for manual inspection ──
       console.log(
-        `  [debug] offer payloadLen=${offerPub.payload.length} tokenLen=${m.token.length}`,
+        `  [debug] offer payloadLen=${offerPub.payload.length} iceCount=${Array.isArray(m.token) ? m.token.length : typeof m.token}`,
       );
       console.log(`  [debug] offer JSON:\n${JSON.stringify(pl, null, 2)}`);
     },

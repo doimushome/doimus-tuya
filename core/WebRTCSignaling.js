@@ -274,31 +274,42 @@ class WebRTCSignaling {
             const crc = crc32(this._localKey);
             const wakePayload = Buffer.alloc(4);
             wakePayload.writeUInt32BE(crc, 0);
-            const wakeTopic = `m/w/${this._deviceId}`;
-            this.mqttClient.publish(
-              wakeTopic,
-              wakePayload,
-              { qos: 1 },
-              (err) => {
+
+            // Some camera firmwares listen on m/w/{deviceId}, others on
+            // {deviceId}/w. Send both to cover more battery camera models
+            // (peephole, doorbell, etc.).  The CRC32 wake payload is the
+            // same format used by go2rtc and ismartlife.me.
+            const wakeTopics = [`m/w/${this._deviceId}`, `${this._deviceId}/w`];
+            for (const wt of wakeTopics) {
+              this.mqttClient.publish(wt, wakePayload, { qos: 1 }, (err) => {
                 if (err) {
                   this.log(
                     "warn",
-                    `[WebRTC] Wake-up publish failed: ${err.message}`,
+                    `[WebRTC] Wake-up publish failed to ${wt}: ${err.message}`,
                   );
                 } else {
                   this.log(
                     "info",
-                    `[WebRTC] Wake-up sent to ${wakeTopic} crc=${crc.toString(16)}`,
+                    `[WebRTC] Wake-up sent to ${wt} crc=${crc.toString(16)}`,
                   );
                 }
-              },
-            );
+              });
+            }
+
             const decryptTopic = `smart/decrypt/in/${this._deviceId}`;
             this.mqttClient.subscribe(decryptTopic, (err) => {
               if (!err)
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
-            // Give the camera 500ms to process the wake before sending offer
+
+            // Battery cameras need more time to wake their IPC MQTT
+            // subsystem after the CRC32 wake message.  go2rtc uses 500ms
+            // but our testing shows battery peepholes often need 3s+.
+            const WAKE_DELAY_MS = 3000;
+            this.log(
+              "info",
+              `[WebRTC] Waiting ${WAKE_DELAY_MS}ms for camera to wake before sending offer`,
+            );
             setTimeout(() => {
               if (this._pendingOffer) {
                 const { sdp, streamType } = this._pendingOffer;
@@ -309,7 +320,7 @@ class WebRTCSignaling {
                 );
                 this._doSendOffer(sdp, streamType);
               }
-            }, 500);
+            }, WAKE_DELAY_MS);
             return;
           }
         } catch (e) {
@@ -399,13 +410,15 @@ class WebRTCSignaling {
     // These are optional header extensions the camera doesn't need.
     sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
 
-    // Tuya camera firmware does JSON.parse(msg.token) to get ICE server
-    // configuration for its WebRTC stack. Sending a non-JSON value (e.g. the
-    // auth string) causes a silent parse error on the camera, which drops
-    // the offer without sending any answer.
+    // Tuya camera firmware reads msg.token as a JSON array of ICE servers.
+    // go2rtc serialises Token as []ICEServer (native JSON array). If token is
+    // a string the camera would need to JSON.parse() it again — some firmware
+    // versions skip that second parse, silently dropping the offer.
+    // Also include datachannel_enable (go2rtc always sets it; required by
+    // newer Tuya WebRTC camera firmware).
     const token = this.webrtcConfig?.iceServers?.length
-      ? JSON.stringify(this.webrtcConfig.iceServers)
-      : this.webrtcConfig?.auth || "";
+      ? this.webrtcConfig.iceServers
+      : [];
 
     const msg = {
       protocol: WEBRTC_PROTOCOL,
@@ -424,6 +437,7 @@ class WebRTCSignaling {
           sdp,
           stream_type: streamType,
           auth: this.webrtcConfig.auth,
+          datachannel_enable: false,
           token,
         },
       },
@@ -594,13 +608,16 @@ class WebRTCSignaling {
   // ── Private ──────────────────────────────────────────────────────────
 
   _getFrom() {
-    // The Tuya IPC camera uses the `from` field to route its answer back
-    // to the client. It must match the full source_topic.ipc path so the
-    // MQTT broker delivers the camera's reply to our subscription.
-    // Resolve any {device_id} placeholders that appear in the template.
+    // Tuya docs: "use the string after `/av/u/` in the JSON field of
+    // result.source_topic.ipc as the value of `from` in the MQTT Header."
+    // go2rtc does the same: parts[3] after splitting /av/{uid}/... by /.
+    // The camera checks `from` to route its answer — using the full topic
+    // path causes the camera to silently drop the offer.
     const raw =
       this.mqttConfig?.source_topic?.ipc || this.mqttConfig?.client_id || "";
-    return this._resolveTemplateTopic(raw);
+    const resolved = this._resolveTemplateTopic(raw);
+    const parts = resolved.split("/");
+    return parts[parts.length - 1] || resolved;
   }
 
   _publish(payload) {
