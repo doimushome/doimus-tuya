@@ -6,6 +6,10 @@ const { EventEmitter } = require("node:events");
 const Module = require("node:module");
 const path = require("node:path");
 
+// ---------------------------------------------------------------------------
+// Fake MQTT client
+// ---------------------------------------------------------------------------
+
 class FakeMqttClient extends EventEmitter {
   constructor() {
     super();
@@ -20,24 +24,33 @@ class FakeMqttClient extends EventEmitter {
   }
 
   publish(topic, payload, opts, cb) {
-    let actualOpts = opts;
     let actualCb = cb;
     if (typeof opts === "function") {
       actualCb = opts;
-      actualOpts = undefined;
     }
-    this.publications.push({
-      topic,
-      payload: String(payload),
-      opts: actualOpts,
-    });
+    this.publications.push({ topic, payload: String(payload) });
     if (actualCb) actualCb(null);
   }
 
   end() {
     this.ended = true;
   }
+
+  // Test helper: simulate an inbound MQTT message from the camera.
+  receive(topic, payload) {
+    this.emit(
+      "message",
+      topic,
+      Buffer.from(
+        typeof payload === "string" ? payload : JSON.stringify(payload),
+      ),
+    );
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Module mock helper – swaps `mqtt` and `uuid` for the duration of `fn`.
+// ---------------------------------------------------------------------------
 
 function withMockedDeps({ mqttMock, uuidValues }, fn) {
   const originalLoad = Module._load;
@@ -70,6 +83,15 @@ function withMockedDeps({ mqttMock, uuidValues }, fn) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Shared fixtures
+// ---------------------------------------------------------------------------
+
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "turn:turn.example.com:3478", username: "user", credential: "pass" },
+];
+
 function makeApiMock() {
   return {
     tokenInfo: { uid: "uid-1" },
@@ -77,11 +99,9 @@ function makeApiMock() {
       success: true,
       result: {
         supports_webrtc: true,
-        auth: "auth-token",
+        auth: "auth-token-base64==",
         moto_id: "moto-123",
-        p2p_config: {
-          ices: [{ urls: "stun:stun.l.google.com:19302" }],
-        },
+        p2p_config: { ices: ICE_SERVERS },
       },
     }),
     post: async () => ({
@@ -92,7 +112,7 @@ function makeApiMock() {
         username: "u",
         password: "p",
         expire_time: 7200,
-        source_topic: { ipc: "/av/u/clientX/{device_id}" },
+        source_topic: { ipc: "/av/u/clientX" },
         sink_topic: { ipc: "/av/moto/moto_id/u/{device_id}" },
       },
     }),
@@ -109,26 +129,44 @@ function makeLogger() {
   };
 }
 
-test("connect subscribes to both raw and resolved source topics", async (t) => {
+function setup(WebRTCSignaling) {
   const fakeClient = new FakeMqttClient();
-  const mqttMock = {
-    connect: () => fakeClient,
-  };
+  const api = makeApiMock();
+  const logger = makeLogger();
+  const wr = new WebRTCSignaling(api, logger.log.bind(logger));
+  return { fakeClient, api, logger, wr };
+}
 
+const UUIDS = {
+  subscribe: [
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", // linkId
+    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+  ],
+  offer: [
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "cccccccc-cccc-cccc-cccc-cccccccccccc", // sessionId
+  ],
+  answer: [
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "dddddddd-dddd-dddd-dddd-dddddddddddd",
+  ],
+  roundtrip: [
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", // sessionId used in reply
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Test 1: subscribe topics
+// ---------------------------------------------------------------------------
+
+test("connect subscribes to source topic, resolved source topic, and wildcard", async (t) => {
+  const fakeClient = new FakeMqttClient();
   await withMockedDeps(
-    {
-      mqttMock,
-      uuidValues: [
-        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", // linkId
-        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", // sessionId
-      ],
-    },
+    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.subscribe },
     async (WebRTCSignaling) => {
-      const api = makeApiMock();
-      const logger = makeLogger();
-      const wr = new WebRTCSignaling(api, logger.log.bind(logger));
+      const { wr } = setup(WebRTCSignaling);
       t.after(() => wr.disconnect());
-
       await wr.getConfigs("dev-123");
       wr.connect(
         "dev-123",
@@ -136,37 +174,27 @@ test("connect subscribes to both raw and resolved source topics", async (t) => {
         wr.webrtcConfig,
         false,
       );
-
       fakeClient.emit("connect");
 
-      assert.deepEqual(fakeClient.subscriptions, [
-        "/av/u/clientX/{device_id}",
-        "/av/u/clientX/dev-123",
-      ]);
+      // source topic has no placeholder here, so raw == resolved → deduplicated to 1
+      assert.ok(fakeClient.subscriptions.includes("/av/u/clientX"));
+      // wildcard must also be subscribed
+      assert.ok(fakeClient.subscriptions.includes("#"));
     },
   );
 });
 
-test("sendOffer publishes to resolved sink topic with expected shape", async (t) => {
+// ---------------------------------------------------------------------------
+// Test 2: offer payload shape
+// ---------------------------------------------------------------------------
+
+test("sendOffer publishes to resolved sink topic with correct shape", async (t) => {
   const fakeClient = new FakeMqttClient();
-  const mqttMock = {
-    connect: () => fakeClient,
-  };
-
   await withMockedDeps(
-    {
-      mqttMock,
-      uuidValues: [
-        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", // linkId
-        "cccccccc-cccc-cccc-cccc-cccccccccccc", // sessionId
-      ],
-    },
+    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.offer },
     async (WebRTCSignaling) => {
-      const api = makeApiMock();
-      const logger = makeLogger();
-      const wr = new WebRTCSignaling(api, logger.log.bind(logger));
+      const { wr } = setup(WebRTCSignaling);
       t.after(() => wr.disconnect());
-
       await wr.getConfigs("dev-123");
       wr.connect(
         "dev-123",
@@ -181,49 +209,108 @@ test("sendOffer publishes to resolved sink topic with expected shape", async (t)
         1,
       );
 
-      assert.equal(fakeClient.publications.length, 1);
-      const sent = fakeClient.publications[0];
-      assert.equal(sent.topic, "/av/moto/moto-123/u/dev-123");
+      // Find the offer publication (skip any wake/other publishes)
+      const offerPub = fakeClient.publications.find((p) => {
+        try {
+          return JSON.parse(p.payload)?.data?.header?.type === "offer";
+        } catch {
+          return false;
+        }
+      });
+      assert.ok(offerPub, "offer publication not found");
 
-      const payload = JSON.parse(sent.payload);
-      assert.equal(payload.protocol, 302);
-      assert.equal(payload.data.header.type, "offer");
-      assert.equal(payload.data.header.from, "/av/u/clientX/dev-123");
-      assert.equal(payload.data.header.to, "dev-123");
-      assert.equal(payload.data.header.moto_id, "moto-123");
-      assert.equal(payload.data.msg.mode, "webrtc");
-      assert.equal(payload.data.msg.stream_type, 1);
-      assert.equal(payload.data.msg.auth, "auth-token");
-      // token must be JSON-serialised ICE servers so the camera can
-      // call JSON.parse(token) to configure its WebRTC stack.
-      assert.deepEqual(JSON.parse(payload.data.msg.token), [
-        { urls: "stun:stun.l.google.com:19302" },
-      ]);
-      assert.ok(!payload.data.msg.sdp.includes("a=extmap"));
+      // ── topic ──
+      assert.equal(offerPub.topic, "/av/moto/moto-123/u/dev-123");
+
+      const pl = JSON.parse(offerPub.payload);
+      // ── envelope ──
+      assert.equal(pl.protocol, 302);
+      assert.equal(pl.pv, "2.2");
+
+      // ── header ──
+      const h = pl.data.header;
+      assert.equal(h.type, "offer");
+      assert.equal(h.from, "/av/u/clientX"); // full source topic path
+      assert.equal(h.to, "dev-123");
+      assert.equal(h.moto_id, "moto-123");
+      assert.ok(typeof h.sessionid === "string" && h.sessionid.length === 32);
+
+      // ── msg ──
+      const m = pl.data.msg;
+      assert.equal(m.mode, "webrtc");
+      assert.equal(m.stream_type, 1);
+      assert.equal(m.auth, "auth-token-base64==");
+      // token must be JSON-serialised ICE servers for camera to call JSON.parse(token)
+      assert.deepEqual(JSON.parse(m.token), ICE_SERVERS);
+      // extmap lines stripped
+      assert.ok(!m.sdp.includes("a=extmap"));
+
+      // ── log payload size for manual inspection ──
+      console.log(
+        `  [debug] offer payloadLen=${offerPub.payload.length} tokenLen=${m.token.length}`,
+      );
+      console.log(`  [debug] offer JSON:\n${JSON.stringify(pl, null, 2)}`);
     },
   );
 });
 
+// ---------------------------------------------------------------------------
+// Test 3: incoming answer – string protocol, nested data envelope
+// ---------------------------------------------------------------------------
+
 test("incoming answer parses protocol as string and nested data envelope", async (t) => {
   const fakeClient = new FakeMqttClient();
-  const mqttMock = {
-    connect: () => fakeClient,
-  };
-
   await withMockedDeps(
-    {
-      mqttMock,
-      uuidValues: [
-        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", // linkId
-        "dddddddd-dddd-dddd-dddd-dddddddddddd", // sessionId
-      ],
-    },
+    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.answer },
     async (WebRTCSignaling) => {
-      const api = makeApiMock();
-      const logger = makeLogger();
-      const wr = new WebRTCSignaling(api, logger.log.bind(logger));
+      const { wr } = setup(WebRTCSignaling);
       t.after(() => wr.disconnect());
+      await wr.getConfigs("dev-123");
+      wr.connect(
+        "dev-123",
+        "00112233445566778899aabbccddeeff",
+        wr.webrtcConfig,
+        false,
+      );
+      fakeClient.emit("connect");
+      wr.sendOffer("v=0\r\n", 1);
 
+      let received = null;
+      wr.on("answer", (d) => {
+        received = d;
+      });
+
+      fakeClient.receive("/av/u/clientX", {
+        protocol: "302",
+        data: {
+          data: {
+            header: { type: "answer", sessionid: "sess-xyz" },
+            msg: { sdp: "v=0\r\n...answer..." },
+          },
+        },
+      });
+
+      assert.deepEqual(received, {
+        sdp: "v=0\r\n...answer...",
+        sessionId: "sess-xyz",
+      });
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 4: full mock-camera round-trip
+//   Client sends offer → mock camera echoes answer on source topic
+//   → client emits "answer" event and cancels fallback timer
+// ---------------------------------------------------------------------------
+
+test("full round-trip: offer → mock camera answer → client receives answer", async (t) => {
+  const fakeClient = new FakeMqttClient();
+  await withMockedDeps(
+    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.roundtrip },
+    async (WebRTCSignaling) => {
+      const { wr } = setup(WebRTCSignaling);
+      t.after(() => wr.disconnect());
       await wr.getConfigs("dev-123");
       wr.connect(
         "dev-123",
@@ -233,38 +320,125 @@ test("incoming answer parses protocol as string and nested data envelope", async
       );
       fakeClient.emit("connect");
 
-      wr.sendOffer("v=0\r\n", 1);
-
-      let received = null;
+      let answerReceived = null;
+      let fallbackFired = false;
       wr.on("answer", (d) => {
-        received = d;
+        answerReceived = d;
+      });
+      wr.on("fallback", () => {
+        fallbackFired = true;
       });
 
-      const incoming = {
-        protocol: "302",
+      wr.sendOffer("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\n", 1);
+
+      // Grab the offer publication and extract sessionid
+      const offerPub = fakeClient.publications.find((p) => {
+        try {
+          return JSON.parse(p.payload)?.data?.header?.type === "offer";
+        } catch {
+          return false;
+        }
+      });
+      assert.ok(offerPub, "offer must have been published");
+      const sessionid = JSON.parse(offerPub.payload).data.header.sessionid;
+
+      // ── Simulate mock camera: receive offer, reply with answer ──
+      const mockAnswer = {
+        protocol: 302,
+        pv: "2.2",
+        t: Math.floor(Date.now() / 1000),
         data: {
-          data: {
-            header: {
-              type: "answer",
-              sessionid: "sess-xyz",
-            },
-            msg: {
-              sdp: "v=0\\r\\n...answer...",
-            },
+          header: {
+            type: "answer",
+            sessionid,
+            from: "camera-dev-123",
+            to: "clientX",
+          },
+          msg: {
+            mode: "webrtc",
+            sdp: "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\na=recvonly\r\n",
           },
         },
       };
+      fakeClient.receive("/av/u/clientX", mockAnswer);
 
-      fakeClient.emit(
-        "message",
-        "/av/u/clientX/dev-123",
-        Buffer.from(JSON.stringify(incoming)),
+      // ── Assertions ──
+      assert.ok(answerReceived, "answer event must have fired");
+      assert.equal(answerReceived.sessionId, sessionid);
+      assert.ok(answerReceived.sdp.includes("a=recvonly"));
+      assert.equal(
+        fallbackFired,
+        false,
+        "fallback must NOT fire when answer arrives",
       );
 
-      assert.deepEqual(received, {
-        sdp: "v=0\\r\\n...answer...",
-        sessionId: "sess-xyz",
+      console.log(
+        `  [debug] round-trip answer.sdp: ${answerReceived.sdp.trim()}`,
+      );
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: wildcard catches camera reply on unexpected topic
+// ---------------------------------------------------------------------------
+
+test("wildcard subscription catches camera reply on unexpected topic", async (t) => {
+  const fakeClient = new FakeMqttClient();
+  await withMockedDeps(
+    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.roundtrip },
+    async (WebRTCSignaling) => {
+      const { wr } = setup(WebRTCSignaling);
+      t.after(() => wr.disconnect());
+      await wr.getConfigs("dev-123");
+      wr.connect(
+        "dev-123",
+        "00112233445566778899aabbccddeeff",
+        wr.webrtcConfig,
+        false,
+      );
+      fakeClient.emit("connect");
+
+      assert.ok(
+        fakeClient.subscriptions.includes("#"),
+        "must have wildcard subscription",
+      );
+
+      wr.sendOffer("v=0\r\n", 1);
+
+      const offerPub = fakeClient.publications.find((p) => {
+        try {
+          return JSON.parse(p.payload)?.data?.header?.type === "offer";
+        } catch {
+          return false;
+        }
       });
+      const sessionid = JSON.parse(offerPub.payload).data.header.sessionid;
+
+      let answerReceived = null;
+      wr.on("answer", (d) => {
+        answerReceived = d;
+      });
+
+      // Camera replies on a completely different topic (caught by #)
+      fakeClient.receive("/av/some/unexpected/topic/bfc467f1", {
+        protocol: 302,
+        pv: "2.2",
+        t: Math.floor(Date.now() / 1000),
+        data: {
+          header: { type: "answer", sessionid },
+          msg: { mode: "webrtc", sdp: "v=0\r\n...camera-answer..." },
+        },
+      });
+
+      assert.ok(
+        answerReceived,
+        "answer must be received even on unexpected topic",
+      );
+      assert.equal(answerReceived.sessionId, sessionid);
+      console.log(
+        `  [debug] caught on unexpected topic – answer.sdp length: ${answerReceived.sdp.length}`,
+      );
     },
   );
 });

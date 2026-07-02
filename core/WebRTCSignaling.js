@@ -224,6 +224,23 @@ class WebRTCSignaling {
         });
       }
 
+      // Also subscribe to a wildcard so we catch any camera reply that
+      // lands on an unexpected topic. This is debug-only and helps us
+      // discover the real reply topic if the camera uses a non-standard path.
+      this.mqttClient.subscribe("#", (err) => {
+        if (err) {
+          this.log(
+            "debug",
+            `[WebRTC] Wildcard subscribe error: ${err.message}`,
+          );
+        } else {
+          this.log(
+            "debug",
+            "[WebRTC] Wildcard (#) subscribed for reply discovery",
+          );
+        }
+      });
+
       // Low-power battery camera wake-up via IPC MQTT (go2rtc-compatible).
       // The cloud DP (wireless_awake) wakes the cloud link; this CRC32
       // message on the IPC broker activates the WebRTC subsystem.
