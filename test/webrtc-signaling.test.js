@@ -78,7 +78,6 @@ function makeApiMock() {
       result: {
         supports_webrtc: true,
         auth: "auth-token",
-        webrtc_token: "webrtc-token-xyz",
         moto_id: "moto-123",
         p2p_config: {
           ices: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -189,12 +188,17 @@ test("sendOffer publishes to resolved sink topic with expected shape", async (t)
       const payload = JSON.parse(sent.payload);
       assert.equal(payload.protocol, 302);
       assert.equal(payload.data.header.type, "offer");
+      assert.equal(payload.data.header.from, "/av/u/clientX/dev-123");
       assert.equal(payload.data.header.to, "dev-123");
       assert.equal(payload.data.header.moto_id, "moto-123");
       assert.equal(payload.data.msg.mode, "webrtc");
       assert.equal(payload.data.msg.stream_type, 1);
       assert.equal(payload.data.msg.auth, "auth-token");
-      assert.equal(payload.data.msg.token, "webrtc-token-xyz");
+      // token must be JSON-serialised ICE servers so the camera can
+      // call JSON.parse(token) to configure its WebRTC stack.
+      assert.deepEqual(JSON.parse(payload.data.msg.token), [
+        { urls: "stun:stun.l.google.com:19302" },
+      ]);
       assert.ok(!payload.data.msg.sdp.includes("a=extmap"));
     },
   );

@@ -369,9 +369,13 @@ class WebRTCSignaling {
     // These are optional header extensions the camera doesn't need.
     sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
 
-    // Important: Tuya expects a signaling token in offer.msg.token.
-    // Using ICE server JSON here can cause the camera to ignore the offer.
-    const token = this.webrtcConfig?.token || this.webrtcConfig?.auth || "";
+    // Tuya camera firmware does JSON.parse(msg.token) to get ICE server
+    // configuration for its WebRTC stack. Sending a non-JSON value (e.g. the
+    // auth string) causes a silent parse error on the camera, which drops
+    // the offer without sending any answer.
+    const token = this.webrtcConfig?.iceServers?.length
+      ? JSON.stringify(this.webrtcConfig.iceServers)
+      : this.webrtcConfig?.auth || "";
 
     const msg = {
       protocol: WEBRTC_PROTOCOL,
@@ -560,11 +564,13 @@ class WebRTCSignaling {
   // ── Private ──────────────────────────────────────────────────────────
 
   _getFrom() {
-    // The "from" field is the unique client ID from source_topic.ipc.
-    // Extract only the segment after /av/u/ (stop at next slash if present).
-    const src = this.mqttConfig?.source_topic?.ipc || "";
-    const m = src.match(/\/av\/u\/([^/]+)/);
-    return m && m[1] ? m[1] : this.mqttConfig?.client_id || "";
+    // The Tuya IPC camera uses the `from` field to route its answer back
+    // to the client. It must match the full source_topic.ipc path so the
+    // MQTT broker delivers the camera's reply to our subscription.
+    // Resolve any {device_id} placeholders that appear in the template.
+    const raw =
+      this.mqttConfig?.source_topic?.ipc || this.mqttConfig?.client_id || "";
+    return this._resolveTemplateTopic(raw);
   }
 
   _publish(payload) {
