@@ -3049,7 +3049,7 @@ module.exports = {
 
               log(
                 "info",
-                `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fallback in 12s`,
+                `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fallback in 4s`,
               );
               ctx._snapshotFallbackTimers.set(
                 device.id,
@@ -3090,7 +3090,7 @@ module.exports = {
                       `REST snapshot fallback failed for "${device.name}": ${e.message || e}`,
                     );
                   }
-                }, 12000),
+                }, 4000),
               );
             }
           }
