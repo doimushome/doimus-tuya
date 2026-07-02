@@ -1331,13 +1331,13 @@ function scheduleMotionImageFetch(
 ) {
   if (!ctx._motionFetchTimers) ctx._motionFetchTimers = new Map();
 
-  // Cancel any pending timer for this device (new metadata supersedes old).
+  // Don't cancel previous pending timer: each motion event gets its own S3
+  // fetch so distinct motion_N images are stored per event for the timeline.
   const existing = ctx._motionFetchTimers.get(device.id);
   if (existing) {
-    clearTimeout(existing);
     log(
       "debug",
-      `Reset motion fetch timer for "${device.name}" (new metadata arrived)`,
+      `Another motion while S3 fetch pending for "${device.name}" — scheduling second fetch for this event`,
     );
   }
 
@@ -1351,14 +1351,6 @@ function scheduleMotionImageFetch(
     try {
       const jpeg = await fetchMotionImageFromS3(device, metadata, dm, ctx, log);
       if (jpeg) {
-        // Cancel any pending REST fallback timer — S3 fetch succeeded.
-        if (ctx._snapshotFallbackTimers) {
-          const fb = ctx._snapshotFallbackTimers.get(device.id);
-          if (fb) {
-            clearTimeout(fb);
-            ctx._snapshotFallbackTimers.delete(device.id);
-          }
-        }
         api.sendMjpegFrame(doimusID, "main", jpeg);
         api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
         if (!ctx._motionSeq) ctx._motionSeq = new Map();
@@ -3051,10 +3043,10 @@ module.exports = {
               //    (movement_detect_pic / doorbell_pic DPs fired asynchronously).
               //    Wait a short grace period, then fall back to the REST
               //    snapshot API so snapshot_latest doesn't go stale.
+              //    Don't cancel previous pending timers: each event gets its own
+              //    REST snapshot for the timeline.
               if (!ctx._snapshotFallbackTimers)
                 ctx._snapshotFallbackTimers = new Map();
-              const pending = ctx._snapshotFallbackTimers.get(device.id);
-              if (pending) clearTimeout(pending);
 
               log(
                 "info",
