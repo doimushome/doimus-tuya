@@ -1774,6 +1774,201 @@ function stopP2P(doimusID, ctx, log) {
   ctx.p2pClients.delete(doimusID);
 }
 
+/**
+ * Restore camera to power saving mode after a WebRTC/streaming session.
+ * Sets wireless_powermode to "1" (power saving) — keeps the camera
+ * responsive for future streams while still conserving battery.
+ */
+function _restorePowerMode(tuyaDevice, ctx, log) {
+  if (!tuyaDevice || !tuyaDevice.schema) return;
+  const powerModeDp = tuyaDevice.schema.find(
+    (s) => s.code === "wireless_powermode",
+  );
+  if (!powerModeDp) return;
+  log("info", "[WebRTC] Restoring wireless power mode to power saving (1)");
+  ctx.deviceManager
+    .sendCommands(tuyaDevice.id, [{ code: "wireless_powermode", value: "1" }])
+    .catch((e) =>
+      log("debug", `[WebRTC] wireless_powermode restore skipped: ${e.message}`),
+    );
+}
+
+/**
+ * Try the Tuya cloud stream allocation API to get an RTSP stream from
+ * the camera, then proxy JPEG frames to the mobile app via the existing
+ * MJPEG pipeline.
+ *
+ * This is a fallback when WebRTC and P2P both fail — some battery cameras
+ * (especially "sp" category peepholes) respond better to the cloud-initiated
+ * RTSP stream allocation than to direct P2P/WebRTC.
+ */
+async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
+  if (!tuyaDevice || !tuyaDevice.id || !ctx.deviceManager) return;
+
+  const deviceName = tuyaDevice.name || "unknown";
+  log("info", `[StreamAlloc] Trying stream allocation for "${deviceName}"`);
+
+  // Call the Tuya stream allocation API
+  let result;
+  try {
+    result = await ctx.deviceManager.api.post(
+      `/v1.0/devices/${tuyaDevice.id}/stream/actions/allocate`,
+      { type: "rtsp" },
+    );
+  } catch (e) {
+    log(
+      "debug",
+      `[StreamAlloc] API call failed for "${deviceName}": ${e.message}`,
+    );
+    return;
+  }
+
+  if (!result || !result.success || !result.result || !result.result.url) {
+    log(
+      "debug",
+      `[StreamAlloc] API returned no stream URL for "${deviceName}" (code=${result?.code} msg=${result?.msg})`,
+    );
+    return;
+  }
+
+  const streamUrl = result.result.url;
+  const streamId = result.result.stream_id || "";
+  log(
+    "info",
+    `[StreamAlloc] Got stream URL for "${deviceName}" (stream_id=${streamId})`,
+  );
+
+  // Clean up any previous stream allocation for this device
+  stopStreamAllocation(doimusID, ctx, log);
+
+  // Spawn ffmpeg to connect to the RTSP stream and extract JPEG frames.
+  // The RTSP URL from Tuya typically requires TCP transport.
+  let buffer = Buffer.alloc(0);
+  let frameCount = 0;
+  let frameTimer = null;
+
+  try {
+    const { spawn } = require("child_process");
+    const proc = spawn(
+      "ffmpeg",
+      [
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        streamUrl,
+        "-f",
+        "mjpeg",
+        "-q:v",
+        "5",
+        "-r",
+        "5",
+        "pipe:1",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+
+    // Suppress ffmpeg log output
+    proc.stderr.on("data", () => {});
+
+    if (!ctx._streamAllocProcs) ctx._streamAllocProcs = new Map();
+    ctx._streamAllocProcs.set(doimusID, proc);
+
+    proc.stdout.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      // Extract complete JPEG frames (marked by FF D8 ... FF D9)
+      while (buffer.length > 1) {
+        const startIdx = buffer.indexOf(Buffer.from([0xff, 0xd8]));
+        if (startIdx === -1) {
+          buffer = Buffer.alloc(0);
+          break;
+        }
+
+        // Find end of JPEG (0xFF 0xD9)
+        let endIdx = -1;
+        for (let i = startIdx + 2; i < buffer.length - 1; i++) {
+          if (buffer[i] === 0xff && buffer[i + 1] === 0xd9) {
+            endIdx = i + 2;
+            break;
+          }
+        }
+
+        if (endIdx === -1) break; // incomplete frame, wait for more data
+
+        const jpeg = buffer.slice(startIdx, endIdx);
+        frameCount++;
+
+        api.sendMjpegFrame(doimusID, "main", jpeg);
+        api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
+
+        if (frameCount % 30 === 0) {
+          log(
+            "debug",
+            `[StreamAlloc] ${frameCount} frames sent for "${deviceName}"`,
+          );
+        }
+
+        buffer = buffer.slice(endIdx);
+      }
+    });
+
+    // Timeout: if no frames within 15s, clean up
+    frameTimer = setTimeout(() => {
+      if (frameCount === 0) {
+        log(
+          "warn",
+          `[StreamAlloc] No frames received within 15s for "${deviceName}" — giving up`,
+        );
+        stopStreamAllocation(doimusID, ctx, log);
+      }
+    }, 15000);
+    if (frameTimer.unref) frameTimer.unref();
+
+    proc.on("error", (err) => {
+      log(
+        "warn",
+        `[StreamAlloc] ffmpeg error for "${deviceName}": ${err.message}`,
+      );
+      stopStreamAllocation(doimusID, ctx, log);
+    });
+
+    proc.on("close", (code) => {
+      if (frameTimer) {
+        clearTimeout(frameTimer);
+        frameTimer = null;
+      }
+      if (ctx._streamAllocProcs?.get(doimusID) === proc) {
+        ctx._streamAllocProcs.delete(doimusID);
+      }
+      log(
+        "info",
+        `[StreamAlloc] ffmpeg exited (code=${code}) for "${deviceName}"`,
+      );
+    });
+
+    log("info", `[StreamAlloc] Streaming started for "${deviceName}"`);
+  } catch (e) {
+    log(
+      "debug",
+      `[StreamAlloc] ffmpeg spawn failed for "${deviceName}": ${e.message}`,
+    );
+  }
+}
+
+/**
+ * Stop an active stream allocation ffmpeg process.
+ */
+function stopStreamAllocation(doimusID, ctx, log) {
+  if (!ctx._streamAllocProcs) return;
+  const proc = ctx._streamAllocProcs.get(doimusID);
+  if (!proc) return;
+  log("info", `Stopping stream allocation for device ${doimusID}`);
+  try {
+    proc.kill("SIGTERM");
+  } catch (_) {}
+  ctx._streamAllocProcs.delete(doimusID);
+}
+
 // Module-level reference to the current plugin context so stop() can access it.
 let _ctx = null;
 
@@ -2409,6 +2604,12 @@ module.exports = {
               );
               api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
               startP2P(deviceID, tuyaDevice, ctx, log, api);
+              // Also try Tuya cloud stream allocation as an additional
+              // fallback — some battery cameras respond better to the
+              // cloud-initiated RTSP stream than direct P2P/WebRTC.
+              startStreamAllocation(deviceID, tuyaDevice, ctx, log, api).catch(
+                (e) => log("debug", `[StreamAlloc] Failed: ${e.message}`),
+              );
             });
 
             // Battery-powered cameras (peephole, doorbell) sleep to
@@ -2461,6 +2662,29 @@ module.exports = {
               );
               if (wakeDp) {
                 try {
+                  // Battery cameras (sp/doorbell) sleep the video subsystem to
+                  // conserve power. Switching to performance mode ensures the
+                  // camera keeps its video encoder and WebRTC engine active.
+                  const powerModeDp = tuyaDevice.schema?.find(
+                    (s) => s.code === "wireless_powermode",
+                  );
+                  if (powerModeDp) {
+                    try {
+                      await dm.sendCommands(tuyaDevice.id, [
+                        { code: "wireless_powermode", value: "2" },
+                      ]);
+                      log(
+                        "info",
+                        "[WebRTC] Wireless power mode set to performance (2)",
+                      );
+                      await new Promise((r) => setTimeout(r, 500));
+                    } catch (e) {
+                      log(
+                        "debug",
+                        `[WebRTC] wireless_powermode set skipped: ${e.message}`,
+                      );
+                    }
+                  }
                   await dm.sendCommands(tuyaDevice.id, [
                     { code: wakeDp.code, value: true },
                   ]);
@@ -2585,6 +2809,10 @@ module.exports = {
           wr.sendDisconnect();
           wr.disconnect();
           ctx._webrtcClients.delete(deviceID);
+          // Restore power saving mode after WebRTC session ends
+          _restorePowerMode(tuyaDevice, ctx, log);
+          // Clean up any active stream allocation
+          stopStreamAllocation(deviceID, ctx, log);
         }
         return;
       }
@@ -2849,6 +3077,7 @@ module.exports = {
           return;
         } else if (key === "p2p_stop") {
           stopP2P(deviceID, ctx, log);
+          stopStreamAllocation(deviceID, ctx, log);
           return;
         }
 
@@ -3355,6 +3584,15 @@ module.exports = {
           } catch (_) {}
         }
         _ctx.p2pClients.clear();
+      }
+      // Close all active stream allocation ffmpeg processes
+      if (_ctx._streamAllocProcs) {
+        for (const [, proc] of _ctx._streamAllocProcs) {
+          try {
+            proc.kill("SIGTERM");
+          } catch (_) {}
+        }
+        _ctx._streamAllocProcs.clear();
       }
       // Clear motion auto-reset timers
       if (_ctx._motionTimers) {
