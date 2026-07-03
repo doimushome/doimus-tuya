@@ -1775,25 +1775,6 @@ function stopP2P(doimusID, ctx, log) {
 }
 
 /**
- * Restore camera to power saving mode after a WebRTC/streaming session.
- * Sets wireless_powermode to "1" (power saving) — keeps the camera
- * responsive for future streams while still conserving battery.
- */
-function _restorePowerMode(tuyaDevice, ctx, log) {
-  if (!tuyaDevice || !tuyaDevice.schema) return;
-  const powerModeDp = tuyaDevice.schema.find(
-    (s) => s.code === "wireless_powermode",
-  );
-  if (!powerModeDp) return;
-  log("info", "[WebRTC] Restoring wireless power mode to power saving (1)");
-  ctx.deviceManager
-    .sendCommands(tuyaDevice.id, [{ code: "wireless_powermode", value: "1" }])
-    .catch((e) =>
-      log("debug", `[WebRTC] wireless_powermode restore skipped: ${e.message}`),
-    );
-}
-
-/**
  * Try the Tuya cloud stream allocation API to get an RTSP stream from
  * the camera, then proxy JPEG frames to the mobile app via the existing
  * MJPEG pipeline.
@@ -2662,53 +2643,13 @@ module.exports = {
               );
               if (wakeDp) {
                 try {
-                  // Battery cameras (sp/doorbell) sleep the video subsystem to
-                  // conserve power. Switching to performance mode ensures the
-                  // camera keeps its video encoder and WebRTC engine active.
-                  const powerModeDp = tuyaDevice.schema?.find(
-                    (s) => s.code === "wireless_powermode",
-                  );
-                  if (powerModeDp) {
-                    try {
-                      await dm.sendCommands(tuyaDevice.id, [
-                        { code: "wireless_powermode", value: "2" },
-                      ]);
-                      log(
-                        "info",
-                        "[WebRTC] Wireless power mode set to performance (2)",
-                      );
-                      await new Promise((r) => setTimeout(r, 500));
-                    } catch (e) {
-                      log(
-                        "debug",
-                        `[WebRTC] wireless_powermode set skipped: ${e.message}`,
-                      );
-                    }
-                  }
                   await dm.sendCommands(tuyaDevice.id, [
                     { code: wakeDp.code, value: true },
                   ]);
                   log("info", `[WebRTC] Wake-up sent (dp=${wakeDp.code})`);
-                  // Also try setting ipc_work_mode to enable the video subsystem.
-                  const ipcModeDp = tuyaDevice.schema.find(
-                    (s) => s.code === "ipc_work_mode",
-                  );
-                  if (ipcModeDp) {
-                    try {
-                      await dm.sendCommands(tuyaDevice.id, [
-                        { code: "ipc_work_mode", value: "live" },
-                      ]);
-                      log("info", "[WebRTC] IPC work mode set to live");
-                    } catch (e) {
-                      log(
-                        "debug",
-                        `[WebRTC] IPC work mode skipped: ${e.message}`,
-                      );
-                    }
-                  }
-                  // Give the camera 2s to activate its WebRTC/video subsystem
-                  // before fetching configs and connecting to IPC MQTT.
-                  await new Promise((r) => setTimeout(r, 2000));
+                  // Brief pause for the cloud API to propagate before
+                  // fetching configs and connecting IPC MQTT.
+                  await new Promise((r) => setTimeout(r, 1000));
                 } catch (e) {
                   log(
                     "debug",
@@ -2732,34 +2673,11 @@ module.exports = {
             const configs = await wr.getConfigs(tuyaDevice.id);
 
             // Phase 2: after getConfigs (sends cloud push to camera),
-            // wait for it to report online before connecting.
-            if (needsWake && configs) {
-              log(
-                "info",
-                "[WebRTC] Waiting for camera to come online (max 15s)...",
-              );
-              await new Promise((resolve) => {
-                let waited = 0;
-                const poll = setInterval(() => {
-                  waited += 500;
-                  if (tuyaDevice.online || waited >= 15000) {
-                    clearInterval(poll);
-                    resolve();
-                  }
-                }, 500);
-              });
-              log("info", "[WebRTC] Camera online: " + tuyaDevice.online);
-              if (!tuyaDevice.online) {
-                log("warn", "[WebRTC] Camera did not wake up within 15s");
-                api.sendWebrtcSignaling(deviceID, {
-                  event: "error",
-                  message: "Camera did not wake up in time. Please try again.",
-                });
-                ctx._webrtcClients.delete(deviceID);
-                return;
-              }
-              await new Promise((r) => setTimeout(r, 2000));
-            }
+            // proceed to IPC MQTT connection. The camera either wakes
+            // quickly or the IPC MQTT broker buffers messages for it.
+            // Don't block on online status — battery cameras report
+            // offline while sleeping but will receive MQTT messages
+            // when they reconnect after the CRC32 wake.
 
             if (configs) {
               log("info", `[WebRTC] Configs fetched, connecting to IPC MQTT`);
@@ -2810,7 +2728,6 @@ module.exports = {
           wr.disconnect();
           ctx._webrtcClients.delete(deviceID);
           // Restore power saving mode after WebRTC session ends
-          _restorePowerMode(tuyaDevice, ctx, log);
           // Clean up any active stream allocation
           stopStreamAllocation(deviceID, ctx, log);
         }

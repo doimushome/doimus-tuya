@@ -302,10 +302,11 @@ class WebRTCSignaling {
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
 
-            // Battery cameras need more time to wake their IPC MQTT
-            // subsystem after the CRC32 wake message.  go2rtc uses 500ms
-            // but our testing shows battery peepholes often need 3s+.
-            const WAKE_DELAY_MS = 3000;
+            // Battery cameras need a small delay for their IPC MQTT
+            // subsystem to wake after the CRC32 wake message.
+            // go2rtc uses 500ms, which suffices — the IPC MQTT broker
+            // buffers messages for cameras that take longer to reconnect.
+            const WAKE_DELAY_MS = 500;
             this.log(
               "info",
               `[WebRTC] Waiting ${WAKE_DELAY_MS}ms for camera to wake before sending offer`,
