@@ -1309,78 +1309,221 @@ async function fetchMotionImageFromS3(device, metadata, dm, ctx, log) {
   return null;
 }
 
-/**
- * Schedule a delayed motion image fetch from Tuya's S3.
- *
- * The camera sends the initiative_message MQTT notification before the
- * image finishes uploading to Tuya's cloud storage.  A 10-second delay
- * gives the upload time to complete so we fetch the correct (new) image
- * instead of the previous one.
- *
- * Debounced per device: if a new initiative_message arrives while a timer
- * is pending, the old timer is cancelled and a new 10s timer starts.
- */
-function scheduleMotionImageFetch(
-  device,
-  metadata,
-  doimusID,
-  ctx,
-  dm,
-  api,
-  log,
-  motionSeq,
-) {
-  if (!ctx._motionFetchTimers) ctx._motionFetchTimers = new Map();
+// ── Motion Capture Coordinator ──────────────────────────────────────────
+// Replaces the old timer-race approach: multiple MQTT packets per physical
+// event (motion DP, initiative_message, movement_detect_pic) are coalesced
+// into one coordinated capture with a unique timestamp-based key.
 
-  // Cancel the previous pending timer to prevent a stale S3 fetch callback
-  // from calling delete(device.id) and corrupting the replacement's entry
-  // in the Map. Each motion event already has its pre-assigned motion_N seq,
-  // so we only need one active S3 fetch per device at a time.
-  const existing = ctx._motionFetchTimers.get(device.id);
-  if (existing) {
-    clearTimeout(existing);
-    log(
-      "debug",
-      `Another motion while S3 fetch pending for "${device.name}" — cancelled previous fetch, scheduling new one`,
-    );
+/**
+ * Start or extend the motion capture coalescing window for a device.
+ *
+ * Multiple MQTT packets arrive per physical motion event. This debounce
+ * collects them over 1.5s so that processCoalescedMotion() sees all
+ * available data (inline image, S3 metadata) in a single attempt.
+ * Cancels any pending async capture from a previous event.
+ */
+function startMotionCoalesce(device, status, doimusID, ctx, dm, api, log) {
+  if (!ctx._motionCoalesce) ctx._motionCoalesce = new Map();
+
+  let entry = ctx._motionCoalesce.get(device.id);
+  if (entry) {
+    // Cancel pending timers from a previous coalesce or async fetch
+    clearTimeout(entry.timer);
+    clearTimeout(entry.asyncTimer);
+    // Merge new status items (avoid duplicates by code)
+    for (const s of status) {
+      if (!entry.statuses.find((e) => e.code === s.code)) {
+        entry.statuses.push(s);
+      }
+    }
+  } else {
+    entry = { doimusID, statuses: [...status], timer: null, asyncTimer: null };
+    ctx._motionCoalesce.set(device.id, entry);
   }
 
   log(
-    "info",
-    `Scheduling motion image fetch for "${device.name}" in 10s (bucket=${metadata.bucket})`,
+    "debug",
+    `Motion coalesce ${entry.timer ? "extended" : "started"} for "${device.name}" (${entry.statuses.length} status items)`,
   );
 
-  // Capture the pre-assigned seq for this motion event in the closure.
-  // This ensures the motion_N key matches the event's position in the
-  // timeline regardless of async fetch ordering.
-  const timer = setTimeout(async () => {
-    ctx._motionFetchTimers.delete(device.id);
+  entry.timer = setTimeout(() => {
+    processCoalescedMotion(device.id, ctx, dm, api, log).catch((e) => {
+      log(
+        "error",
+        `processCoalescedMotion failed for "${device.name}": ${e.message}`,
+      );
+    });
+  }, 1500);
+}
+
+/**
+ * Process one coordinated motion capture attempt.
+ *
+ * Called once after the coalescing window closes. Generates a unique
+ * eventKey, updates state with _capture_id so the backend creates the
+ * timeline entry with the correct image_key from the start, then
+ * attempts image capture in priority order: inline -> S3 -> REST.
+ */
+async function processCoalescedMotion(tuyaID, ctx, dm, api, log) {
+  const device = dm.getDevice(tuyaID);
+  if (!device) {
+    log("warn", `processCoalescedMotion: device ${tuyaID} not found`);
+    return;
+  }
+
+  const entry = ctx._motionCoalesce && ctx._motionCoalesce.get(tuyaID);
+  if (!entry) return; // cancelled or already processed
+
+  const { doimusID, statuses } = entry;
+  const eventKey = "motion_" + Date.now();
+
+  log(
+    "info",
+    `Processing coalesced motion for "${device.name}" — eventKey=${eventKey} (${statuses.length} coalesced status items)`,
+  );
+
+  // 1. Update state immediately with _capture_id so the backend creates
+  //    the timeline entry WITH the correct image_key from the start.
+  //    The backend strips _capture_id from device state — it never
+  //    persists as a real state key.
+  api.updateDeviceState(doimusID, {
+    motion: true,
+    _capture_id: eventKey,
+  });
+
+  // 2. Try inline image decode (movement_detect_pic / doorbell_pic DPs).
+  let imageData = tryDecodeCameraImage(device, statuses, log);
+  let imageMime = imageData ? detectImageMime(imageData) : null;
+
+  // 3. Try DP URL (some doorbells embed a URL in a DP value).
+  if (!imageData) {
+    const directUrl = extractSnapshotUrlFromStatus(statuses);
+    if (directUrl) {
+      const downloaded = await downloadImageFromUrl(
+        directUrl,
+        log,
+        device.name,
+      );
+      if (downloaded && downloaded.data) {
+        imageData = downloaded.data;
+        imageMime = downloaded.mime || detectImageMime(imageData);
+        log(
+          "info",
+          `Motion image fetched from DP URL for "${device.name}": mime=${imageMime} size=${imageData.length}B`,
+        );
+      }
+    }
+  }
+
+  if (imageData) {
+    storeMotionImage(
+      doimusID,
+      eventKey,
+      imageData,
+      imageMime || "image/jpeg",
+      api,
+      log,
+      device,
+    );
+    ctx._motionCoalesce.delete(tuyaID);
+    return;
+  }
+
+  // 4. No inline image — check for S3 metadata (initiative_message).
+  const metadata = parseMotionMetadata(statuses, log, device.name);
+  if (metadata) {
+    log(
+      "info",
+      `Scheduling S3 fetch for "${device.name}" in 10s (eventKey=${eventKey})`,
+    );
+    entry.asyncTimer = setTimeout(async () => {
+      entry.asyncTimer = null;
+      try {
+        const jpeg = await fetchMotionImageFromS3(
+          device,
+          metadata,
+          dm,
+          ctx,
+          log,
+        );
+        if (jpeg) {
+          storeMotionImage(
+            doimusID,
+            eventKey,
+            jpeg,
+            "image/jpeg",
+            api,
+            log,
+            device,
+          );
+        } else {
+          log(
+            "warn",
+            `S3 fetch returned no image for "${device.name}" (eventKey=${eventKey})`,
+          );
+        }
+      } catch (e) {
+        log("warn", `S3 fetch failed for "${device.name}": ${e.message}`);
+      }
+      ctx._motionCoalesce && ctx._motionCoalesce.delete(tuyaID);
+    }, 10000);
+    return;
+  }
+
+  // 5. No inline, no S3 — fall back to REST snapshot API.
+  log(
+    "info",
+    `Scheduling REST snapshot fallback for "${device.name}" in 8s (eventKey=${eventKey})`,
+  );
+  entry.asyncTimer = setTimeout(async () => {
+    entry.asyncTimer = null;
     try {
-      const jpeg = await fetchMotionImageFromS3(device, metadata, dm, ctx, log);
+      const jpeg = await dm.api.getCameraSnapshot(device.id);
       if (jpeg) {
-        api.sendMjpegFrame(doimusID, "main", jpeg);
-        api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
-        api.updateDeviceImage(
+        storeMotionImage(
           doimusID,
-          "motion_" + motionSeq + "_" + Date.now(),
+          eventKey,
           jpeg,
           "image/jpeg",
+          api,
+          log,
+          device,
         );
       } else {
         log(
           "warn",
-          `Delayed motion image fetch returned no image for "${device.name}"`,
+          `REST snapshot returned no image for "${device.name}" (eventKey=${eventKey})`,
         );
       }
     } catch (e) {
-      log(
-        "warn",
-        `Delayed motion image fetch failed for "${device.name}": ${e.message || e}`,
-      );
+      log("warn", `REST snapshot failed for "${device.name}": ${e.message}`);
     }
-  }, 10000);
+    ctx._motionCoalesce && ctx._motionCoalesce.delete(tuyaID);
+  }, 8000);
+}
 
-  ctx._motionFetchTimers.set(device.id, timer);
+/**
+ * Store a captured motion image under both the unique eventKey and
+ * snapshot_latest. Also pushes to MJPEG stream if JPEG.
+ */
+function storeMotionImage(
+  doimusID,
+  eventKey,
+  imageData,
+  mime,
+  api,
+  log,
+  device,
+) {
+  if (mime === "image/jpeg") {
+    api.sendMjpegFrame(doimusID, "main", imageData);
+  }
+  api.updateDeviceImage(doimusID, eventKey, imageData, mime);
+  api.updateDeviceImage(doimusID, "snapshot_latest", imageData, mime);
+  log(
+    "info",
+    `Motion image stored for "${device.name}": key=${eventKey} size=${imageData.length}B`,
+  );
 }
 
 /**
@@ -2509,7 +2652,7 @@ module.exports = {
     }
 
     // Snapshots are captured on-demand when MQTT motion events arrive
-    // (tryDecodeCameraImage / parseMotionMetadata + scheduleMotionImageFetch).
+    // (startMotionCoalesce → processCoalescedMotion tries inline/S3/REST).
     // Periodic REST polling is disabled — Tuya cameras don't reliably
     // serve snapshots on a timer, and constant polling drowns out real
     // motion events with noise.
@@ -2567,10 +2710,28 @@ module.exports = {
               });
             });
             wr.on("disconnect", (data) => {
+              log(
+                "info",
+                `[WebRTC] Camera disconnected session=${data.sessionId} — falling back to P2P`,
+              );
               api.sendWebrtcSignaling(deviceID, {
                 event: "disconnect",
                 ...data,
               });
+              // The camera sent disconnect instead of answer — skip the
+              // 20s fallback timer and go directly to P2P streaming.
+              if (ctx._webrtcClients.has(deviceID)) {
+                startP2P(deviceID, tuyaDevice, ctx, log, api);
+                startStreamAllocation(
+                  deviceID,
+                  tuyaDevice,
+                  ctx,
+                  log,
+                  api,
+                ).catch((e) =>
+                  log("debug", `[StreamAlloc] Failed: ${e.message}`),
+                );
+              }
             });
             wr.on("error", (err) => {
               api.sendWebrtcSignaling(deviceID, {
@@ -2646,10 +2807,14 @@ module.exports = {
                   await dm.sendCommands(tuyaDevice.id, [
                     { code: wakeDp.code, value: true },
                   ]);
-                  log("info", `[WebRTC] Wake-up sent (dp=${wakeDp.code})`);
-                  // Brief pause for the cloud API to propagate before
-                  // fetching configs and connecting IPC MQTT.
-                  await new Promise((r) => setTimeout(r, 1000));
+                  log(
+                    "info",
+                    `[WebRTC] Wake-up sent (dp=${wakeDp.code}) — waiting 5s for camera to power on...`,
+                  );
+                  // Battery cameras need several seconds to power up their
+                  // video subsystem after receiving the wake DP.  The camera's
+                  // LED typically blinks during this time (same as Smart Life app).
+                  await new Promise((r) => setTimeout(r, 5000));
                 } catch (e) {
                   log(
                     "debug",
@@ -3121,10 +3286,12 @@ module.exports = {
           }
         }
 
-        // Camera / doorbell / mobilecam image capture from MQTT.
-        // Trigger capture on motion activation OR when this MQTT packet carries
-        // an active motion/image DP (e.g. movement_detect_pic / initiative_message)
-        // that can arrive after the first motion=true edge packet.
+        // ── Motion image capture (coalesced) ──────────────────────────────────
+        // Multiple MQTT packets arrive per physical motion event (motion DP,
+        // initiative_message, movement_detect_pic). Coalesce them over a short
+        // debounce window so one event = one capture = one unique image key.
+        // The old approach used competing S3 / REST timers with complex
+        // cancellation logic — this single coordinator replaces all of that.
         const hasMotionSignalInPacket = (status || []).some((s) => {
           if (!s || typeof s.code !== "string") return false;
           const code = s.code;
@@ -3146,148 +3313,7 @@ module.exports = {
           ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
           shouldCaptureMotionImage
         ) {
-          // Reserve a motion sequence number for THIS motion event UPFRONT,
-          // before any async image fetch. This ensures the motion_N key
-          // matches the event's chronological position in the timeline,
-          // regardless of whether the image arrives inline, via S3, or REST.
-          if (!ctx._motionSeq) ctx._motionSeq = new Map();
-          const motionSeq = (ctx._motionSeq.get(device.id) || 0) + 1;
-          ctx._motionSeq.set(device.id, motionSeq);
-
-          // 1. Try inline MQTT decode first (movement_detect_pic / doorbell_pic DPs).
-          //    Image is embedded in the MQTT payload — no delay needed.
-          let imageData = tryDecodeCameraImage(device, status, log);
-          let imageMime = imageData ? "image/jpeg" : null;
-
-          // 1b. Some doorbells send a base64-encoded URL in a DP value
-          // (e.g. classic local-Tuya flows with dps["154"]).
-          if (!imageData) {
-            const directUrl = extractSnapshotUrlFromStatus(status);
-            if (directUrl) {
-              const downloaded = await downloadImageFromUrl(
-                directUrl,
-                log,
-                device.name,
-              );
-              if (downloaded && downloaded.data) {
-                imageData = downloaded.data;
-                imageMime = downloaded.mime || "image/jpeg";
-                log(
-                  "info",
-                  `Motion image fetched from DP URL for "${device.name}": mime=${imageMime} size=${imageData.length}B`,
-                );
-              }
-            }
-          }
-
-          if (imageData) {
-            // Cancel any pending REST fallback timer — we got the image inline.
-            if (ctx._snapshotFallbackTimers) {
-              const fb = ctx._snapshotFallbackTimers.get(device.id);
-              if (fb) {
-                clearTimeout(fb);
-                ctx._snapshotFallbackTimers.delete(device.id);
-              }
-            }
-            // Also cancel any pending S3 fetch timer — inline image is more current.
-            if (ctx._motionFetchTimers) {
-              const s3 = ctx._motionFetchTimers.get(device.id);
-              if (s3) {
-                clearTimeout(s3);
-                ctx._motionFetchTimers.delete(device.id);
-              }
-            }
-            if (imageMime === "image/jpeg") {
-              api.sendMjpegFrame(doimusID, "main", imageData);
-            }
-            api.updateDeviceImage(
-              doimusID,
-              "snapshot_latest",
-              imageData,
-              imageMime || "image/jpeg",
-            );
-            api.updateDeviceImage(
-              doimusID,
-              "motion_" + motionSeq + "_" + Date.now(),
-              imageData,
-              imageMime || "image/jpeg",
-            );
-          } else {
-            // 2. Check for initiative_message metadata — schedule a delayed S3 fetch.
-            //    The camera sends the MQTT notification before the image finishes
-            //    uploading to Tuya's cloud.  A 10-second delay gives the upload
-            //    time to complete so we fetch the correct (new) image.
-            const metadata = parseMotionMetadata(status, log, device.name);
-            if (metadata) {
-              scheduleMotionImageFetch(
-                device,
-                metadata,
-                doimusID,
-                ctx,
-                dm,
-                api,
-                log,
-                motionSeq,
-              );
-            } else {
-              // 3. Motion detected but no JPEG or metadata in this MQTT update.
-              //    The image DP may arrive via a separate MQTT message
-              //    (movement_detect_pic / doorbell_pic DPs fired asynchronously).
-              //    Wait a short grace period, then fall back to the REST
-              //    snapshot API so snapshot_latest doesn't go stale.
-              //    Cancel any previous pending fallback so a stale timer's
-              //    delete(device.id) doesn't corrupt the replacement's entry.
-              if (!ctx._snapshotFallbackTimers)
-                ctx._snapshotFallbackTimers = new Map();
-
-              const pending = ctx._snapshotFallbackTimers.get(device.id);
-              if (pending) clearTimeout(pending);
-
-              log(
-                "info",
-                `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fallback in 4s`,
-              );
-              const timerSeq = motionSeq;
-              ctx._snapshotFallbackTimers.set(
-                device.id,
-                setTimeout(async () => {
-                  ctx._snapshotFallbackTimers.delete(device.id);
-                  try {
-                    const jpeg = await dm.api.getCameraSnapshot(device.id);
-                    if (jpeg) {
-                      api.sendMjpegFrame(doimusID, "main", jpeg);
-                      api.updateDeviceImage(
-                        doimusID,
-                        "snapshot_latest",
-                        jpeg,
-                        "image/jpeg",
-                      );
-                      api.updateDeviceImage(
-                        doimusID,
-                        "motion_" + timerSeq + "_" + Date.now(),
-                        jpeg,
-                        "image/jpeg",
-                      );
-                      log(
-                        "info",
-                        `REST snapshot fallback captured for "${device.name}" size=${jpeg.length}B`,
-                      );
-                    } else {
-                      log(
-                        "warn",
-                        `REST snapshot fallback returned no image for "${device.name}"`,
-                      );
-                    }
-                  } catch (e) {
-                    log(
-                      "warn",
-                      `REST snapshot fallback failed for "${device.name}": ${e.message || e}`,
-                    );
-                  }
-                }, 4000),
-              );
-            }
-          }
+          startMotionCoalesce(device, status, doimusID, ctx, dm, api, log);
         }
       },
     );
@@ -3335,14 +3361,13 @@ module.exports = {
           "info",
           `Camera "${device.name}" came online — scheduling REST snapshot fallback in 4s`,
         );
-        if (!ctx._snapshotFallbackTimers)
-          ctx._snapshotFallbackTimers = new Map();
-        const pending = ctx._snapshotFallbackTimers.get(device.id);
+        if (!ctx._onlineSnapshotTimers) ctx._onlineSnapshotTimers = new Map();
+        const pending = ctx._onlineSnapshotTimers.get(device.id);
         if (pending) clearTimeout(pending);
-        ctx._snapshotFallbackTimers.set(
+        ctx._onlineSnapshotTimers.set(
           device.id,
           setTimeout(async () => {
-            ctx._snapshotFallbackTimers.delete(device.id);
+            ctx._onlineSnapshotTimers.delete(device.id);
             try {
               const jpeg = await dm.api.getCameraSnapshot(device.id);
               if (jpeg) {
@@ -3518,19 +3543,20 @@ module.exports = {
         }
         _ctx._motionTimers.clear();
       }
-      // Clear delayed S3 motion image fetch timers
-      if (_ctx._motionFetchTimers) {
-        for (const [, timer] of _ctx._motionFetchTimers) {
-          clearTimeout(timer);
+      // Clear motion coalesce timers (debounce + async S3/REST)
+      if (_ctx._motionCoalesce) {
+        for (const [, entry] of _ctx._motionCoalesce) {
+          clearTimeout(entry.timer);
+          clearTimeout(entry.asyncTimer);
         }
-        _ctx._motionFetchTimers.clear();
+        _ctx._motionCoalesce.clear();
       }
-      // Clear REST snapshot fallback timers
-      if (_ctx._snapshotFallbackTimers) {
-        for (const [, timer] of _ctx._snapshotFallbackTimers) {
+      // Clear online snapshot timers
+      if (_ctx._onlineSnapshotTimers) {
+        for (const [, timer] of _ctx._onlineSnapshotTimers) {
           clearTimeout(timer);
         }
-        _ctx._snapshotFallbackTimers.clear();
+        _ctx._onlineSnapshotTimers.clear();
       }
       _ctx.apiRef = null;
       _ctx = null;
