@@ -1362,7 +1362,7 @@ function scheduleMotionImageFetch(
         api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
         api.updateDeviceImage(
           doimusID,
-          "motion_" + motionSeq,
+          "motion_" + motionSeq + "_" + Date.now(),
           jpeg,
           "image/jpeg",
         );
@@ -3208,7 +3208,7 @@ module.exports = {
             );
             api.updateDeviceImage(
               doimusID,
-              "motion_" + motionSeq,
+              "motion_" + motionSeq + "_" + Date.now(),
               imageData,
               imageMime || "image/jpeg",
             );
@@ -3264,7 +3264,7 @@ module.exports = {
                       );
                       api.updateDeviceImage(
                         doimusID,
-                        "motion_" + timerSeq,
+                        "motion_" + timerSeq + "_" + Date.now(),
                         jpeg,
                         "image/jpeg",
                       );
