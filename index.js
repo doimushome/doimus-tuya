@@ -1328,6 +1328,7 @@ function scheduleMotionImageFetch(
   dm,
   api,
   log,
+  motionSeq,
 ) {
   if (!ctx._motionFetchTimers) ctx._motionFetchTimers = new Map();
 
@@ -1346,6 +1347,9 @@ function scheduleMotionImageFetch(
     `Scheduling motion image fetch for "${device.name}" in 10s (bucket=${metadata.bucket})`,
   );
 
+  // Capture the pre-assigned seq for this motion event in the closure.
+  // This ensures the motion_N key matches the event's position in the
+  // timeline regardless of async fetch ordering.
   const timer = setTimeout(async () => {
     ctx._motionFetchTimers.delete(device.id);
     try {
@@ -1353,10 +1357,12 @@ function scheduleMotionImageFetch(
       if (jpeg) {
         api.sendMjpegFrame(doimusID, "main", jpeg);
         api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
-        if (!ctx._motionSeq) ctx._motionSeq = new Map();
-        const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
-        ctx._motionSeq.set(device.id, seq);
-        api.updateDeviceImage(doimusID, "motion_" + seq, jpeg, "image/jpeg");
+        api.updateDeviceImage(
+          doimusID,
+          "motion_" + motionSeq,
+          jpeg,
+          "image/jpeg",
+        );
       } else {
         log(
           "warn",
@@ -1911,9 +1917,22 @@ async function initCustomProject(api, options, log) {
   }
 
   // Set up automatic re-login when token refresh expires (after ~7 days).
+  // Also restarts MQTT after successful re-login so it fetches fresh credentials.
   openAPI.setReloginHandler(async () => {
     log("info", "Re-logging in default user due to token expiry...");
-    return await openAPI.customLogin(DEFAULT_USER, DEFAULT_USER);
+    const result = await openAPI.customLogin(DEFAULT_USER, DEFAULT_USER);
+    if (result && result.success) {
+      log(
+        "info",
+        "Re-login successful, restarting MQTT with fresh credentials...",
+      );
+      try {
+        dm.mq.start();
+      } catch (mqErr) {
+        log("warn", `MQTT restart after re-login failed: ${mqErr.message}`);
+      }
+    }
+    return result;
   });
 
   log("info", "Starting MQTT connection.");
@@ -1971,9 +1990,27 @@ async function initHomeProject(api, options, log) {
   }
 
   // Set up automatic re-login when token refresh expires.
+  // Also restarts MQTT after successful re-login so it fetches fresh credentials.
   openAPI.setReloginHandler(async () => {
     log("info", "Re-logging in to Tuya Cloud due to token expiry...");
-    return await openAPI.homeLogin(countryCode, username, password, appSchema);
+    const result = await openAPI.homeLogin(
+      countryCode,
+      username,
+      password,
+      appSchema,
+    );
+    if (result && result.success) {
+      log(
+        "info",
+        "Re-login successful, restarting MQTT with fresh credentials...",
+      );
+      try {
+        dm.mq.start();
+      } catch (mqErr) {
+        log("warn", `MQTT restart after re-login failed: ${mqErr.message}`);
+      }
+    }
+    return result;
   });
 
   log("info", "Starting MQTT connection.");
@@ -2960,6 +2997,14 @@ module.exports = {
           ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
           shouldCaptureMotionImage
         ) {
+          // Reserve a motion sequence number for THIS motion event UPFRONT,
+          // before any async image fetch. This ensures the motion_N key
+          // matches the event's chronological position in the timeline,
+          // regardless of whether the image arrives inline, via S3, or REST.
+          if (!ctx._motionSeq) ctx._motionSeq = new Map();
+          const motionSeq = (ctx._motionSeq.get(device.id) || 0) + 1;
+          ctx._motionSeq.set(device.id, motionSeq);
+
           // 1. Try inline MQTT decode first (movement_detect_pic / doorbell_pic DPs).
           //    Image is embedded in the MQTT payload — no delay needed.
           let imageData = tryDecodeCameraImage(device, status, log);
@@ -3012,12 +3057,9 @@ module.exports = {
               imageData,
               imageMime || "image/jpeg",
             );
-            if (!ctx._motionSeq) ctx._motionSeq = new Map();
-            const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
-            ctx._motionSeq.set(device.id, seq);
             api.updateDeviceImage(
               doimusID,
-              "motion_" + seq,
+              "motion_" + motionSeq,
               imageData,
               imageMime || "image/jpeg",
             );
@@ -3036,6 +3078,7 @@ module.exports = {
                 dm,
                 api,
                 log,
+                motionSeq,
               );
             } else {
               // 3. Motion detected but no JPEG or metadata in this MQTT update.
@@ -3052,6 +3095,7 @@ module.exports = {
                 "info",
                 `Motion detected for "${device.name}" (id=${device.id}) — scheduling REST snapshot fallback in 4s`,
               );
+              const timerSeq = motionSeq;
               ctx._snapshotFallbackTimers.set(
                 device.id,
                 setTimeout(async () => {
@@ -3066,12 +3110,9 @@ module.exports = {
                         jpeg,
                         "image/jpeg",
                       );
-                      if (!ctx._motionSeq) ctx._motionSeq = new Map();
-                      const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
-                      ctx._motionSeq.set(device.id, seq);
                       api.updateDeviceImage(
                         doimusID,
-                        "motion_" + seq,
+                        "motion_" + timerSeq,
                         jpeg,
                         "image/jpeg",
                       );
@@ -3157,15 +3198,6 @@ module.exports = {
                 api.updateDeviceImage(
                   doimusID,
                   "snapshot_latest",
-                  jpeg,
-                  "image/jpeg",
-                );
-                if (!ctx._motionSeq) ctx._motionSeq = new Map();
-                const seq = (ctx._motionSeq.get(device.id) || 0) + 1;
-                ctx._motionSeq.set(device.id, seq);
-                api.updateDeviceImage(
-                  doimusID,
-                  "motion_" + seq,
                   jpeg,
                   "image/jpeg",
                 );

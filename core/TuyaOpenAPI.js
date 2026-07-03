@@ -247,6 +247,67 @@ class TuyaOpenAPI {
   async request(method, path, params, body, opts) {
     const suppressErrorLog = !!(opts && opts.suppressErrorLog);
     await this._refreshAccessTokenIfNeed(path);
+
+    const res = await this._doRequest(method, path, params, body, opts);
+
+    // Auto-recover from token expired/invalid (Tuya error code 1010).
+    // This typically happens when the server-side token expires before our
+    // local expiry timestamp — the old token is rejected but _refreshAccessTokenIfNeed
+    // skipped because isTokenExpired() returned false.
+    if (
+      res &&
+      res.success === false &&
+      res.code === 1010 &&
+      !this.isTokenManagementAPI(path)
+    ) {
+      this.log.warn(
+        "Token rejected by server (code=1010), forcing re-auth and retrying once...",
+      );
+      // Force-invalidate the local token so _refreshAccessTokenIfNeed
+      // picks it up and triggers the full refresh → re-login flow.
+      this.tokenInfo.expire = 0;
+      this.tokenInfo.access_token = "";
+      await this._refreshAccessTokenIfNeed(path);
+      if (this.isLogin()) {
+        this.log.info("Re-auth successful, retrying original request");
+        return this._doRequest(method, path, params, body, opts);
+      }
+      this.log.error("Re-auth failed after server token rejection");
+    }
+
+    this.log.debug(
+      "Response:\npath = %s\ndata = %s",
+      path,
+      JSON.stringify(res, null, 2),
+    );
+
+    if (res) {
+      if (res.success !== true && API_ERROR_MESSAGES[res.code]) {
+        this.log.error(API_ERROR_MESSAGES[res.code]);
+      }
+      if (res.success !== true) {
+        if (suppressErrorLog) {
+          this.log.debug(
+            "API error: path=%s code=%s msg=%s",
+            path,
+            res.code,
+            res.msg,
+          );
+        } else {
+          this.log.warn(
+            "API error: path=%s code=%s msg=%s",
+            path,
+            res.code,
+            res.msg,
+          );
+        }
+      }
+    }
+    return res;
+  }
+
+  async _doRequest(method, path, params, body, opts) {
+    const suppressErrorLog = !!(opts && opts.suppressErrorLog);
     const now = new Date().getTime();
     const nonce = uuidv4();
     const accessToken = this.tokenInfo.access_token || "";
@@ -287,7 +348,7 @@ class TuyaOpenAPI {
       path += "?" + new URLSearchParams(params).toString();
     }
 
-    const res = await retry(
+    return await retry(
       () =>
         new Promise((resolve, reject) => {
           const req = https.request(
@@ -361,36 +422,6 @@ class TuyaOpenAPI {
         jitter: 100,
       },
     );
-
-    this.log.debug(
-      "Response:\npath = %s\ndata = %s",
-      path,
-      JSON.stringify(res, null, 2),
-    );
-
-    if (res) {
-      if (res.success !== true && API_ERROR_MESSAGES[res.code]) {
-        this.log.error(API_ERROR_MESSAGES[res.code]);
-      }
-      if (res.success !== true) {
-        if (suppressErrorLog) {
-          this.log.debug(
-            "API error: path=%s code=%s msg=%s",
-            path,
-            res.code,
-            res.msg,
-          );
-        } else {
-          this.log.warn(
-            "API error: path=%s code=%s msg=%s",
-            path,
-            res.code,
-            res.msg,
-          );
-        }
-      }
-    }
-    return res;
   }
 
   async get(path, params, opts) {
