@@ -1332,13 +1332,16 @@ function scheduleMotionImageFetch(
 ) {
   if (!ctx._motionFetchTimers) ctx._motionFetchTimers = new Map();
 
-  // Don't cancel previous pending timer: each motion event gets its own S3
-  // fetch so distinct motion_N images are stored per event for the timeline.
+  // Cancel the previous pending timer to prevent a stale S3 fetch callback
+  // from calling delete(device.id) and corrupting the replacement's entry
+  // in the Map. Each motion event already has its pre-assigned motion_N seq,
+  // so we only need one active S3 fetch per device at a time.
   const existing = ctx._motionFetchTimers.get(device.id);
   if (existing) {
+    clearTimeout(existing);
     log(
       "debug",
-      `Another motion while S3 fetch pending for "${device.name}" — scheduling second fetch for this event`,
+      `Another motion while S3 fetch pending for "${device.name}" — cancelled previous fetch, scheduling new one`,
     );
   }
 
@@ -3086,10 +3089,13 @@ module.exports = {
               //    (movement_detect_pic / doorbell_pic DPs fired asynchronously).
               //    Wait a short grace period, then fall back to the REST
               //    snapshot API so snapshot_latest doesn't go stale.
-              //    Don't cancel previous pending timers: each event gets its own
-              //    REST snapshot for the timeline.
+              //    Cancel any previous pending fallback so a stale timer's
+              //    delete(device.id) doesn't corrupt the replacement's entry.
               if (!ctx._snapshotFallbackTimers)
                 ctx._snapshotFallbackTimers = new Map();
+
+              const pending = ctx._snapshotFallbackTimers.get(device.id);
+              if (pending) clearTimeout(pending);
 
               log(
                 "info",
