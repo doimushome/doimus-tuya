@@ -1005,6 +1005,7 @@ function createPluginInstance() {
     deviceManager: null,
     doimusDeviceMap: new Map(),
     apiRef: null,
+    _wakeWatchers: new Map(),
   };
 }
 
@@ -2712,16 +2713,23 @@ module.exports = {
             wr.on("disconnect", (data) => {
               log(
                 "info",
-                `[WebRTC] Camera disconnected session=${data.sessionId} — falling back to P2P`,
+                `[WebRTC] Camera disconnected session=${data.sessionId} — trying cloud stream allocation`,
               );
               api.sendWebrtcSignaling(deviceID, {
                 event: "disconnect",
                 ...data,
               });
-              // The camera sent disconnect instead of answer — skip the
-              // 20s fallback timer and go directly to P2P streaming.
+              // Battery-powered cameras (sp, doorbell) accessed through
+              // Tuya's cloud relay cannot use P2P (LAN protocol won't
+              // work over internet). Skip P2P, go straight to cloud
+              // stream allocation which allocates a cloud RTSP stream.
+              const p2pCloudRelay =
+                tuyaDevice.category === "sp" ||
+                tuyaDevice.category === "doorbell";
               if (ctx._webrtcClients.has(deviceID)) {
-                startP2P(deviceID, tuyaDevice, ctx, log, api);
+                if (!p2pCloudRelay) {
+                  startP2P(deviceID, tuyaDevice, ctx, log, api);
+                }
                 startStreamAllocation(
                   deviceID,
                   tuyaDevice,
@@ -2742,13 +2750,19 @@ module.exports = {
             wr.on("fallback", () => {
               log(
                 "info",
-                `[WebRTC] WebRTC timed out, falling back to P2P for "${tuyaDevice.name}"`,
+                `[WebRTC] WebRTC timed out, trying cloud stream allocation for "${tuyaDevice.name}"`,
               );
               api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
-              startP2P(deviceID, tuyaDevice, ctx, log, api);
-              // Also try Tuya cloud stream allocation as an additional
-              // fallback — some battery cameras respond better to the
-              // cloud-initiated RTSP stream than direct P2P/WebRTC.
+              // Battery-powered cameras (sp, doorbell) accessed through
+              // Tuya's cloud relay cannot use P2P (LAN protocol won't
+              // work over internet). Skip P2P, go straight to cloud
+              // stream allocation.
+              const p2pCloudRelay =
+                tuyaDevice.category === "sp" ||
+                tuyaDevice.category === "doorbell";
+              if (!p2pCloudRelay) {
+                startP2P(deviceID, tuyaDevice, ctx, log, api);
+              }
               startStreamAllocation(deviceID, tuyaDevice, ctx, log, api).catch(
                 (e) => log("debug", `[StreamAlloc] Failed: ${e.message}`),
               );
@@ -2809,12 +2823,32 @@ module.exports = {
                   ]);
                   log(
                     "info",
-                    `[WebRTC] Wake-up sent (dp=${wakeDp.code}) — waiting 5s for camera to power on...`,
+                    `[WebRTC] Wake-up sent (dp=${wakeDp.code}) — waiting for wireless_awake=true via MQTT (up to 45s)...`,
                   );
-                  // Battery cameras need several seconds to power up their
-                  // video subsystem after receiving the wake DP.  The camera's
-                  // LED typically blinks during this time (same as Smart Life app).
-                  await new Promise((r) => setTimeout(r, 5000));
+                  // Don't use a fixed delay — the camera takes 30-45s to wake up.
+                  // Instead, wait for the camera to report wireless_awake=true
+                  // via MQTT. The DEVICE_STATUS_UPDATE handler resolves the
+                  // wake watcher when it sees this DP.
+                  await new Promise((resolve, reject) => {
+                    const WAKE_TIMEOUT_MS = 45000;
+                    const timer = setTimeout(() => {
+                      ctx._wakeWatchers.delete(tuyaDevice.id);
+                      log(
+                        "warn",
+                        `[WebRTC] Wake timeout (${WAKE_TIMEOUT_MS / 1000}s) for "${tuyaDevice.name}" — proceeding anyway`,
+                      );
+                      resolve(); // don't reject — proceed and hope camera wakes
+                    }, WAKE_TIMEOUT_MS);
+                    const watcher = { resolve, reject, timer };
+                    // Remove any stale watcher first
+                    const existing = ctx._wakeWatchers.get(tuyaDevice.id);
+                    if (existing) clearTimeout(existing.timer);
+                    ctx._wakeWatchers.set(tuyaDevice.id, watcher);
+                  });
+                  log(
+                    "info",
+                    `[WebRTC] Camera "${tuyaDevice.name}" is now awake — proceeding with streaming setup`,
+                  );
                 } catch (e) {
                   log(
                     "debug",
@@ -3182,6 +3216,28 @@ module.exports = {
           );
           return;
         }
+        // ── Wake confirmation check ──────────────────────────────────
+        // Battery-powered cameras (sp, doorbell) send wireless_awake: true
+        // via MQTT ~30-45s after receiving the wake DP. Resolve any pending
+        // wake watcher so the WebRTC/P2P flow knows the camera is powered on.
+        const hasWakeConfirm = (status || []).some(
+          (s) =>
+            s.code === "wireless_awake" &&
+            (s.value === true || s.value === "true"),
+        );
+        if (hasWakeConfirm) {
+          log(
+            "info",
+            `Wake confirmed for "${device.name}" — wireless_awake=true`,
+          );
+          const watcher = ctx._wakeWatchers.get(device.id);
+          if (watcher) {
+            clearTimeout(watcher.timer);
+            ctx._wakeWatchers.delete(device.id);
+            watcher.resolve();
+          }
+        }
+
         const state = mapTuyaStatusToDoimusState(device, status, options);
         log(
           "info",
