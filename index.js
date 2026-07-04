@@ -3217,6 +3217,17 @@ module.exports = {
           // Motion activation edge (false/nil -> true) for this update.
           motionActivated = state.motion === true && !lastKnown.motion;
 
+          // ── Critical: suppress motion:true from this initial state push ──
+          // The coalesce handler (processCoalescedMotion) is the sole sender
+          // of motion:true. It includes _capture_id so the backend can set
+          // image_key on the timeline entry from the start.  Without this
+          // suppression, the state update below creates a timeline entry
+          // WITHOUT image_key, and the subsequent processCoalescedMotion
+          // update (true→true) is a no-op — so _capture_id is wasted.
+          if (motionActivated) {
+            delete state.motion;
+          }
+
           // Only push update if values actually changed — prevents MQTT
           // heartbeats from overwriting recently-commanded state (e.g. blind
           // position set to 100 by the app, then a heartbeat arrives with the
@@ -3226,11 +3237,14 @@ module.exports = {
           );
           if (changed) {
             api.updateDeviceState(doimusID, state);
-            ctx.lastKnownState.set(device.id, {
-              ...lastKnown,
-              ...state,
-            });
           }
+          // Always update lastKnown for edge detection, auto-reset timer, and
+          // subsequent MQTT dedup — even when we suppressed motion from the push.
+          ctx.lastKnownState.set(device.id, {
+            ...lastKnown,
+            ...state,
+            ...(motionActivated ? { motion: true } : {}),
+          });
 
           // ── Motion auto-reset timer (camera / doorbell / sensor) ──
           // When motion fires, schedule a 5-second reset. If the device
