@@ -2791,6 +2791,8 @@ module.exports = {
                     s.code === "battery_state" ||
                     s.code === "battery_value" ||
                     s.code === "va_battery" ||
+                    s.code === "wireless_electricity" ||
+                    s.code === "wireless_powermode" ||
                     (s.code && s.code.startsWith("battery")),
                 )
                 .map((s) => s.code) || [];
@@ -2803,80 +2805,98 @@ module.exports = {
               `[WebRTC] Camera check: category=${tuyaDevice.category} isCamera=${isCamera} hasBattery=${hasBattery} batteryCodes=[${batteryCodes.join(",")}] online=${tuyaDevice.online} needsWake=${needsWake}`,
             );
 
+            // ── Battery camera wake (two-phase) ────────────────────
+            // Phase 1: Send wake DP via cloud API (fire-and-forget, don't block)
+            //          + start background wake watcher for wireless_awake=true
+            // Phase 2: Immediately get configs + connect IPC MQTT (sends CRC32)
+            //          The offer is buffered in WebRTCSignaling until
+            //          setWoken() is called after wake confirmation.
             if (needsWake) {
               log(
                 "info",
                 `[WebRTC] Camera "${tuyaDevice.name}" is battery-powered, sending wake-up...`,
               );
-              const wakeDp = tuyaDevice.schema.find((s) =>
-                [
-                  "cruise",
-                  "basic_awake",
-                  "video_call",
-                  "wireless_awake",
-                ].includes(s.code),
-              );
-              if (wakeDp) {
-                try {
-                  await dm.sendCommands(tuyaDevice.id, [
-                    { code: wakeDp.code, value: true },
-                  ]);
-                  log(
-                    "info",
-                    `[WebRTC] Wake-up sent (dp=${wakeDp.code}) — waiting for wireless_awake=true via MQTT (up to 45s)...`,
-                  );
-                  // Don't use a fixed delay — the camera takes 30-45s to wake up.
-                  // Instead, wait for the camera to report wireless_awake=true
-                  // via MQTT. The DEVICE_STATUS_UPDATE handler resolves the
-                  // wake watcher when it sees this DP.
-                  await new Promise((resolve, reject) => {
-                    const WAKE_TIMEOUT_MS = 45000;
-                    const timer = setTimeout(() => {
-                      ctx._wakeWatchers.delete(tuyaDevice.id);
+
+              // ── Phase 1a: Send ALL available cloud DP wakes ─────
+              // Tuya battery cameras (peephole, doorbell) may have
+              // multiple wake DPs. Sending all of them maximizes the
+              // chance of waking the camera. Fire-and-forget — don't
+              // block the setup flow.
+              const wakeDpCodes = [
+                "cruise",
+                "basic_awake",
+                "video_call",
+                "wireless_awake",
+              ];
+              const wakeDps =
+                tuyaDevice.schema?.filter((s) =>
+                  wakeDpCodes.includes(s.code),
+                ) || [];
+              if (wakeDps.length > 0) {
+                log(
+                  "info",
+                  `[WebRTC] Found ${wakeDps.length} wake DP(s): [${wakeDps.map((s) => s.code).join(",")}] — sending all`,
+                );
+                for (const dp of wakeDps) {
+                  dm.sendCommands(tuyaDevice.id, [
+                    { code: dp.code, value: true },
+                  ]).then(
+                    () => log("info", `[WebRTC] Wake-up sent (dp=${dp.code})`),
+                    (e) =>
                       log(
-                        "warn",
-                        `[WebRTC] Wake timeout (${WAKE_TIMEOUT_MS / 1000}s) for "${tuyaDevice.name}" — proceeding anyway`,
-                      );
-                      resolve(); // don't reject — proceed and hope camera wakes
-                    }, WAKE_TIMEOUT_MS);
-                    const watcher = { resolve, reject, timer };
-                    // Remove any stale watcher first
-                    const existing = ctx._wakeWatchers.get(tuyaDevice.id);
-                    if (existing) clearTimeout(existing.timer);
-                    ctx._wakeWatchers.set(tuyaDevice.id, watcher);
-                  });
-                  log(
-                    "info",
-                    `[WebRTC] Camera "${tuyaDevice.name}" is now awake — proceeding with streaming setup`,
-                  );
-                } catch (e) {
-                  log(
-                    "debug",
-                    `[WebRTC] Wake-up (dp=${wakeDp.code}) skipped: ${e.message || e}`,
+                        "debug",
+                        `[WebRTC] Wake-up (dp=${dp.code}) send failed: ${e.message || e}`,
+                      ),
                   );
                 }
               } else {
-                // No known wake DP — the access-config API call in getConfigs()
-                // will still trigger a cloud push that may wake the camera.
                 log(
                   "info",
-                  `[WebRTC] No wake DP (cruise/basic_awake/video_call/wireless_awake) in schema codes=[${(tuyaDevice.schema || []).map((s) => s.code).join(",")}] — relying on access-config push`,
+                  `[WebRTC] No wake DP (${wakeDpCodes.join("/")}) in schema codes=[${(tuyaDevice.schema || []).map((s) => s.code).join(",")}] — relying on CRC32 IPC wake`,
                 );
               }
+
+              // ── Phase 1b: Background wake watcher (non-blocking) ──
+              // Monitor cloud MQTT for wireless_awake=true from camera.
+              // When confirmed, call wr.setWoken() to flush buffered offer.
+              const WAKE_TIMEOUT_MS = 60000;
+              const wakeTimer = setTimeout(() => {
+                ctx._wakeWatchers.delete(tuyaDevice.id);
+                log(
+                  "warn",
+                  `[WebRTC] Wake timeout (${WAKE_TIMEOUT_MS / 1000}s) for "${tuyaDevice.name}" — flushing offer anyway (camera may wake later)`,
+                );
+                // Even if the camera didn't confirm wake, flush the
+                // buffered offer as a fallback. The camera may have
+                // woken up but we missed the MQTT message.
+                if (wr && typeof wr.setWoken === "function") {
+                  wr.setWoken();
+                }
+              }, WAKE_TIMEOUT_MS);
+              ctx._wakeWatchers.set(tuyaDevice.id, {
+                resolve: () => {
+                  clearTimeout(wakeTimer);
+                  ctx._wakeWatchers.delete(tuyaDevice.id);
+                  log(
+                    "info",
+                    `[WebRTC] Camera "${tuyaDevice.name}" wake confirmed — flushing WebRTC offer`,
+                  );
+                  // Tell WebRTCSignaling the camera is awake so it
+                  // flushes the buffered offer to the IPC MQTT broker.
+                  if (wr && typeof wr.setWoken === "function") {
+                    wr.setWoken();
+                  }
+                },
+                timer: wakeTimer,
+              });
             }
 
+            // ── Phase 2: Get configs + connect IPC MQTT (immediate) ──
             log(
               "info",
               `[WebRTC] Fetching configs for Tuya device ${tuyaDevice.id}`,
             );
             const configs = await wr.getConfigs(tuyaDevice.id);
-
-            // Phase 2: after getConfigs (sends cloud push to camera),
-            // proceed to IPC MQTT connection. The camera either wakes
-            // quickly or the IPC MQTT broker buffers messages for it.
-            // Don't block on online status — battery cameras report
-            // offline while sleeping but will receive MQTT messages
-            // when they reconnect after the CRC32 wake.
 
             if (configs) {
               log("info", `[WebRTC] Configs fetched, connecting to IPC MQTT`);
@@ -2926,7 +2946,19 @@ module.exports = {
           wr.sendDisconnect();
           wr.disconnect();
           ctx._webrtcClients.delete(deviceID);
-          // Restore power saving mode after WebRTC session ends
+          // Clean up wake watcher if still pending
+          const tuyaId = ctx.doimusDeviceMap.get(deviceID);
+          if (tuyaId) {
+            const existing = ctx._wakeWatchers.get(tuyaId);
+            if (existing) {
+              clearTimeout(existing.timer);
+              ctx._wakeWatchers.delete(tuyaId);
+              log(
+                "info",
+                `WebRTC disconnected — cleaned up wake watcher for device ${deviceID}`,
+              );
+            }
+          }
           // Clean up any active stream allocation
           stopStreamAllocation(deviceID, ctx, log);
         }
@@ -3232,9 +3264,18 @@ module.exports = {
           );
           const watcher = ctx._wakeWatchers.get(device.id);
           if (watcher) {
-            clearTimeout(watcher.timer);
-            ctx._wakeWatchers.delete(device.id);
-            watcher.resolve();
+            log(
+              "info",
+              `Wake watcher resolved for "${device.name}" — calling setWoken()`,
+            );
+            if (typeof watcher.resolve === "function") {
+              watcher.resolve();
+            }
+          } else {
+            log(
+              "warn",
+              `Wake confirmed but no watcher found for "${device.name}" — wireless_awake arrived too late or stale`,
+            );
           }
         }
 

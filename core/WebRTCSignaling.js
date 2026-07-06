@@ -62,6 +62,11 @@ class WebRTCSignaling {
     this._pendingOffer = null;
     this._pendingCandidates = [];
     this._offerBufferTimer = null;
+    // Battery camera wake tracking: when true, the offer is buffered until
+    // setWoken() is called (after the camera reports wireless_awake=true).
+    this._woken = false;
+    this._wakePendingOffer = null;
+    this._wakePendingCandidates = [];
   }
 
   on(event, handler) {
@@ -302,26 +307,28 @@ class WebRTCSignaling {
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
 
-            // Battery cameras need a small delay for their IPC MQTT
-            // subsystem to wake after the CRC32 wake message.
-            // go2rtc uses 500ms, which suffices — the IPC MQTT broker
-            // buffers messages for cameras that take longer to reconnect.
-            const WAKE_DELAY_MS = 500;
-            this.log(
-              "info",
-              `[WebRTC] Waiting ${WAKE_DELAY_MS}ms for camera to wake before sending offer`,
-            );
-            setTimeout(() => {
+            // Battery camera: DON'T auto-send the offer after a short delay.
+            // The camera takes 30-50s to fully wake up. The offer will be
+            // flushed later via setWoken() when the camera confirms
+            // wireless_awake=true via cloud MQTT.
+            // If the camera already woke (woken=true before MQTT connect),
+            // flush the pending offer now.
+            if (this._woken) {
+              this.log(
+                "info",
+                "[WebRTC] Battery camera already woken — flushing pending offer",
+              );
               if (this._pendingOffer) {
                 const { sdp, streamType } = this._pendingOffer;
                 this._pendingOffer = null;
-                this.log(
-                  "info",
-                  "[WebRTC] Flushing buffered offer (after wake)",
-                );
                 this._doSendOffer(sdp, streamType);
               }
-            }, WAKE_DELAY_MS);
+            } else {
+              this.log(
+                "info",
+                "[WebRTC] Battery camera — offer will be sent after wake confirmation (setWoken)",
+              );
+            }
             return;
           }
         } catch (e) {
@@ -373,6 +380,18 @@ class WebRTCSignaling {
    * Buffers the offer if the MQTT connection is not yet ready.
    */
   sendOffer(sdp, streamType = 1) {
+    // ── Battery camera: buffer the offer until woken ──────────────
+    // If the camera hasn't confirmed wake yet, buffer the offer.
+    // It will be flushed when setWoken() is called.
+    if (this._needsWake && !this._woken) {
+      this.log(
+        "info",
+        "[WebRTC] Camera not yet awake — buffering offer until woken",
+      );
+      this._wakePendingOffer = { sdp, streamType };
+      return;
+    }
+
     if (!this.mqttConfig || !this.webrtcConfig || !this.mqttClient) {
       const reason = !this.mqttConfig
         ? "no MQTT config"
@@ -451,12 +470,12 @@ class WebRTCSignaling {
     // Flush any candidates that were buffered before the offer was sent.
     this._flushCandidates();
 
-    // Battery cameras (peephole, doorbell) can take 10-20s to fully
-    // initialise their video subsystem after the CRC32 wake.  Start a
-    // generous fallback timer — if the camera doesn't answer, emit
-    // "fallback" so the plugin can switch to P2P streaming.
+    // Battery cameras (peephole, doorbell) can take 30-50s to fully
+    // initialise their video subsystem after the wake commands.
+    // Start a generous fallback timer — if the camera doesn't answer,
+    // emit "fallback" so the plugin can switch to StreamAllocation.
     if (this._fallbackTimer) clearTimeout(this._fallbackTimer);
-    const FALLBACK_TIMEOUT = this._needsWake ? 20000 : 15000;
+    const FALLBACK_TIMEOUT = this._needsWake ? 60000 : 15000;
     this._fallbackTimer = setTimeout(() => {
       this.log(
         "info",
@@ -500,6 +519,11 @@ class WebRTCSignaling {
    * Buffers candidates if the session is not yet established.
    */
   sendCandidate(candidate) {
+    if (this._needsWake && !this._woken) {
+      // Battery camera: buffer candidates until woken
+      this._wakePendingCandidates.push(candidate);
+      return;
+    }
     if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) {
       this._pendingCandidates.push(candidate);
       return;
@@ -586,6 +610,38 @@ class WebRTCSignaling {
     this._pendingCandidates = [];
   }
 
+  /**
+   * Called when the camera confirms wake (wireless_awake=true received
+   * via cloud MQTT). Flushes any buffered offer and candidates.
+   */
+  setWoken() {
+    if (this._woken) return;
+    this._woken = true;
+    this.log(
+      "info",
+      "[WebRTC] Camera wake confirmed — flushing buffered offer",
+    );
+
+    // Flush wake-buffered offer
+    if (this._wakePendingOffer) {
+      const { sdp, streamType } = this._wakePendingOffer;
+      this._wakePendingOffer = null;
+      this._doSendOffer(sdp, streamType);
+    }
+
+    // Flush wake-buffered candidates
+    if (this._wakePendingCandidates.length > 0) {
+      this.log(
+        "info",
+        `[WebRTC] Flushing ${this._wakePendingCandidates.length} wake-buffered candidates`,
+      );
+      for (const c of this._wakePendingCandidates) {
+        this.sendCandidate(c);
+      }
+      this._wakePendingCandidates = [];
+    }
+  }
+
   disconnect() {
     this.running = false;
     if (this._expireTimer) {
@@ -606,6 +662,9 @@ class WebRTCSignaling {
     }
     this._pendingOffer = null;
     this._pendingCandidates = [];
+    this._wakePendingOffer = null;
+    this._wakePendingCandidates = [];
+    this._woken = false;
   }
 
   // ── Private ──────────────────────────────────────────────────────────
