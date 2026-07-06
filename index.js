@@ -1796,9 +1796,9 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
         `P2P frame received for "${tuyaDevice.name}": ${jpeg.length} bytes`,
       );
       api.sendMjpegFrame(doimusID, "main", jpeg);
-      // Also store as snapshot_latest so the mobile app's P2P fallback
-      // (which reads from deviceImageUrl) shows the live frame.
-      api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
+      // Store as snapshot_live so the mobile app's live preview shows
+      // the latest P2P frame without overwriting the motion capture image.
+      api.updateDeviceImage(doimusID, "snapshot_live", jpeg, "image/jpeg");
     });
 
     // When the camera sends H.264 (not MJPEG), decode it to JPEG via ffmpeg.
@@ -1849,7 +1849,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
             api.sendMjpegFrame(doimusID, "main", jpeg);
             api.updateDeviceImage(
               doimusID,
-              "snapshot_latest",
+              "snapshot_live",
               jpeg,
               "image/jpeg",
             );
@@ -2024,7 +2024,7 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
         frameCount++;
 
         api.sendMjpegFrame(doimusID, "main", jpeg);
-        api.updateDeviceImage(doimusID, "snapshot_latest", jpeg, "image/jpeg");
+        api.updateDeviceImage(doimusID, "snapshot_live", jpeg, "image/jpeg");
 
         if (frameCount % 30 === 0) {
           log(
