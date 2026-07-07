@@ -307,26 +307,24 @@ class WebRTCSignaling {
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
 
-            // Battery camera: DON'T auto-send the offer after a short delay.
-            // The camera takes 30-50s to fully wake up. The offer will be
-            // flushed later via setWoken() when the camera confirms
-            // wireless_awake=true via cloud MQTT.
-            // If the camera already woke (woken=true before MQTT connect),
-            // flush the pending offer now.
-            if (this._woken) {
+            // Send the offer immediately after CRC32 wake, matching
+            // go2rtc's proven approach.  The IPC MQTT broker buffers
+            // messages if the camera is not yet reachable; the camera
+            // processes the offer as soon as its network stack is ready.
+            // Cloud-side wireless_awake=true may arrive 30-45s later
+            // but is informational only — WebRTC does not depend on it.
+            if (this._pendingOffer) {
+              const { sdp, streamType } = this._pendingOffer;
+              this._pendingOffer = null;
               this.log(
                 "info",
-                "[WebRTC] Battery camera already woken — flushing pending offer",
+                "[WebRTC] Battery camera — flushing pending offer immediately after CRC32 wake",
               );
-              if (this._pendingOffer) {
-                const { sdp, streamType } = this._pendingOffer;
-                this._pendingOffer = null;
-                this._doSendOffer(sdp, streamType);
-              }
+              this._doSendOffer(sdp, streamType);
             } else {
               this.log(
                 "info",
-                "[WebRTC] Battery camera — offer will be sent after wake confirmation (setWoken)",
+                "[WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile",
               );
             }
             return;
@@ -380,18 +378,11 @@ class WebRTCSignaling {
    * Buffers the offer if the MQTT connection is not yet ready.
    */
   sendOffer(sdp, streamType = 1) {
-    // ── Battery camera: buffer the offer until woken ──────────────
-    // If the camera hasn't confirmed wake yet, buffer the offer.
-    // It will be flushed when setWoken() is called.
-    if (this._needsWake && !this._woken) {
-      this.log(
-        "info",
-        "[WebRTC] Camera not yet awake — buffering offer until woken",
-      );
-      this._wakePendingOffer = { sdp, streamType };
-      return;
-    }
-
+    // go2rtc sends the offer immediately after CRC32 wake without
+    // waiting for wireless_awake confirmation — the IPC MQTT broker
+    // queues messages for offline devices.  Camera firmware rejects
+    // offers when they arrive BEFORE the IPC link is established, so
+    // we only buffer when the MQTT client isn't connected yet.
     if (!this.mqttConfig || !this.webrtcConfig || !this.mqttClient) {
       const reason = !this.mqttConfig
         ? "no MQTT config"
@@ -430,14 +421,21 @@ class WebRTCSignaling {
     // These are optional header extensions the camera doesn't need.
     sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
 
-    // ICE server config is passed through the auth/token exchange — the
-    // camera's WebRTC engine already knows its own ICE config from the
-    // Tuya p2p_config handshake.  Including token here can confuse some
-    // camera firmware that expects the basic Tuya offer format (no token,
-    // no datachannel_enable per Tuya developer docs).  go2rtc includes
-    // both and works with many cameras, but battery / sp-category cameras
-    // may use stricter parsing.
+    // Detect codec from SDP for the datachannel_enable field.
+    // HEVC (H.265) requires datachannel_enable=true per Tuya spec.
+    // See go2rtc: DatachannelEnable = isHEVC
+    const isHEVC = /a=rtpmap:\d+\s+(H265|HEVC)\/90000/i.test(sdp);
 
+    // ── Offer message fields ────────────────────────────────────────
+    // Tuya camera WebRTC stacks expect these fields in the offer msg:
+    //   - auth:        Session auth token from Tuya config
+    //   - token:       ICE server list from p2p_config.ices.  Some
+    //     camera firmware parse this to configure their ICE agent.
+    //     go2rtc always includes it and it's required for battery-
+    //     powered sp/doorbell cameras whose stack validates the
+    //     full offer structure.
+    //   - datachannel_enable: true for HEVC, false for H264.
+    //     Must be present per Tuya WebRTC spec.
     const msg = {
       protocol: WEBRTC_PROTOCOL,
       pv: "2.2",
@@ -455,6 +453,8 @@ class WebRTCSignaling {
           sdp,
           stream_type: streamType,
           auth: this.webrtcConfig.auth,
+          token: this.webrtcConfig.iceServers,
+          datachannel_enable: isHEVC,
         },
       },
     };
@@ -519,11 +519,10 @@ class WebRTCSignaling {
    * Buffers candidates if the session is not yet established.
    */
   sendCandidate(candidate) {
-    if (this._needsWake && !this._woken) {
-      // Battery camera: buffer candidates until woken
-      this._wakePendingCandidates.push(candidate);
-      return;
-    }
+    // Candidates that arrive before a sessionId is established are
+    // buffered in _pendingCandidates and flushed after the offer is
+    // sent.  We don't separately buffer for battery camera wake — the
+    // IPC MQTT broker handles delivery once the camera is reachable.
     if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) {
       this._pendingCandidates.push(candidate);
       return;
