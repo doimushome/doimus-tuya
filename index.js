@@ -2860,7 +2860,33 @@ module.exports = {
               // Monitor cloud MQTT for wireless_awake=true from camera.
               // When confirmed, call wr.setWoken() to flush buffered offer.
               const WAKE_TIMEOUT_MS = 60000;
+
+              // Send initial "waking" event so the mobile app can show
+              // a "Camera is waking up..." status immediately.
+              const wakeStartTime = Date.now();
+              api.sendWebrtcSignaling(deviceID, {
+                event: "waking",
+                message: "Camera is waking up... (up to 60s)",
+                elapsed: 0,
+              });
+
+              // Periodic progress logging and mobile app updates every 15s
+              // so both the logs and the UI show the camera is coming.
+              const progressInterval = setInterval(() => {
+                const elapsed = Math.round((Date.now() - wakeStartTime) / 1000);
+                log(
+                  "info",
+                  `[WebRTC] Still waiting for "${tuyaDevice.name}" to wake... (${elapsed}s elapsed)`,
+                );
+                api.sendWebrtcSignaling(deviceID, {
+                  event: "waking",
+                  message: `Camera is waking up... (${elapsed}s)`,
+                  elapsed,
+                });
+              }, 15000);
+
               const wakeTimer = setTimeout(() => {
+                clearInterval(progressInterval);
                 ctx._wakeWatchers.delete(tuyaDevice.id);
                 log(
                   "warn",
@@ -2875,6 +2901,7 @@ module.exports = {
               }, WAKE_TIMEOUT_MS);
               ctx._wakeWatchers.set(tuyaDevice.id, {
                 resolve: () => {
+                  clearInterval(progressInterval);
                   clearTimeout(wakeTimer);
                   ctx._wakeWatchers.delete(tuyaDevice.id);
                   log(
@@ -2888,6 +2915,7 @@ module.exports = {
                   }
                 },
                 timer: wakeTimer,
+                progressInterval,
               });
             }
 
@@ -2952,6 +2980,8 @@ module.exports = {
             const existing = ctx._wakeWatchers.get(tuyaId);
             if (existing) {
               clearTimeout(existing.timer);
+              if (existing.progressInterval)
+                clearInterval(existing.progressInterval);
               ctx._wakeWatchers.delete(tuyaId);
               log(
                 "info",

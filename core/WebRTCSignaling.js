@@ -767,6 +767,15 @@ class WebRTCSignaling {
           "info",
           `[WebRTC] Non-WebRTC message protocol=${parsed.protocol} data=${JSON.stringify(parsed.data || parsed).slice(0, 200)}`,
         );
+
+        // ── Protocol 4: Tuya DP status update ────────────────────────
+        // Battery cameras (sp, doorbell) may report wireless_awake=true
+        // via the IPC MQTT channel on the smart/decrypt/in/{deviceId}
+        // topic before it arrives on cloud MQTT. If we detect wake
+        // confirmation here, we can speed up the offer flush.
+        if (protocolNum === 4) {
+          this._checkWakeInProtocol4(parsed);
+        }
         return;
       }
 
@@ -815,6 +824,64 @@ class WebRTCSignaling {
       }
     } catch (e) {
       this.log("warn", `[WebRTC] Message parse error: ${e.message}`);
+    }
+  }
+
+  /**
+   * Check a protocol-4 (DP status) message for wireless_awake=true.
+   * Tuya IPC MQTT may deliver this before the cloud MQTT path, allowing
+   * us to resolve the wake watcher and flush the WebRTC offer earlier.
+   *
+   * Handles both Tuya formats:
+   *   - dps object:  { dps: { "149": true, ... } }
+   *   - status array: { status: [{ code: "wireless_awake", value: true }] }
+   */
+  _checkWakeInProtocol4(parsed) {
+    try {
+      const data = parsed.data || parsed;
+      let awake = false;
+
+      // Format 1: dps object (Tuya DP IDs as keys)
+      // DP 149 = wireless_awake
+      const dps = data.dps;
+      if (dps && typeof dps === "object") {
+        const val = dps["149"];
+        if (val === true || val === "true" || val === 1 || val === "1") {
+          awake = true;
+        }
+      }
+
+      // Format 2: status array with code/value pairs
+      const status = data.status;
+      if (!awake && Array.isArray(status)) {
+        for (const s of status) {
+          if (
+            s.code === "wireless_awake" &&
+            (s.value === true || s.value === "true")
+          ) {
+            awake = true;
+            break;
+          }
+        }
+      }
+
+      // Format 3: flattened dps in the root object (some Tuya firmware)
+      if (!awake && data["149"] !== undefined) {
+        const val = data["149"];
+        if (val === true || val === "true" || val === 1 || val === "1") {
+          awake = true;
+        }
+      }
+
+      if (awake) {
+        this.log(
+          "info",
+          "[WebRTC] IPC MQTT protocol-4 wake confirmation detected — calling setWoken() early",
+        );
+        this.setWoken();
+      }
+    } catch (e) {
+      this.log("debug", `[WebRTC] Protocol-4 wake check error: ${e.message}`);
     }
   }
 }
