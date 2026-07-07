@@ -2739,17 +2739,8 @@ module.exports = {
                       "info",
                       `[WebRTC] Battery camera delay elapsed — starting fallback streaming for "${tuyaDevice.name}"`,
                     );
-                    // Battery-powered cameras (sp, doorbell) accessed through
-                    // Tuya's cloud relay cannot use P2P (LAN protocol won't
-                    // work over internet). Skip P2P, go straight to cloud
-                    // stream allocation which allocates a cloud RTSP stream.
-                    const p2pCloudRelay =
-                      tuyaDevice.category === "sp" ||
-                      tuyaDevice.category === "doorbell";
                     if (ctx._webrtcClients.has(deviceID)) {
-                      if (!p2pCloudRelay) {
-                        startP2P(deviceID, tuyaDevice, ctx, log, api);
-                      }
+                      startP2P(deviceID, tuyaDevice, ctx, log, api);
                       startStreamAllocation(
                         deviceID,
                         tuyaDevice,
@@ -2764,12 +2755,7 @@ module.exports = {
                   ctx._streamFallbackTimers.set(deviceID, timer);
                 } else {
                   // Non-battery camera: try P2P/StreamAllocation immediately
-                  const p2pCloudRelay =
-                    tuyaDevice.category === "sp" ||
-                    tuyaDevice.category === "doorbell";
-                  if (!p2pCloudRelay) {
-                    startP2P(deviceID, tuyaDevice, ctx, log, api);
-                  }
+                  startP2P(deviceID, tuyaDevice, ctx, log, api);
                   startStreamAllocation(
                     deviceID,
                     tuyaDevice,

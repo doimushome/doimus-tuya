@@ -638,10 +638,13 @@ class TuyaP2P extends EventEmitter {
     // Try to extract frames using NAL unit delimiter pattern
     while (this.streaming && this.recvBuf.length > 0) {
       // Look for JPEG SOI marker (FF D8) — some cameras send MJPEG directly
-      const soiIdx = this.recvBuf.indexOf(0xffd8);
+      const soiIdx = this.recvBuf.indexOf(Buffer.from([0xff, 0xd8]));
       if (soiIdx >= 0) {
         // Search for EOI (FF D9) after SOI
-        const eoiIdx = this.recvBuf.indexOf(0xffd9, soiIdx + 2);
+        const eoiIdx = this.recvBuf.indexOf(
+          Buffer.from([0xff, 0xd9]),
+          soiIdx + 2,
+        );
         if (eoiIdx >= 0) {
           const frame = this.recvBuf.slice(soiIdx, eoiIdx + 2);
           this.recvBuf = this.recvBuf.slice(eoiIdx + 2);
