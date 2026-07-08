@@ -488,7 +488,9 @@ class WebRTCSignaling {
     // Start a generous fallback timer — if the camera doesn't answer,
     // emit "fallback" so the plugin can switch to StreamAllocation.
     if (this._fallbackTimer) clearTimeout(this._fallbackTimer);
-    const FALLBACK_TIMEOUT = this._needsWake ? 60000 : 15000;
+    // Battery cameras (peephole, doorbell) can take 80-90s to fully
+    // initialise their video subsystem. Use a generous timeout.
+    const FALLBACK_TIMEOUT = this._needsWake ? 120000 : 15000;
     this._fallbackTimer = setTimeout(() => {
       this.log(
         "info",

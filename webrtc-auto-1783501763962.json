@@ -1,0 +1,2629 @@
+{
+  "deviceId": "a5f8b13f-3100-598e-8e27-0f8ba233022f",
+  "hub": "192.168.1.55:8765",
+  "wrtc": null,
+  "strategy": "auto",
+  "startTime": "2026-07-08T09:05:17.763Z",
+  "endTime": "2026-07-08T09:09:23.962Z",
+  "attempts": 3,
+  "events": [
+    {
+      "ts": "2026-07-08T09:05:17.763Z",
+      "level": "info",
+      "msg": "══════════════════════════════════════════════════════════",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "  WebRTC Automation — a5f8b13f-3100-598e-8e27-0f8ba233022f",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "  Hub: 192.168.1.55:8765",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "  Strategy: auto",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "  Delays: auto",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "  Max attempts: 3",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "  wrtc: no (placeholder SDP)",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "  Wait for answer: 120s",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.768Z",
+      "level": "info",
+      "msg": "══════════════════════════════════════════════════════════",
+      "attempt": 0,
+      "delay": 0
+    },
+    {
+      "ts": "2026-07-08T09:05:17.769Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.769Z",
+      "level": "info",
+      "msg": "── Attempt 1 — delay: auto ──",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.769Z",
+      "level": "info",
+      "msg": "Connecting to ws://192.168.1.55:8765/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIwYjk4YjczMS1kN2ZhLTQwNzYtYTBhZi1hNjc4NTAxMTE0NWEiLCJleHAiOjE4MTUwMzU4MTcsImlhdCI6MTc4MzQ5OTgxNywiaXNzIjoiZG9pbXVzIn0.jlsbZ6vmuCESKRTFsVIfuvttUHO_E7484CCMszj49fw ...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.779Z",
+      "level": "success",
+      "msg": "WS connected",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.779Z",
+      "level": "info",
+      "msg": "Sending START",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.779Z",
+      "level": "info",
+      "msg": "Waiting for config...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.780Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=start",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] START command received for deviceID=a5f8b13f-3100-598e-8e27-0f8ba233022f tuyaID=bfc467f1cee0e05ea12z5s name=\"video peephole camera\" category=sp",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera check: category=sp isCamera=true hasBattery=true batteryCodes=[battery_report_cap,wireless_electricity,wireless_powermode] online=true needsWake=true",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera \"video peephole camera\" is battery-powered, sending wake-up...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Found 1 wake DP(s): [wireless_awake] — sending all",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "level": "info",
+      "msg": "Camera waking... ",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Fetching configs for Tuya device bfc467f1cee0e05ea12z5s",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.906Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent (dp=wireless_awake)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.920Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Config: moto_id=signaling14925 auth_len=44 p2p_config={\"auth\":\"xn1uQ7onr7QlKI86+habXq7NwqlJ9aIHHnJ7MpIKvKQ=\",\"ices\":[{\"urls\":\"stun:63.184.139.64:3478\"},{\"urls\":\"stun:[2a05:d014:afa:af10:9fd4:3f75:1e87:c341]:3478\"},{\"credential...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.968Z",
+      "level": "success",
+      "msg": "Config: 3 ICE, motoId=signaling14925, authLen=44",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.968Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Configs fetched, connecting to IPC MQTT",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.968Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Connecting to IPC MQTT: ssl://m1.tuyaeu.com:8883 client_id=cloud_new3af8e4163779edc4ff08da7c8c6ddfd2",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.968Z",
+      "level": "success",
+      "msg": "Config received",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.968Z",
+      "level": "info",
+      "msg": "Auto-wait mode: tracking camera wake progress...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.060Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] IPC MQTT connected",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.062Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Skill: lowPower=0 videos=[] full={}",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.062Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.085Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Subscribed to: /av/u/new110d01b5ee24fc0c5948258c6f150a64",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.085Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wildcard (#) subscribed for reply discovery",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.086Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent to m/w/bfc467f1cee0e05ea12z5s crc=6bce3832",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.087Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent to bfc467f1cee0e05ea12z5s/w crc=6bce3832",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.089Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Subscribed to: smart/decrypt/in/bfc467f1cee0e05ea12z5s",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.978Z",
+      "level": "success",
+      "msg": "Camera wake silence detected — sending offer",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.978Z",
+      "level": "info",
+      "msg": "Sending offer (stream_type=1, len=630)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.979Z",
+      "level": "info",
+      "msg": "Waiting for camera response (120s)...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.981Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=offer",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.981Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] sendOffer check: _needsWake=true _woken=false _mqtt=true",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.981Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Battery camera not yet woken — buffering offer for later",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:32.786Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (15s elapsed)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:32.787Z",
+      "level": "info",
+      "msg": "Camera waking... (15s)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:47.788Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (30s elapsed)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:05:47.789Z",
+      "level": "info",
+      "msg": "Camera waking... (30s)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:02.792Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (45s elapsed)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:02.792Z",
+      "level": "info",
+      "msg": "Camera waking... (45s)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:17.789Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake timeout (60s) for \"video peephole camera\" — flushing offer anyway (camera may wake later)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:17.789Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera wake confirmed — flushing buffered offer",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:17.789Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Publishing offer (session=42f251e008a84e3fabb3e5fd999ba3ff, topic=/av/moto/signaling14925/u/bfc467f1cee0e05ea12z5s, payloadLen=1266, motoId=signaling14925, authLen=44)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] MQTT rx topic=/av/u/new110d01b5ee24fc0c5948258c6f150a64 len=343 preview={\"protocol\":302,\"pv\":\"2.2\",\"t\":1783501587,\"data\":{\"header\":{\"from\":\"bfc467f1cee0e05ea12z5s\",\"to\":\"new110d01b5ee24fc0c5948258c6f150a64\",\"type\":\"disconnect\"...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera message type=disconnect session=42f251e008a84e3fabb3e5fd999ba3ff",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Disconnect received from camera session=42f251e008a84e3fabb3e5fd999ba3ff",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera disconnected session=42f251e008a84e3fabb3e5fd999ba3ff — waiting 45s for battery camera to wake before fallback",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "level": "warn",
+      "msg": "Camera disconnected (session=42f251e008a84e3fabb3e5fd999ba3ff)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.822Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.822Z",
+      "level": "info",
+      "msg": "── Plugin Log Timeline (auto) ──",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.823Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.823Z",
+      "level": "info",
+      "msg": "Result: disconnect",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.823Z",
+      "level": "info",
+      "msg": "Sending STOP (disconnect)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=disconnect",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Disconnect sent session=42f251e008a84e3fabb3e5fd999ba3ff",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] Stream disconnected — cleaned up fallback timer for device a5f8b13f-3100-598e-8e27-0f8ba233022f",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] IPC MQTT disconnected",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:29.824Z",
+      "level": "info",
+      "msg": "Cooling down 15s before next attempt...",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:29.830Z",
+      "level": "warn",
+      "msg": "WS closed (code=1005)",
+      "attempt": 1,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.826Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.826Z",
+      "level": "info",
+      "msg": "── Attempt 2 — delay: auto ──",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.826Z",
+      "level": "info",
+      "msg": "Connecting to ws://192.168.1.55:8765/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIwYjk4YjczMS1kN2ZhLTQwNzYtYTBhZi1hNjc4NTAxMTE0NWEiLCJleHAiOjE4MTUwMzU4MTcsImlhdCI6MTc4MzQ5OTgxNywiaXNzIjoiZG9pbXVzIn0.jlsbZ6vmuCESKRTFsVIfuvttUHO_E7484CCMszj49fw ...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.837Z",
+      "level": "success",
+      "msg": "WS connected",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.837Z",
+      "level": "info",
+      "msg": "Sending START",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.837Z",
+      "level": "info",
+      "msg": "Waiting for config...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=start",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] START command received for deviceID=a5f8b13f-3100-598e-8e27-0f8ba233022f tuyaID=bfc467f1cee0e05ea12z5s name=\"video peephole camera\" category=sp",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera check: category=sp isCamera=true hasBattery=true batteryCodes=[battery_report_cap,wireless_electricity,wireless_powermode] online=true needsWake=true",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera \"video peephole camera\" is battery-powered, sending wake-up...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Found 1 wake DP(s): [wireless_awake] — sending all",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "level": "info",
+      "msg": "Camera waking... ",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Fetching configs for Tuya device bfc467f1cee0e05ea12z5s",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.959Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent (dp=wireless_awake)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.963Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Config: moto_id=signaling14932 auth_len=44 p2p_config={\"auth\":\"xn1uQ7onr7QlKI86+habXq7NwqlJ9aIHHnJ7MpIKvKQ=\",\"ices\":[{\"urls\":\"stun:18.159.42.163:3478\"},{\"urls\":\"stun:[2a05:d014:afa:af11:1052:4ffc:5ec:173b]:3478\"},{\"credential\"...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.016Z",
+      "level": "success",
+      "msg": "Config: 3 ICE, motoId=signaling14932, authLen=44",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.017Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Configs fetched, connecting to IPC MQTT",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.017Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Connecting to IPC MQTT: ssl://m1.tuyaeu.com:8883 client_id=cloud_newb7b8b202918cb80c7b74fe0b3969d9ec",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.017Z",
+      "level": "success",
+      "msg": "Config received",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.017Z",
+      "level": "info",
+      "msg": "Auto-wait mode: tracking camera wake progress...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.114Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] IPC MQTT connected",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.115Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Skill: lowPower=0 videos=[] full={}",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.116Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.139Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Subscribed to: /av/u/new110d01b5ee24fc0c5948258c6f150a64",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.139Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wildcard (#) subscribed for reply discovery",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.140Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent to m/w/bfc467f1cee0e05ea12z5s crc=6bce3832",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.141Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent to bfc467f1cee0e05ea12z5s/w crc=6bce3832",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.142Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Subscribed to: smart/decrypt/in/bfc467f1cee0e05ea12z5s",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.027Z",
+      "level": "success",
+      "msg": "Camera wake silence detected — sending offer",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.027Z",
+      "level": "info",
+      "msg": "Sending offer (stream_type=1, len=631)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.027Z",
+      "level": "info",
+      "msg": "Waiting for camera response (120s)...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.029Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=offer",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.029Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] sendOffer check: _needsWake=true _woken=false _mqtt=true",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.029Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Battery camera not yet woken — buffering offer for later",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:59.841Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (15s elapsed)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:06:59.841Z",
+      "level": "info",
+      "msg": "Camera waking... (15s)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:14.849Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (30s elapsed)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:14.849Z",
+      "level": "info",
+      "msg": "Camera waking... (30s)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:29.853Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (45s elapsed)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:29.854Z",
+      "level": "info",
+      "msg": "Camera waking... (45s)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:44.858Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake timeout (60s) for \"video peephole camera\" — flushing offer anyway (camera may wake later)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:44.858Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera wake confirmed — flushing buffered offer",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:44.858Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Publishing offer (session=933b3df5ea5f469399d9b7528e0578cf, topic=/av/moto/signaling14932/u/bfc467f1cee0e05ea12z5s, payloadLen=1266, motoId=signaling14932, authLen=44)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.888Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] MQTT rx topic=/av/u/new110d01b5ee24fc0c5948258c6f150a64 len=343 preview={\"protocol\":302,\"pv\":\"2.2\",\"t\":1783501674,\"data\":{\"header\":{\"from\":\"bfc467f1cee0e05ea12z5s\",\"to\":\"new110d01b5ee24fc0c5948258c6f150a64\",\"type\":\"disconnect\"...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera message type=disconnect session=933b3df5ea5f469399d9b7528e0578cf",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Disconnect received from camera session=933b3df5ea5f469399d9b7528e0578cf",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera disconnected session=933b3df5ea5f469399d9b7528e0578cf — waiting 45s for battery camera to wake before fallback",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "warn",
+      "msg": "Camera disconnected (session=933b3df5ea5f469399d9b7528e0578cf)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "info",
+      "msg": "── Plugin Log Timeline (auto) ──",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "info",
+      "msg": "Result: disconnect",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "level": "info",
+      "msg": "Sending STOP (disconnect)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.892Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=disconnect",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.893Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Disconnect sent session=933b3df5ea5f469399d9b7528e0578cf",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.893Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] Stream disconnected — cleaned up fallback timer for device a5f8b13f-3100-598e-8e27-0f8ba233022f",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.894Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] IPC MQTT disconnected",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:56.891Z",
+      "level": "info",
+      "msg": "Cooling down 15s before next attempt...",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:07:56.893Z",
+      "level": "warn",
+      "msg": "WS closed (code=1005)",
+      "attempt": 2,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.892Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.892Z",
+      "level": "info",
+      "msg": "── Attempt 3 — delay: auto ──",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.892Z",
+      "level": "info",
+      "msg": "Connecting to ws://192.168.1.55:8765/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIwYjk4YjczMS1kN2ZhLTQwNzYtYTBhZi1hNjc4NTAxMTE0NWEiLCJleHAiOjE4MTUwMzU4MTcsImlhdCI6MTc4MzQ5OTgxNywiaXNzIjoiZG9pbXVzIn0.jlsbZ6vmuCESKRTFsVIfuvttUHO_E7484CCMszj49fw ...",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.909Z",
+      "level": "success",
+      "msg": "WS connected",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.909Z",
+      "level": "info",
+      "msg": "Sending START",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.909Z",
+      "level": "info",
+      "msg": "Waiting for config...",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.910Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=start",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] START command received for deviceID=a5f8b13f-3100-598e-8e27-0f8ba233022f tuyaID=bfc467f1cee0e05ea12z5s name=\"video peephole camera\" category=sp",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera check: category=sp isCamera=true hasBattery=true batteryCodes=[battery_report_cap,wireless_electricity,wireless_powermode] online=true needsWake=true",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera \"video peephole camera\" is battery-powered, sending wake-up...",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Found 1 wake DP(s): [wireless_awake] — sending all",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "level": "info",
+      "msg": "Camera waking... ",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Fetching configs for Tuya device bfc467f1cee0e05ea12z5s",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.030Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent (dp=wireless_awake)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.030Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Config: moto_id=signaling14925 auth_len=44 p2p_config={\"auth\":\"xn1uQ7onr7QlKI86+habXq7NwqlJ9aIHHnJ7MpIKvKQ=\",\"ices\":[{\"urls\":\"stun:18.157.226.209:3478\"},{\"urls\":\"stun:[2a05:d014:afa:af10:9a8a:756e:9087:735e]:3478\"},{\"credentia...",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "level": "success",
+      "msg": "Config: 3 ICE, motoId=signaling14925, authLen=44",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Configs fetched, connecting to IPC MQTT",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Connecting to IPC MQTT: ssl://m1.tuyaeu.com:8883 client_id=cloud_new19c6616410959ae56be6537ecc2ea0ec",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "level": "success",
+      "msg": "Config received",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "level": "info",
+      "msg": "Auto-wait mode: tracking camera wake progress...",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.184Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] IPC MQTT connected",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.184Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Skill: lowPower=0 videos=[] full={}",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.185Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.208Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Subscribed to: /av/u/new110d01b5ee24fc0c5948258c6f150a64",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.208Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wildcard (#) subscribed for reply discovery",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.209Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent to m/w/bfc467f1cee0e05ea12z5s crc=6bce3832",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.209Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake-up sent to bfc467f1cee0e05ea12z5s/w crc=6bce3832",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.211Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Subscribed to: smart/decrypt/in/bfc467f1cee0e05ea12z5s",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.104Z",
+      "level": "success",
+      "msg": "Camera wake silence detected — sending offer",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.105Z",
+      "level": "info",
+      "msg": "Sending offer (stream_type=1, len=631)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.105Z",
+      "level": "info",
+      "msg": "Waiting for camera response (120s)...",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.107Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=offer",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.107Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] sendOffer check: _needsWake=true _woken=false _mqtt=true",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.107Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Battery camera not yet woken — buffering offer for later",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:26.926Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (15s elapsed)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:26.926Z",
+      "level": "info",
+      "msg": "Camera waking... (15s)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:41.939Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (30s elapsed)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:41.939Z",
+      "level": "info",
+      "msg": "Camera waking... (30s)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:56.942Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (45s elapsed)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:08:56.942Z",
+      "level": "info",
+      "msg": "Camera waking... (45s)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:11.925Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Wake timeout (60s) for \"video peephole camera\" — flushing offer anyway (camera may wake later)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:11.925Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera wake confirmed — flushing buffered offer",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:11.925Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Publishing offer (session=f9704622b5454457b6f530b227bc2e63, topic=/av/moto/signaling14925/u/bfc467f1cee0e05ea12z5s, payloadLen=1264, motoId=signaling14925, authLen=44)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] MQTT rx topic=/av/u/new110d01b5ee24fc0c5948258c6f150a64 len=343 preview={\"protocol\":302,\"pv\":\"2.2\",\"t\":1783501761,\"data\":{\"header\":{\"from\":\"bfc467f1cee0e05ea12z5s\",\"to\":\"new110d01b5ee24fc0c5948258c6f150a64\",\"type\":\"disconnect\"...",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera message type=disconnect session=f9704622b5454457b6f530b227bc2e63",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Disconnect received from camera session=f9704622b5454457b6f530b227bc2e63",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Camera disconnected session=f9704622b5454457b6f530b227bc2e63 — waiting 45s for battery camera to wake before fallback",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "level": "warn",
+      "msg": "Camera disconnected (session=f9704622b5454457b6f530b227bc2e63)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.959Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.959Z",
+      "level": "info",
+      "msg": "── Plugin Log Timeline (auto) ──",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.959Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.959Z",
+      "level": "info",
+      "msg": "Result: disconnect",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.959Z",
+      "level": "info",
+      "msg": "Sending STOP (disconnect)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.961Z",
+      "level": "plugin",
+      "msg": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=disconnect",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.968Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] Disconnect sent session=f9704622b5454457b6f530b227bc2e63",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.968Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] Stream disconnected — cleaned up fallback timer for device a5f8b13f-3100-598e-8e27-0f8ba233022f",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.968Z",
+      "level": "plugin",
+      "msg": "[TuyaPlatform] [WebRTC] IPC MQTT disconnected",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.960Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.960Z",
+      "level": "info",
+      "msg": "══════════════════════════════════════════════════════════",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.960Z",
+      "level": "info",
+      "msg": "  SUMMARY",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "══════════════════════════════════════════════════════════",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "warn",
+      "msg": "  ✗ Camera did not answer WebRTC. All strategies exhausted.",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "  Last plugin log entries:",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:11 [TuyaPlatform] [WebRTC] Camera wake confirmed — flushing buffered offer",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:11 [TuyaPlatform] [WebRTC] Publishing offer (session=f9704622b5454457b6f530b227bc2e63, topic=/av/moto/signaling14925/u/bfc467f1cee0e05ea12z5s, payloadLen=1264, motoId=signaling14925, authLen=44)",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:21 [TuyaPlatform] [WebRTC] MQTT rx topic=/av/u/new110d01b5ee24fc0c5948258c6f150a64 len=343 preview={\"protocol\":302,\"pv\":\"2.2\",\"t\":1783501761,\"data\":{\"header\":{\"from\":\"bfc467f1cee0e05ea12z5s\",\"to\":\"new110",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:21 [TuyaPlatform] [WebRTC] Camera message type=disconnect session=f9704622b5454457b6f530b227bc2e63",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:21 [TuyaPlatform] [WebRTC] Disconnect received from camera session=f9704622b5454457b6f530b227bc2e63",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:21 [TuyaPlatform] [WebRTC] Camera disconnected session=f9704622b5454457b6f530b227bc2e63 — waiting 45s for battery camera to wake before fallback",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:21 runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=disconnect",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.961Z",
+      "level": "info",
+      "msg": "    09:09:21 [TuyaPlatform] [WebRTC] Disconnect sent session=f9704622b5454457b6f530b227bc2e63",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.962Z",
+      "level": "info",
+      "msg": "    09:09:21 [TuyaPlatform] Stream disconnected — cleaned up fallback timer for device a5f8b13f-3100-598e-8e27-0f8ba233022f",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.962Z",
+      "level": "info",
+      "msg": "    09:09:21 [TuyaPlatform] [WebRTC] IPC MQTT disconnected",
+      "attempt": 3,
+      "delay": "auto"
+    },
+    {
+      "ts": "2026-07-08T09:09:23.962Z",
+      "level": "info",
+      "msg": "",
+      "attempt": 3,
+      "delay": "auto"
+    }
+  ],
+  "pluginLogs": [
+    {
+      "ts": "2026-07-08T09:05:17.780Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=start"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] START command received for deviceID=a5f8b13f-3100-598e-8e27-0f8ba233022f tuyaID=bfc467f1cee0e05ea12z5s name=\"video peephole camera\" category=sp"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera check: category=sp isCamera=true hasBattery=true batteryCodes=[battery_report_cap,wireless_electricity,wireless_powermode] online=true needsWake=true"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera \"video peephole camera\" is battery-powered, sending wake-up..."
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Found 1 wake DP(s): [wireless_awake] — sending all"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.781Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Fetching configs for Tuya device bfc467f1cee0e05ea12z5s"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.906Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent (dp=wireless_awake)"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.920Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Config: moto_id=signaling14925 auth_len=44 p2p_config={\"auth\":\"xn1uQ7onr7QlKI86+habXq7NwqlJ9aIHHnJ7MpIKvKQ=\",\"ices\":[{\"urls\":\"stun:63.184.139.64:3478\"},{\"urls\":\"stun:[2a05:d014:afa:af10:9fd4:3f75:1e87:c341]:3478\"},{\"credential\":\"SYdiYxMMBvkJEDtg6Jqq0pZ8T"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.968Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Configs fetched, connecting to IPC MQTT"
+    },
+    {
+      "ts": "2026-07-08T09:05:17.968Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Connecting to IPC MQTT: ssl://m1.tuyaeu.com:8883 client_id=cloud_new3af8e4163779edc4ff08da7c8c6ddfd2"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.060Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] IPC MQTT connected"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.062Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Skill: lowPower=0 videos=[] full={}"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.062Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.085Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Subscribed to: /av/u/new110d01b5ee24fc0c5948258c6f150a64"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.085Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wildcard (#) subscribed for reply discovery"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.086Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent to m/w/bfc467f1cee0e05ea12z5s crc=6bce3832"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.087Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent to bfc467f1cee0e05ea12z5s/w crc=6bce3832"
+    },
+    {
+      "ts": "2026-07-08T09:05:18.089Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Subscribed to: smart/decrypt/in/bfc467f1cee0e05ea12z5s"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.981Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=offer"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.981Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] sendOffer check: _needsWake=true _woken=false _mqtt=true"
+    },
+    {
+      "ts": "2026-07-08T09:05:22.981Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Battery camera not yet woken — buffering offer for later"
+    },
+    {
+      "ts": "2026-07-08T09:05:28.559Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → API status returned codes=[switch_1=true,countdown_1=0,add_ele=70,cur_current=48,cur_power=30,cur_voltage=2330,voltage_coe=0,electric_coe=0,power_coe=0,electricity_coe=0,fault=0,relay_status=power_off,child_lock=false]"
+    },
+    {
+      "ts": "2026-07-08T09:05:28.559Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → mapped stateKeys=[on,current,power,voltage,child_lock,online,motion,doorbell]"
+    },
+    {
+      "ts": "2026-07-08T09:05:28.559Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → changed=false state={\"on\":false,\"current\":48,\"power\":3,\"voltage\":233,\"child_lock\":false,\"online\":false,\"motion\":false,\"doorbell\":false}"
+    },
+    {
+      "ts": "2026-07-08T09:05:28.705Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → API status returned codes=[switch_1=true,countdown_1=0,add_ele=5,cur_current=2200,cur_power=32809,cur_voltage=23981]"
+    },
+    {
+      "ts": "2026-07-08T09:05:28.706Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → mapped stateKeys=[on,current,power,voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:05:28.706Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → changed=false state={\"on\":true,\"current\":2.2,\"power\":328.09,\"voltage\":239.81,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:05:32.786Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (15s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.748Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_voltage] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501545,\"status\":[{\"20\":23907,\"code\":\"cur_voltage\",\"t\":1783501545,\"value\":23907}]}"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.748Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.748Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"voltage\":239.07,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.788Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_current] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501545,\"status\":[{\"18\":2188,\"code\":\"cur_current\",\"t\":1783501545,\"value\":2188}]}"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.788Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[current,online]"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.788Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"current\":2.188,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.814Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_power] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501545,\"status\":[{\"19\":32605,\"code\":\"cur_power\",\"t\":1783501545,\"value\":32605}]}"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.814Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[power,online]"
+    },
+    {
+      "ts": "2026-07-08T09:05:45.814Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"power\":326.05,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:05:47.788Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (30s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:05:58.563Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → API status returned codes=[switch_1=true,countdown_1=0,add_ele=70,cur_current=48,cur_power=30,cur_voltage=2330,voltage_coe=0,electric_coe=0,power_coe=0,electricity_coe=0,fault=0,relay_status=power_off,child_lock=false]"
+    },
+    {
+      "ts": "2026-07-08T09:05:58.563Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → mapped stateKeys=[on,current,power,voltage,child_lock,online,motion,doorbell]"
+    },
+    {
+      "ts": "2026-07-08T09:05:58.563Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → changed=false state={\"on\":false,\"current\":48,\"power\":3,\"voltage\":233,\"child_lock\":false,\"online\":false,\"motion\":false,\"doorbell\":false}"
+    },
+    {
+      "ts": "2026-07-08T09:05:58.670Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → API status returned codes=[switch_1=true,countdown_1=0,add_ele=5,cur_current=2188,cur_power=32605,cur_voltage=23907]"
+    },
+    {
+      "ts": "2026-07-08T09:05:58.670Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → mapped stateKeys=[on,current,power,voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:05:58.670Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → changed=false state={\"on\":true,\"current\":2.188,\"power\":326.05,\"voltage\":239.07,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:06:02.792Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (45s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:06:17.789Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake timeout (60s) for \"video peephole camera\" — flushing offer anyway (camera may wake later)"
+    },
+    {
+      "ts": "2026-07-08T09:06:17.789Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera wake confirmed — flushing buffered offer"
+    },
+    {
+      "ts": "2026-07-08T09:06:17.789Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Publishing offer (session=42f251e008a84e3fabb3e5fd999ba3ff, topic=/av/moto/signaling14925/u/bfc467f1cee0e05ea12z5s, payloadLen=1266, motoId=signaling14925, authLen=44)"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] MQTT rx topic=/av/u/new110d01b5ee24fc0c5948258c6f150a64 len=343 preview={\"protocol\":302,\"pv\":\"2.2\",\"t\":1783501587,\"data\":{\"header\":{\"from\":\"bfc467f1cee0e05ea12z5s\",\"to\":\"new110d01b5ee24fc0c5948258c6f150a64\",\"type\":\"disconnect\",\"sessionid\":\"42f251e008a84e3fabb3e5fd999ba3ff"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera message type=disconnect session=42f251e008a84e3fabb3e5fd999ba3ff"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Disconnect received from camera session=42f251e008a84e3fabb3e5fd999ba3ff"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.821Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera disconnected session=42f251e008a84e3fabb3e5fd999ba3ff — waiting 45s for battery camera to wake before fallback"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=disconnect"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Disconnect sent session=42f251e008a84e3fabb3e5fd999ba3ff"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Stream disconnected — cleaned up fallback timer for device a5f8b13f-3100-598e-8e27-0f8ba233022f"
+    },
+    {
+      "ts": "2026-07-08T09:06:27.827Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] IPC MQTT disconnected"
+    },
+    {
+      "ts": "2026-07-08T09:06:28.589Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → API status returned codes=[switch_1=true,countdown_1=0,add_ele=70,cur_current=48,cur_power=30,cur_voltage=2330,voltage_coe=0,electric_coe=0,power_coe=0,electricity_coe=0,fault=0,relay_status=power_off,child_lock=false]"
+    },
+    {
+      "ts": "2026-07-08T09:06:28.590Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → mapped stateKeys=[on,current,power,voltage,child_lock,online,motion,doorbell]"
+    },
+    {
+      "ts": "2026-07-08T09:06:28.590Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → changed=false state={\"on\":false,\"current\":48,\"power\":3,\"voltage\":233,\"child_lock\":false,\"online\":false,\"motion\":false,\"doorbell\":false}"
+    },
+    {
+      "ts": "2026-07-08T09:06:28.652Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → API status returned codes=[switch_1=true,countdown_1=0,add_ele=5,cur_current=2188,cur_power=32605,cur_voltage=23907]"
+    },
+    {
+      "ts": "2026-07-08T09:06:28.652Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → mapped stateKeys=[on,current,power,voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:06:28.652Z",
+      "attempt": 1,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → changed=false state={\"on\":true,\"current\":2.188,\"power\":326.05,\"voltage\":239.07,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=start"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] START command received for deviceID=a5f8b13f-3100-598e-8e27-0f8ba233022f tuyaID=bfc467f1cee0e05ea12z5s name=\"video peephole camera\" category=sp"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera check: category=sp isCamera=true hasBattery=true batteryCodes=[battery_report_cap,wireless_electricity,wireless_powermode] online=true needsWake=true"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera \"video peephole camera\" is battery-powered, sending wake-up..."
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Found 1 wake DP(s): [wireless_awake] — sending all"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.840Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Fetching configs for Tuya device bfc467f1cee0e05ea12z5s"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.959Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent (dp=wireless_awake)"
+    },
+    {
+      "ts": "2026-07-08T09:06:44.963Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Config: moto_id=signaling14932 auth_len=44 p2p_config={\"auth\":\"xn1uQ7onr7QlKI86+habXq7NwqlJ9aIHHnJ7MpIKvKQ=\",\"ices\":[{\"urls\":\"stun:18.159.42.163:3478\"},{\"urls\":\"stun:[2a05:d014:afa:af11:1052:4ffc:5ec:173b]:3478\"},{\"credential\":\"atiEvphENvPERdzM7rZZSUuZBj"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.017Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Configs fetched, connecting to IPC MQTT"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.017Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Connecting to IPC MQTT: ssl://m1.tuyaeu.com:8883 client_id=cloud_newb7b8b202918cb80c7b74fe0b3969d9ec"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.114Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] IPC MQTT connected"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.115Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Skill: lowPower=0 videos=[] full={}"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.116Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.139Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Subscribed to: /av/u/new110d01b5ee24fc0c5948258c6f150a64"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.139Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wildcard (#) subscribed for reply discovery"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.140Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent to m/w/bfc467f1cee0e05ea12z5s crc=6bce3832"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.141Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent to bfc467f1cee0e05ea12z5s/w crc=6bce3832"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.142Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Subscribed to: smart/decrypt/in/bfc467f1cee0e05ea12z5s"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.708Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_power] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501605,\"status\":[{\"19\":32632,\"code\":\"cur_power\",\"t\":1783501605,\"value\":32632}]}"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.708Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[power,online]"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.708Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"power\":326.32,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.777Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_voltage] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501605,\"status\":[{\"20\":24012,\"code\":\"cur_voltage\",\"t\":1783501605,\"value\":24012}]}"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.777Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.777Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"voltage\":240.12,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.890Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_current] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501605,\"status\":[{\"18\":2180,\"code\":\"cur_current\",\"t\":1783501605,\"value\":2180}]}"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.890Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[current,online]"
+    },
+    {
+      "ts": "2026-07-08T09:06:45.890Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"current\":2.18,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.029Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=offer"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.029Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] sendOffer check: _needsWake=true _woken=false _mqtt=true"
+    },
+    {
+      "ts": "2026-07-08T09:06:50.029Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Battery camera not yet woken — buffering offer for later"
+    },
+    {
+      "ts": "2026-07-08T09:06:58.577Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → API status returned codes=[switch_1=true,countdown_1=0,add_ele=70,cur_current=48,cur_power=30,cur_voltage=2330,voltage_coe=0,electric_coe=0,power_coe=0,electricity_coe=0,fault=0,relay_status=power_off,child_lock=false]"
+    },
+    {
+      "ts": "2026-07-08T09:06:58.577Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → mapped stateKeys=[on,current,power,voltage,child_lock,online,motion,doorbell]"
+    },
+    {
+      "ts": "2026-07-08T09:06:58.577Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → changed=false state={\"on\":false,\"current\":48,\"power\":3,\"voltage\":233,\"child_lock\":false,\"online\":false,\"motion\":false,\"doorbell\":false}"
+    },
+    {
+      "ts": "2026-07-08T09:06:58.637Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → API status returned codes=[switch_1=true,countdown_1=0,add_ele=5,cur_current=2180,cur_power=32632,cur_voltage=24012]"
+    },
+    {
+      "ts": "2026-07-08T09:06:58.637Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → mapped stateKeys=[on,current,power,voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:06:58.637Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → changed=false state={\"on\":true,\"current\":2.18,\"power\":326.32,\"voltage\":240.12,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:06:59.841Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (15s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:07:14.848Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (30s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:07:28.584Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → API status returned codes=[switch_1=true,countdown_1=0,add_ele=70,cur_current=48,cur_power=30,cur_voltage=2330,voltage_coe=0,electric_coe=0,power_coe=0,electricity_coe=0,fault=0,relay_status=power_off,child_lock=false]"
+    },
+    {
+      "ts": "2026-07-08T09:07:28.584Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → mapped stateKeys=[on,current,power,voltage,child_lock,online,motion,doorbell]"
+    },
+    {
+      "ts": "2026-07-08T09:07:28.584Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → changed=false state={\"on\":false,\"current\":48,\"power\":3,\"voltage\":233,\"child_lock\":false,\"online\":false,\"motion\":false,\"doorbell\":false}"
+    },
+    {
+      "ts": "2026-07-08T09:07:28.646Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → API status returned codes=[switch_1=true,countdown_1=0,add_ele=5,cur_current=2180,cur_power=32632,cur_voltage=24012]"
+    },
+    {
+      "ts": "2026-07-08T09:07:28.646Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → mapped stateKeys=[on,current,power,voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:07:28.646Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → changed=false state={\"on\":true,\"current\":2.18,\"power\":326.32,\"voltage\":240.12,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:07:29.853Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (45s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:07:44.858Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake timeout (60s) for \"video peephole camera\" — flushing offer anyway (camera may wake later)"
+    },
+    {
+      "ts": "2026-07-08T09:07:44.858Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera wake confirmed — flushing buffered offer"
+    },
+    {
+      "ts": "2026-07-08T09:07:44.858Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Publishing offer (session=933b3df5ea5f469399d9b7528e0578cf, topic=/av/moto/signaling14932/u/bfc467f1cee0e05ea12z5s, payloadLen=1266, motoId=signaling14932, authLen=44)"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.622Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_current] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501665,\"status\":[{\"18\":2205,\"code\":\"cur_current\",\"t\":1783501665,\"value\":2205}]}"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.622Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[current,online]"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.622Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"current\":2.205,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.642Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_voltage] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501665,\"status\":[{\"20\":23985,\"code\":\"cur_voltage\",\"t\":1783501665,\"value\":23985}]}"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.642Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.642Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"voltage\":239.85,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.653Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_power] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501665,\"status\":[{\"19\":33031,\"code\":\"cur_power\",\"t\":1783501665,\"value\":33031}]}"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.653Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[power,online]"
+    },
+    {
+      "ts": "2026-07-08T09:07:45.653Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"power\":330.31,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.888Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] MQTT rx topic=/av/u/new110d01b5ee24fc0c5948258c6f150a64 len=343 preview={\"protocol\":302,\"pv\":\"2.2\",\"t\":1783501674,\"data\":{\"header\":{\"from\":\"bfc467f1cee0e05ea12z5s\",\"to\":\"new110d01b5ee24fc0c5948258c6f150a64\",\"type\":\"disconnect\",\"sessionid\":\"933b3df5ea5f469399d9b7528e0578cf"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera message type=disconnect session=933b3df5ea5f469399d9b7528e0578cf"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Disconnect received from camera session=933b3df5ea5f469399d9b7528e0578cf"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.889Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera disconnected session=933b3df5ea5f469399d9b7528e0578cf — waiting 45s for battery camera to wake before fallback"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.892Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=disconnect"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.893Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Disconnect sent session=933b3df5ea5f469399d9b7528e0578cf"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.893Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Stream disconnected — cleaned up fallback timer for device a5f8b13f-3100-598e-8e27-0f8ba233022f"
+    },
+    {
+      "ts": "2026-07-08T09:07:54.894Z",
+      "attempt": 2,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] IPC MQTT disconnected"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.910Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=start"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] START command received for deviceID=a5f8b13f-3100-598e-8e27-0f8ba233022f tuyaID=bfc467f1cee0e05ea12z5s name=\"video peephole camera\" category=sp"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera check: category=sp isCamera=true hasBattery=true batteryCodes=[battery_report_cap,wireless_electricity,wireless_powermode] online=true needsWake=true"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera \"video peephole camera\" is battery-powered, sending wake-up..."
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Found 1 wake DP(s): [wireless_awake] — sending all"
+    },
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Fetching configs for Tuya device bfc467f1cee0e05ea12z5s"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.030Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent (dp=wireless_awake)"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.030Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Config: moto_id=signaling14925 auth_len=44 p2p_config={\"auth\":\"xn1uQ7onr7QlKI86+habXq7NwqlJ9aIHHnJ7MpIKvKQ=\",\"ices\":[{\"urls\":\"stun:18.157.226.209:3478\"},{\"urls\":\"stun:[2a05:d014:afa:af10:9a8a:756e:9087:735e]:3478\"},{\"credential\":\"O8I60VkQqdpod78UkJZcf5he"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Configs fetched, connecting to IPC MQTT"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Connecting to IPC MQTT: ssl://m1.tuyaeu.com:8883 client_id=cloud_new19c6616410959ae56be6537ecc2ea0ec"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.184Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] IPC MQTT connected"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.184Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Skill: lowPower=0 videos=[] full={}"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.185Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.208Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Subscribed to: /av/u/new110d01b5ee24fc0c5948258c6f150a64"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.208Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wildcard (#) subscribed for reply discovery"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.209Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent to m/w/bfc467f1cee0e05ea12z5s crc=6bce3832"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.209Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake-up sent to bfc467f1cee0e05ea12z5s/w crc=6bce3832"
+    },
+    {
+      "ts": "2026-07-08T09:08:12.211Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Subscribed to: smart/decrypt/in/bfc467f1cee0e05ea12z5s"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.107Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=offer"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.107Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] sendOffer check: _needsWake=true _woken=false _mqtt=true"
+    },
+    {
+      "ts": "2026-07-08T09:08:17.107Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Battery camera not yet woken — buffering offer for later"
+    },
+    {
+      "ts": "2026-07-08T09:08:26.926Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (15s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:08:28.583Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → API status returned codes=[switch_1=true,countdown_1=0,add_ele=70,cur_current=48,cur_power=30,cur_voltage=2330,voltage_coe=0,electric_coe=0,power_coe=0,electricity_coe=0,fault=0,relay_status=power_off,child_lock=false]"
+    },
+    {
+      "ts": "2026-07-08T09:08:28.583Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → mapped stateKeys=[on,current,power,voltage,child_lock,online,motion,doorbell]"
+    },
+    {
+      "ts": "2026-07-08T09:08:28.583Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → changed=false state={\"on\":false,\"current\":48,\"power\":3,\"voltage\":233,\"child_lock\":false,\"online\":false,\"motion\":false,\"doorbell\":false}"
+    },
+    {
+      "ts": "2026-07-08T09:08:28.795Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → API status returned codes=[switch_1=true,countdown_1=0,add_ele=5,cur_current=2205,cur_power=33031,cur_voltage=23985]"
+    },
+    {
+      "ts": "2026-07-08T09:08:28.795Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → mapped stateKeys=[on,current,power,voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:08:28.795Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → changed=false state={\"on\":true,\"current\":2.205,\"power\":330.31,\"voltage\":239.85,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:08:41.939Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (30s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.706Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501725,\"status\":[{\"135\":33}]}"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.707Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[online]"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.707Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.718Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_voltage] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501725,\"status\":[{\"20\":23991,\"code\":\"cur_voltage\",\"t\":1783501725,\"value\":23991}]}"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.718Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.718Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"voltage\":239.91,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.729Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_current] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501725,\"status\":[{\"18\":2190,\"code\":\"cur_current\",\"t\":1783501725,\"value\":2190}]}"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.729Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[current,online]"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.729Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"current\":2.19,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.770Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [TuyaOpenAPI] [TuyaDeviceManager] [TuyaOpenMQ] MQTT: devId=bf22ea98909abfaf19vaf1 proto=4 codes=[cur_power] {\"topic\":\"cloud/token/in/new110d01b5ee24fc0c5948258c6f150a64\",\"t\":1783501725,\"status\":[{\"19\":32879,\"code\":\"cur_power\",\"t\":1783501725,\"value\":32879}]}"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.770Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE: Contatore → stateKeys=[power,online]"
+    },
+    {
+      "ts": "2026-07-08T09:08:45.770Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] DEVICE_STATUS_UPDATE full: Contatore → {\"power\":328.79,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:08:56.942Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Still waiting for \"video peephole camera\" to wake... (45s elapsed)"
+    },
+    {
+      "ts": "2026-07-08T09:08:58.598Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → API status returned codes=[switch_1=true,countdown_1=0,add_ele=70,cur_current=48,cur_power=30,cur_voltage=2330,voltage_coe=0,electric_coe=0,power_coe=0,electricity_coe=0,fault=0,relay_status=power_off,child_lock=false]"
+    },
+    {
+      "ts": "2026-07-08T09:08:58.598Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → mapped stateKeys=[on,current,power,voltage,child_lock,online,motion,doorbell]"
+    },
+    {
+      "ts": "2026-07-08T09:08:58.598Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Zigbee Plug → changed=false state={\"on\":false,\"current\":48,\"power\":3,\"voltage\":233,\"child_lock\":false,\"online\":false,\"motion\":false,\"doorbell\":false}"
+    },
+    {
+      "ts": "2026-07-08T09:08:58.654Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → API status returned codes=[switch_1=true,countdown_1=0,add_ele=5,cur_current=2190,cur_power=32879,cur_voltage=23991]"
+    },
+    {
+      "ts": "2026-07-08T09:08:58.654Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → mapped stateKeys=[on,current,power,voltage,online]"
+    },
+    {
+      "ts": "2026-07-08T09:08:58.654Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Energy poll: Contatore → changed=false state={\"on\":true,\"current\":2.19,\"power\":328.79,\"voltage\":239.91,\"online\":true}"
+    },
+    {
+      "ts": "2026-07-08T09:09:11.925Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Wake timeout (60s) for \"video peephole camera\" — flushing offer anyway (camera may wake later)"
+    },
+    {
+      "ts": "2026-07-08T09:09:11.925Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera wake confirmed — flushing buffered offer"
+    },
+    {
+      "ts": "2026-07-08T09:09:11.925Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Publishing offer (session=f9704622b5454457b6f530b227bc2e63, topic=/av/moto/signaling14925/u/bfc467f1cee0e05ea12z5s, payloadLen=1264, motoId=signaling14925, authLen=44)"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] MQTT rx topic=/av/u/new110d01b5ee24fc0c5948258c6f150a64 len=343 preview={\"protocol\":302,\"pv\":\"2.2\",\"t\":1783501761,\"data\":{\"header\":{\"from\":\"bfc467f1cee0e05ea12z5s\",\"to\":\"new110d01b5ee24fc0c5948258c6f150a64\",\"type\":\"disconnect\",\"sessionid\":\"f9704622b5454457b6f530b227bc2e63"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera message type=disconnect session=f9704622b5454457b6f530b227bc2e63"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Disconnect received from camera session=f9704622b5454457b6f530b227bc2e63"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Camera disconnected session=f9704622b5454457b6f530b227bc2e63 — waiting 45s for battery camera to wake before fallback"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.961Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "runner: webrtc_command received device_id=a5f8b13f-3100-598e-8e27-0f8ba233022f action=disconnect"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.968Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] Disconnect sent session=f9704622b5454457b6f530b227bc2e63"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.968Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] Stream disconnected — cleaned up fallback timer for device a5f8b13f-3100-598e-8e27-0f8ba233022f"
+    },
+    {
+      "ts": "2026-07-08T09:09:21.968Z",
+      "attempt": 3,
+      "delay": "auto",
+      "message": "[TuyaPlatform] [WebRTC] IPC MQTT disconnected"
+    }
+  ],
+  "signalingLogs": [
+    {
+      "ts": "2026-07-08T09:08:11.911Z",
+      "event": "waking",
+      "data": {
+        "data": {
+          "event": "waking",
+          "message": "Camera is waking up... (up to 60s)",
+          "elapsed": 0
+        },
+        "device_id": "a5f8b13f-3100-598e-8e27-0f8ba233022f",
+        "plugin_id": "d503c797-8639-475a-a636-a0a4f0c377e6"
+      }
+    },
+    {
+      "ts": "2026-07-08T09:08:12.094Z",
+      "event": "config",
+      "data": {
+        "data": {
+          "event": "config",
+          "iceServers": [
+            {
+              "urls": "stun:18.157.226.209:3478"
+            },
+            {
+              "urls": "stun:[2a05:d014:afa:af10:9a8a:756e:9087:735e]:3478"
+            },
+            {
+              "urls": "turn:54.36.112.8:3478",
+              "username": "1783537692:bfc467f1cee0e05ea12z5s",
+              "credential": "O8I60VkQqdpod78UkJZcf5he1hs="
+            }
+          ],
+          "auth": "xn1uQ7onr7QlKI86+habXq7NwqlJ9aIHHnJ7MpIKvKQ=",
+          "motoId": "signaling14925",
+          "deviceId": "bfc467f1cee0e05ea12z5s"
+        },
+        "device_id": "a5f8b13f-3100-598e-8e27-0f8ba233022f",
+        "plugin_id": "d503c797-8639-475a-a636-a0a4f0c377e6"
+      }
+    },
+    {
+      "ts": "2026-07-08T09:08:26.926Z",
+      "event": "waking",
+      "data": {
+        "data": {
+          "event": "waking",
+          "message": "Camera is waking up... (15s)",
+          "elapsed": 15
+        },
+        "device_id": "a5f8b13f-3100-598e-8e27-0f8ba233022f",
+        "plugin_id": "d503c797-8639-475a-a636-a0a4f0c377e6"
+      }
+    },
+    {
+      "ts": "2026-07-08T09:08:41.939Z",
+      "event": "waking",
+      "data": {
+        "data": {
+          "event": "waking",
+          "message": "Camera is waking up... (30s)",
+          "elapsed": 30
+        },
+        "device_id": "a5f8b13f-3100-598e-8e27-0f8ba233022f",
+        "plugin_id": "d503c797-8639-475a-a636-a0a4f0c377e6"
+      }
+    },
+    {
+      "ts": "2026-07-08T09:08:56.942Z",
+      "event": "waking",
+      "data": {
+        "data": {
+          "event": "waking",
+          "message": "Camera is waking up... (45s)",
+          "elapsed": 45
+        },
+        "device_id": "a5f8b13f-3100-598e-8e27-0f8ba233022f",
+        "plugin_id": "d503c797-8639-475a-a636-a0a4f0c377e6"
+      }
+    },
+    {
+      "ts": "2026-07-08T09:09:21.958Z",
+      "event": "disconnect",
+      "data": {
+        "data": {
+          "event": "disconnect",
+          "sessionId": "f9704622b5454457b6f530b227bc2e63"
+        },
+        "device_id": "a5f8b13f-3100-598e-8e27-0f8ba233022f",
+        "plugin_id": "d503c797-8639-475a-a636-a0a4f0c377e6"
+      }
+    }
+  ]
+}

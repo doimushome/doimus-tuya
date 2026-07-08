@@ -52,6 +52,13 @@ const path = require("node:path");
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const args = process.argv.slice(2);
+function getArg(name) {
+  const i = args.indexOf(name);
+  if (i !== -1 && i + 1 < args.length) return args[i + 1];
+  const eq = args.find((a) => a.startsWith(name + "="));
+  if (eq) return eq.slice(name.length + 1);
+  return null;
+}
 const DEVICE_ID = args.find((a) => a.startsWith("a") && a.includes("-")) || "";
 const HUB = getArg("--hub") || process.env.DOIMUS_HUB || "192.168.1.55:8765";
 const JWT = getArg("--jwt") || process.env.DOIMUS_JWT || "";
@@ -252,7 +259,8 @@ function handleWSMessage(raw) {
     // ── Plugin log — capture EVERYTHING for cross-referencing ──────
     if (m.event === "plugin_log") {
       const data = m.data || {};
-      const msg = data.message || "";
+      // Backend uses "line" key (not "message") for the log text
+      const msg = data.message || data.line || "";
 
       // Always capture all plugin logs for cross-reference
       pluginLogs.push({
@@ -294,39 +302,53 @@ function handleWSMessage(raw) {
     }
 
     const d = m.data || {};
-    const ev = d.event;
+    // The backend wraps signaling data: { plugin_id, device_id, data: { event: ... } }
+    // Extract the inner data payload for event handling.
+    const innerData = d.data || d;
+    const ev = innerData.event || d.event;
     signalingLogs.push({ ts: new Date().toISOString(), event: ev, data: d });
 
     if (VERBOSE) log("debug", `signal: ${ev}`);
 
+    // Use innerData for event payload, fall back to outer data
+    const payload = innerData.event ? innerData : d;
+
     // Fire registered listeners (persistent — not one-shot)
     const listeners = eventListeners[ev];
     if (listeners) {
-      listeners.forEach((fn) => fn(d));
+      listeners.forEach((fn) => fn(payload));
     }
 
     // Handle events
     switch (ev) {
       case "config":
-        webrtcConfig = d;
+        webrtcConfig = payload;
         log(
           "success",
-          `Config: ${(d.iceServers || []).length} ICE, motoId=${d.motoId}, authLen=${(d.auth || "").length}`,
+          `Config: ${(payload.iceServers || []).length} ICE, motoId=${payload.motoId}, authLen=${(payload.auth || "").length}`,
         );
         break;
 
       case "answer":
-        log("success", `✓ ANSWER RECEIVED! len=${(d.sdp || "").length}`);
-        if (pc && d.sdp && typeof pc.setRemoteDescription === "function") {
-          pc.setRemoteDescription({ type: "answer", sdp: d.sdp })
+        log("success", `✓ ANSWER RECEIVED! len=${(payload.sdp || "").length}`);
+        if (
+          pc &&
+          payload.sdp &&
+          typeof pc.setRemoteDescription === "function"
+        ) {
+          pc.setRemoteDescription({ type: "answer", sdp: payload.sdp })
             .then(() => log("success", "Remote description set"))
             .catch((e) => log("error", `setRemoteDescription: ${e.message}`));
         }
         break;
 
       case "candidate":
-        if (pc && d.candidate && typeof pc.addIceCandidate === "function") {
-          const parts = d.candidate.split(" ");
+        if (
+          pc &&
+          payload.candidate &&
+          typeof pc.addIceCandidate === "function"
+        ) {
+          const parts = payload.candidate.split(" ");
           if (parts.length >= 3) {
             const candidate = {
               sdpMLineIndex: parseInt(parts[0], 10),
@@ -339,7 +361,10 @@ function handleWSMessage(raw) {
         break;
 
       case "disconnect":
-        log("warn", `Camera disconnected (session=${d.sessionId || "?"})`);
+        log(
+          "warn",
+          `Camera disconnected (session=${payload.sessionId || "?"})`,
+        );
         break;
 
       case "p2p_fallback":
@@ -347,11 +372,14 @@ function handleWSMessage(raw) {
         break;
 
       case "error":
-        log("error", `Plugin error: ${d.message}`);
+        log("error", `Plugin error: ${payload.message}`);
         break;
 
       case "waking":
-        log("info", `Camera waking... ${d.elapsed ? `(${d.elapsed}s)` : ""}`);
+        log(
+          "info",
+          `Camera waking... ${payload.elapsed ? `(${payload.elapsed}s)` : ""}`,
+        );
         break;
     }
   } catch (e) {
@@ -636,7 +664,6 @@ async function runAttempt(delay, attemptNum) {
   currentAttempt = attemptNum;
   currentDelay = delay;
   isCleanedUp = false;
-  pluginLogs = [];
   signalingLogs = [];
   eventListeners = {};
   let pluginLogBefore = pluginLogs.length;
@@ -648,31 +675,26 @@ async function runAttempt(delay, attemptNum) {
   // 1. Connect
   await wsConnect();
 
-  // 2. Start stream
+  // 2. Pre-register event listeners BEFORE sending START to avoid race
+  const configPromise = waitForEvent("config", 20000);
+  let lastWaking = Date.now();
+  on("waking", () => {
+    lastWaking = Date.now();
+  });
+
+  // 3. Start stream
   startStream();
 
-  // 3. Wait for config
+  // 4. Wait for config
   log("info", "Waiting for config...");
-  await waitForEvent("config", 20000);
+  await configPromise;
   log("success", "Config received");
 
-  // 4. Wait for camera to wake (if delay > 0)
+  // 5. Wait for camera to wake (if delay > 0)
   if (delay === "auto") {
     // Auto-detect: wait for wake completion.
     // Watch "waking" events — when they stop, camera should be ready.
     log("info", "Auto-wait mode: tracking camera wake progress...");
-    let lastWaking = Date.now();
-    const wakeCheck = setInterval(() => {
-      const elapsed = Math.round((Date.now() - lastWaking) / 1000);
-      if (elapsed >= 5) {
-        clearInterval(wakeCheck);
-      }
-    }, 1000);
-
-    // Re-register waking listener
-    on("waking", () => {
-      lastWaking = Date.now();
-    });
 
     // Wait up to 70s for wake, with 5s of silence after last waking event
     let wokeSilent = false;
@@ -704,7 +726,7 @@ async function runAttempt(delay, attemptNum) {
     log("info", "No delay — sending offer immediately");
   }
 
-  // 5. Create peer + send offer
+  // 6. Create peer + send offer
   if (USE_WRTC) {
     try {
       await createPeer();

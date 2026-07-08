@@ -2898,14 +2898,14 @@ module.exports = {
               // ── Phase 1b: Background wake watcher (non-blocking) ──
               // Monitor cloud MQTT for wireless_awake=true from camera.
               // When confirmed, call wr.setWoken() to flush buffered offer.
-              const WAKE_TIMEOUT_MS = 60000;
+              const WAKE_TIMEOUT_MS = 120000;
 
               // Send initial "waking" event so the mobile app can show
               // a "Camera is waking up..." status immediately.
               const wakeStartTime = Date.now();
               api.sendWebrtcSignaling(deviceID, {
                 event: "waking",
-                message: "Camera is waking up... (up to 60s)",
+                message: "Camera is waking up... (up to 120s)",
                 elapsed: 0,
               });
 
