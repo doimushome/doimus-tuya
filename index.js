@@ -1872,6 +1872,164 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       }
     });
 
+    // ── Continuous H264→MJPEG streaming decoder ────────────────────
+    // Battery cameras (peephole, doorbell) send H.264 via P2P tunnel
+    // but don't support WebRTC or RTSP StreamAllocation.  We spawn a
+    // persistent ffmpeg process to convert H.264→MJPEG in real-time
+    // and push frames to the mobile app as a live stream.
+    //
+    // The decoder is started lazily when the first h264_nal arrives.
+
+    p2p._h264StreamBuffer = Buffer.alloc(0);
+    p2p._h264FrameCount = 0;
+    p2p._h264StreamProc = null;
+    p2p._h264RestartTimer = null;
+
+    function spawnH264Decoder() {
+      if (p2p._h264StreamProc) {
+        try {
+          p2p._h264StreamProc.kill();
+        } catch (_) {}
+        p2p._h264StreamProc = null;
+      }
+
+      try {
+        const { spawn } = require("child_process");
+        const proc = spawn(
+          "ffmpeg",
+          [
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-f",
+            "image2pipe",
+            "-q:v",
+            "5",
+            "-an",
+            "pipe:1",
+          ],
+          { stdio: ["pipe", "pipe", "pipe"] },
+        );
+
+        // Suppress ffmpeg log output
+        proc.stderr.on("data", () => {});
+
+        proc.stdout.on("data", (chunk) => {
+          p2p._h264StreamBuffer = Buffer.concat([p2p._h264StreamBuffer, chunk]);
+
+          // Extract complete JPEG frames (0xFF 0xD8 … 0xFF 0xD9)
+          while (p2p._h264StreamBuffer.length > 1) {
+            const startIdx = p2p._h264StreamBuffer.indexOf(
+              Buffer.from([0xff, 0xd8]),
+            );
+            if (startIdx === -1) {
+              p2p._h264StreamBuffer = Buffer.alloc(0);
+              break;
+            }
+
+            let endIdx = -1;
+            for (
+              let i = startIdx + 2;
+              i < p2p._h264StreamBuffer.length - 1;
+              i++
+            ) {
+              if (
+                p2p._h264StreamBuffer[i] === 0xff &&
+                p2p._h264StreamBuffer[i + 1] === 0xd9
+              ) {
+                endIdx = i + 2;
+                break;
+              }
+            }
+            if (endIdx === -1) break;
+
+            const jpeg = p2p._h264StreamBuffer.slice(startIdx, endIdx);
+            p2p._h264FrameCount++;
+
+            api.sendMjpegFrame(doimusID, "main", jpeg);
+            api.updateDeviceImage(
+              doimusID,
+              "snapshot_live",
+              jpeg,
+              "image/jpeg",
+            );
+
+            if (p2p._h264FrameCount % 30 === 0) {
+              log(
+                "debug",
+                `[P2P] ${p2p._h264FrameCount} H264→MJPEG frames sent for "${tuyaDevice.name}"`,
+              );
+            }
+
+            p2p._h264StreamBuffer = p2p._h264StreamBuffer.slice(endIdx);
+          }
+        });
+
+        proc.on("error", (err) => {
+          log(
+            "warn",
+            `[P2P] H264 decoder error for "${tuyaDevice.name}": ${err.message}`,
+          );
+          p2p._h264StreamProc = null;
+          // Auto-restart after 1s if still streaming
+          if (p2p.streaming && !p2p._h264RestartTimer) {
+            p2p._h264RestartTimer = setTimeout(spawnH264Decoder, 1000);
+          }
+        });
+
+        proc.on("close", (code) => {
+          log(
+            "debug",
+            `[P2P] H264 decoder exited (code=${code}) for "${tuyaDevice.name}"`,
+          );
+          p2p._h264StreamProc = null;
+          // Auto-restart after 1s if still streaming
+          if (p2p.streaming && !p2p._h264RestartTimer) {
+            p2p._h264RestartTimer = setTimeout(spawnH264Decoder, 1000);
+          }
+        });
+
+        p2p._h264StreamProc = proc;
+        log(
+          "info",
+          `[P2P] H264→MJPEG decoder started for "${tuyaDevice.name}"`,
+        );
+      } catch (e) {
+        log(
+          "debug",
+          `[P2P] Failed to spawn H264 decoder for "${tuyaDevice.name}": ${e.message}`,
+        );
+      }
+    }
+
+    // ── Feed H264 data to the persistent decoder for live streaming ──
+    // This runs in addition to the snapshot extraction above.
+    // The h264_nal data already includes the Annex B start code (00 00 00 01).
+    p2p.on("h264_nal_stream", (data) => {
+      if (!p2p._h264StreamProc) {
+        spawnH264Decoder();
+      }
+      if (p2p._h264StreamProc && p2p._h264StreamProc.stdin.writable) {
+        try {
+          p2p._h264StreamProc.stdin.write(data);
+        } catch (_) {
+          // ffmpeg may have crashed — the close handler will restart
+        }
+      }
+    });
+
+    // Forward original h264_nal to both the snapshot handler and the
+    // streaming decoder by re-emitting on a secondary event.
+    // The snapshot handler is already registered on "h264_nal" above.
+    // We add a new listener that forwards to "h264_nal_stream".
+    const origH264Handler = p2p.listeners("h264_nal").pop();
+    p2p.removeListener("h264_nal", origH264Handler);
+    p2p.on("h264_nal", (data) => {
+      origH264Handler(data);
+      p2p.emit("h264_nal_stream", data);
+    });
+
     p2p.on("error", (err) => {
       log("error", `P2P error for "${tuyaDevice.name}": ${err.message}`);
       ctx.p2pClients.delete(doimusID);
@@ -1880,6 +2038,17 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
     p2p.on("close", () => {
       log("info", `P2P connection closed for "${tuyaDevice.name}"`);
       ctx.p2pClients.delete(doimusID);
+      // Clean up the persistent H264 decoder
+      if (p2p._h264RestartTimer) {
+        clearTimeout(p2p._h264RestartTimer);
+        p2p._h264RestartTimer = null;
+      }
+      if (p2p._h264StreamProc) {
+        try {
+          p2p._h264StreamProc.kill();
+        } catch (_) {}
+        p2p._h264StreamProc = null;
+      }
     });
 
     p2p.on("streaming", (active) => {
@@ -1887,6 +2056,17 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
         "info",
         `P2P streaming ${active ? "started" : "stopped"} for "${tuyaDevice.name}"`,
       );
+      // If streaming stops, clean up the decoder to free resources
+      if (!active && p2p._h264StreamProc) {
+        if (p2p._h264RestartTimer) {
+          clearTimeout(p2p._h264RestartTimer);
+          p2p._h264RestartTimer = null;
+        }
+        try {
+          p2p._h264StreamProc.kill();
+        } catch (_) {}
+        p2p._h264StreamProc = null;
+      }
     });
 
     try {
@@ -1915,6 +2095,17 @@ function stopP2P(doimusID, ctx, log) {
   const p2p = ctx.p2pClients.get(doimusID);
   if (!p2p) return;
   log("info", `Stopping P2P live view for device ${doimusID}`);
+  // Clean up the persistent H264 decoder
+  if (p2p._h264RestartTimer) {
+    clearTimeout(p2p._h264RestartTimer);
+    p2p._h264RestartTimer = null;
+  }
+  if (p2p._h264StreamProc) {
+    try {
+      p2p._h264StreamProc.kill();
+    } catch (_) {}
+    p2p._h264StreamProc = null;
+  }
   p2p.close();
   ctx.p2pClients.delete(doimusID);
 }
@@ -2740,6 +2931,20 @@ module.exports = {
                       `[WebRTC] Battery camera delay elapsed — starting fallback streaming for "${tuyaDevice.name}"`,
                     );
                     if (ctx._webrtcClients.has(deviceID)) {
+                      // Battery cameras may have a stale P2P connection
+                      // from an earlier attempt when the camera was still
+                      // asleep (deep sleep = no response to stream commands).
+                      // Close it so we establish a fresh session now that
+                      // the camera should be awake and responsive.
+                      const staleP2P = ctx.p2pClients?.get(deviceID);
+                      if (staleP2P) {
+                        log(
+                          "info",
+                          `[WebRTC] Closing stale P2P for "${tuyaDevice.name}" before fresh reconnect`,
+                        );
+                        staleP2P.close();
+                        ctx.p2pClients.delete(deviceID);
+                      }
                       startP2P(deviceID, tuyaDevice, ctx, log, api);
                       startStreamAllocation(
                         deviceID,

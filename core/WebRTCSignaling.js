@@ -67,6 +67,7 @@ class WebRTCSignaling {
     this._woken = false;
     this._wakePendingOffer = null;
     this._wakePendingCandidates = [];
+    this._wakeFlushTimer = null;
   }
 
   on(event, handler) {
@@ -323,6 +324,25 @@ class WebRTCSignaling {
                 "info",
                 "[WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile",
               );
+            }
+
+            // Battery cameras (peephole, doorbell) may never report
+            // wireless_awake=true via MQTT even when awake.  Proactively
+            // flush the buffered offer after the camera's typical boot
+            // time (~35s) so the WebRTC offer is sent exactly when the
+            // camera is ready, without waiting for a DP confirmation
+            // message that this camera model never sends.
+            if (!this._wakeFlushTimer) {
+              this._wakeFlushTimer = setTimeout(() => {
+                this._wakeFlushTimer = null;
+                if (!this._woken) {
+                  this.log(
+                    "info",
+                    "[WebRTC] Proactive wake flush — camera should be awake by now, sending buffered offer",
+                  );
+                  this.setWoken();
+                }
+              }, 35000);
             }
             return;
           }
@@ -631,6 +651,11 @@ class WebRTCSignaling {
   setWoken() {
     if (this._woken) return;
     this._woken = true;
+    // Cancel the proactive wake flush timer since we're waking up now
+    if (this._wakeFlushTimer) {
+      clearTimeout(this._wakeFlushTimer);
+      this._wakeFlushTimer = null;
+    }
     this.log(
       "info",
       "[WebRTC] Camera wake confirmed — flushing buffered offer",
@@ -665,6 +690,10 @@ class WebRTCSignaling {
     if (this._fallbackTimer) {
       clearTimeout(this._fallbackTimer);
       this._fallbackTimer = null;
+    }
+    if (this._wakeFlushTimer) {
+      clearTimeout(this._wakeFlushTimer);
+      this._wakeFlushTimer = null;
     }
     if (this._offerBufferTimer) {
       clearTimeout(this._offerBufferTimer);
