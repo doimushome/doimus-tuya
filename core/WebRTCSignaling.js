@@ -486,7 +486,12 @@ class WebRTCSignaling {
           sdp,
           stream_type: streamType,
           auth: this.webrtcConfig.auth,
-          token: this.webrtcConfig.iceServers,
+          // go2rtc serializes the ICE server list to a JSON string —
+          // the camera firmware JSON.parses(token) to extract servers.
+          // A raw JS array would produce a JSON-array token, not a
+          // JSON-string token, causing silent parse failures that make
+          // the camera reject the offer with an immediate disconnect.
+          token: JSON.stringify(this.webrtcConfig.iceServers),
           datachannel_enable: isHEVC,
         },
       },
