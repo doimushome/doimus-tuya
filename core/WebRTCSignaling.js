@@ -119,7 +119,16 @@ class WebRTCSignaling {
     // value causes a silent parse error that drops the offer.
     const iceServers = [];
     if (wr.p2p_config && wr.p2p_config.ices && wr.p2p_config.ices.length > 0) {
-      for (const ice of wr.p2p_config.ices) {
+      for (let i = 0; i < wr.p2p_config.ices.length; i++) {
+        const ice = wr.p2p_config.ices[i];
+        // Skip credential-only entries without urls — they produce
+        // malformed {"credential":"..."} objects that crash the
+        // camera's ICE server JSON parser. Credential data for TURN
+        // servers is typically embedded in the TURN entry itself.
+        if (!ice.urls) {
+          this.log("debug", `[WebRTC] Skipping ICE entry ${i} (no urls)`);
+          continue;
+        }
         const server = { urls: ice.urls };
         if (ice.username) server.username = ice.username;
         if (ice.credential) server.credential = ice.credential;
