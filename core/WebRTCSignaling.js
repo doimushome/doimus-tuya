@@ -502,6 +502,14 @@ class WebRTCSignaling {
       "info",
       `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"}, authLen=${(this.webrtcConfig.auth || "").length})`,
     );
+    this.log(
+      "debug",
+      `[WebRTC] Offer SDP preview (first 600 chars): ${(sdp || "").slice(0, 600).replace(/\n/g, "\\n")}`,
+    );
+    this.log(
+      "debug",
+      `[WebRTC] Offer token: ${JSON.stringify(this.webrtcConfig.iceServers).length > 300 ? JSON.stringify(this.webrtcConfig.iceServers).slice(0, 300) + "..." : JSON.stringify(this.webrtcConfig.iceServers)}`,
+    );
     this._publish(payload);
 
     // Flush any candidates that were buffered before the offer was sent.
