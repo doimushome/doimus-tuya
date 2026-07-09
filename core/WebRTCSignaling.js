@@ -129,7 +129,13 @@ class WebRTCSignaling {
           this.log("debug", `[WebRTC] Skipping ICE entry ${i} (no urls)`);
           continue;
         }
-        const server = { urls: ice.urls };
+        // go2rtc serializes the ICE token using pion's ICEServer struct,
+        // which marshals `urls` as a JSON array: ["stun:..."].  Tuya camera
+        // firmware JSON.parses(msg.token) and expects `urls` to be an array
+        // (not a bare string).  String urls cause the camera to reject the
+        // offer with a WebRTC disconnect ~10s after publication.
+        const urls = Array.isArray(ice.urls) ? ice.urls : [ice.urls];
+        const server = { urls };
         if (ice.username) server.username = ice.username;
         if (ice.credential) server.credential = ice.credential;
         iceServers.push(server);
@@ -138,7 +144,7 @@ class WebRTCSignaling {
       // Tuya returned empty ICE servers — add a default STUN so the
       // camera's WebRTC stack can still attempt NAT traversal and the
       // token field is valid JSON.
-      iceServers.push({ urls: "stun:stun.l.google.com:19302" });
+      iceServers.push({ urls: ["stun:stun.l.google.com:19302"] });
       this.log(
         "info",
         "[WebRTC] Tuya returned empty ICE servers — using default Google STUN",
