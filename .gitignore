@@ -1,3 +1,5 @@
 node_modules/
 *.log
 .env
+webrtc-auto-*.json
+webrtc-auto-*.log
