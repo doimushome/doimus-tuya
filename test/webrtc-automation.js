@@ -449,6 +449,7 @@ function createPeer() {
       };
 
       pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "sendrecv" });
 
       pc.createOffer()
         .then((offer) => pc.setLocalDescription(offer))
@@ -481,10 +482,10 @@ function createPeer() {
 }
 
 function sendOffer(sdp, streamType) {
-  const type = streamType || STREAM_TYPE;
+  const type = streamType != null ? streamType : 0; // HD by default
   log("info", `Sending offer (stream_type=${type}, len=${sdp.length})`);
   if (VERBOSE)
-    log("debug", `SDP preview: ${sdp.slice(0, 300).replace(/\n/g, "\\n")}`);
+    log("debug", `SDP preview: ${sdp.slice(0, 500).replace(/\n/g, "\\n")}`);
 
   wsSend({
     type: "webrtc_signaling",
