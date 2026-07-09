@@ -317,17 +317,20 @@ class WebRTCSignaling {
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
 
-            // Battery cameras: the camera is still asleep.  Buffer the
-            // offer (if it arrived before MQTT connect) in _wakePendingOffer
-            // so it's delivered by setWoken() when the camera confirms wake
-            // (wireless_awake=true, typically 40-50s after wake commands).
+            // Send the offer immediately, not after a 35s delay.  go2rtc
+            // sends the CRC32 wake and the WebRTC offer back-to-back with
+            // no waiting, and battery cameras respond within 5-10s.  Our
+            // camera sends an internal WebRTC disconnect ~10s after the
+            // session starts if no offer arrives — so any delay >10s
+            // guarantees failure.
             if (this._pendingOffer) {
-              this._wakePendingOffer = this._pendingOffer;
+              const { sdp, streamType } = this._pendingOffer;
               this._pendingOffer = null;
               this.log(
                 "info",
-                "[WebRTC] Battery camera — offer buffered until wake confirmation",
+                "[WebRTC] Battery camera — sending offer immediately after CRC32 wake",
               );
+              this._doSendOffer(sdp, streamType);
             } else {
               this.log(
                 "info",
@@ -335,23 +338,21 @@ class WebRTCSignaling {
               );
             }
 
-            // Battery cameras (peephole, doorbell) may never report
-            // wireless_awake=true via MQTT even when awake.  Proactively
-            // flush the buffered offer after the camera's typical boot
-            // time (~35s) so the WebRTC offer is sent exactly when the
-            // camera is ready, without waiting for a DP confirmation
-            // message that this camera model never sends.
+            // Safety net: if the mobile app's offer arrives very late
+            // (>30s), flush it via setWoken().  This is longer than the
+            // camera's 10s session timeout, but prevents a permanently
+            // stuck session if the mobile app takes unusually long.
             if (!this._wakeFlushTimer) {
               this._wakeFlushTimer = setTimeout(() => {
                 this._wakeFlushTimer = null;
                 if (!this._woken) {
                   this.log(
                     "info",
-                    "[WebRTC] Proactive wake flush — camera should be awake by now, sending buffered offer",
+                    "[WebRTC] Proactive wake flush — sending buffered offer (safety net)",
                   );
                   this.setWoken();
                 }
-              }, 35000);
+              }, 30000);
             }
             return;
           }
@@ -404,27 +405,17 @@ class WebRTCSignaling {
    * Buffers the offer if the MQTT connection is not yet ready.
    */
   sendOffer(sdp, streamType = 1) {
-    // Battery cameras: the camera is still asleep when the offer arrives
-    // from the mobile app (it takes ~40s to boot).  Buffer the offer in
-    // _wakePendingOffer so it's delivered by setWoken() after the camera
-    // confirms wake (wireless_awake=true).  go2rtc sends immediately
-    // after CRC32 wake, but our camera explicitly rejects offers sent
-    // before its video subsystem is ready (sends WebRTC disconnect at T+10).
-    if (this._needsWake && !this._woken) {
-      this.log(
-        "info",
-        "[WebRTC] Battery camera not yet woken — buffering offer for later",
-      );
-      this._wakePendingOffer = { sdp, streamType };
-      // Cancel the 12s buffer timer — the camera will take ~40-50s to wake
-      if (this._offerBufferTimer) {
-        clearTimeout(this._offerBufferTimer);
-        this._offerBufferTimer = null;
-      }
-      return;
-    }
-
-    // Non-battery cameras (or already-woken battery cameras): send immediately.
+    // Send the offer as soon as it arrives, even for battery cameras.
+    // The CRC32 wake (sent on IPC MQTT connect) is sufficient to wake
+    // the camera's WebRTC subsystem — go2rtc sends both the wake and
+    // the offer back-to-back with no delay, and battery cameras respond
+    // within 5-10s.  Buffering the offer until a wake confirmation that
+    // never arrives (this camera model never sends wireless_awake=true)
+    // caused the camera's internal 10s session timeout to fire before
+    // the offer was published.
+    //
+    // If MQTT isn't connected yet, buffer in _pendingOffer (flushed
+    // in the MQTT connect handler).
     if (!this.mqttConfig || !this.webrtcConfig || !this.mqttClient) {
       const reason = !this.mqttConfig
         ? "no MQTT config"
