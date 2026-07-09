@@ -1393,6 +1393,59 @@ async function processCoalescedMotion(tuyaID, ctx, dm, api, log) {
     _capture_id: eventKey,
   });
 
+  // ── Sync lastKnownState ───────────────────────────────────────────
+  // Keep the plugin's internal lastKnownState in sync with the backend
+  // so the auto-reset timer can correctly detect motion is still true.
+  // If a previous edge-detection timer already reset lastKnownState to
+  // false, the timer below would never fire — leaving motion stuck.
+  ctx.lastKnownState.set(tuyaID, {
+    ...(ctx.lastKnownState.get(tuyaID) || {}),
+    motion: true,
+  });
+
+  // ── Motion auto-reset timer ──────────────────────────────────────
+  // processCoalescedMotion is the sole sender of motion:true.
+  // Ensure the auto-reset timer is active so motion:false is sent
+  // even if the coalesce window extended past the original edge-
+  // detection timer (which is only set on the false→true transition
+  // and is NOT extended by subsequent MQTT packets).
+  // Without this, motion gets stuck as true when:
+  //   t=0: motion edge → timer set for t=5, coalesce for t=1.5
+  //   t=3: another MQTT → coalesce extended to t=4.5 (timer not extended)
+  //   t=4: another MQTT → coalesce extended to t=5.5
+  //   t=5: auto-reset fires → motion:false + timer entry deleted
+  //   t=5.5: processCoalescedMotion → motion:true → STUCK (no timer)
+  if (!ctx._motionTimers) ctx._motionTimers = new Map();
+  const existing = ctx._motionTimers.get(tuyaID);
+  if (existing) clearTimeout(existing);
+  ctx._motionTimers.set(
+    tuyaID,
+    setTimeout(() => {
+      const current = ctx.lastKnownState.get(tuyaID);
+      if (current && current.motion === true) {
+        log(
+          "info",
+          `Motion auto-reset for "${device.name}" (from coalesce, 5s timeout)`,
+        );
+        const resetState = { motion: false };
+        api.updateDeviceState(doimusID, resetState);
+        ctx.lastKnownState.set(tuyaID, {
+          ...current,
+          ...resetState,
+        });
+        if (Array.isArray(device.status)) {
+          const motionPattern = /motion|movement|doorbell|human|person|pir/i;
+          for (const dp of device.status) {
+            if (motionPattern.test(dp.code)) {
+              dp.value = "";
+            }
+          }
+        }
+      }
+      ctx._motionTimers.delete(tuyaID);
+    }, 5000),
+  );
+
   // 2. Try inline image decode (movement_detect_pic / doorbell_pic DPs).
   let imageData = tryDecodeCameraImage(device, statuses, log);
   let imageMime = imageData ? detectImageMime(imageData) : null;
