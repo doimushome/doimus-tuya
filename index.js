@@ -3133,6 +3133,9 @@ module.exports = {
                 "video_call",
                 "wireless_awake",
               ];
+              // DEBUG: dump schema codes at wake DP filter time
+              log("debug", `[WebRTC] DEBUG schema codes at wakeDps filter: [${(tuyaDevice.schema || []).map((s) => s.code).join(",")}]`);
+              log("debug", `[WebRTC] DEBUG wakeDpCodes includes wireless_powermode=${wakeDpCodes.includes("wireless_powermode")} schema has wireless_powermode=${tuyaDevice.schema?.some((s) => s.code === "wireless_powermode")}`);
               const wakeDps =
                 tuyaDevice.schema?.filter((s) =>
                   wakeDpCodes.includes(s.code),
