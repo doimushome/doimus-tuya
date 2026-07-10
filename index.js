@@ -3120,22 +3120,21 @@ module.exports = {
               // chance of waking the camera. Fire-and-forget — don't
               // block the setup flow.
               //
-              // Critical: wireless_powermode must be set to "1" (performance
+              // Critical: ipc_work_mode must be set to "1" (performance
               // mode) BEFORE wireless_awake — the camera's video subsystem
               // stays powered off in power-save mode ("0") even when the
               // network interface wakes up.  The official Tuya app always
               // switches to performance mode before streaming, which is why
               // the camera's LED turns on with the app but not with Doimus.
+              // Note: wireless_powermode exists on some models but is
+              // read-only; ipc_work_mode is the writable equivalent.
               const wakeDpCodes = [
-                "wireless_powermode",  // must be first — set performance mode
+                "ipc_work_mode",      // must be first — set performance mode ("1")
                 "cruise",
                 "basic_awake",
                 "video_call",
                 "wireless_awake",
               ];
-              // DEBUG: dump schema codes at wake DP filter time
-              log("debug", `[WebRTC] DEBUG schema codes at wakeDps filter: [${(tuyaDevice.schema || []).map((s) => s.code).join(",")}]`);
-              log("debug", `[WebRTC] DEBUG wakeDpCodes includes wireless_powermode=${wakeDpCodes.includes("wireless_powermode")} schema has wireless_powermode=${tuyaDevice.schema?.some((s) => s.code === "wireless_powermode")}`);
               const wakeDps =
                 tuyaDevice.schema?.filter((s) =>
                   wakeDpCodes.includes(s.code),
@@ -3146,13 +3145,13 @@ module.exports = {
                   `[WebRTC] Found ${wakeDps.length} wake DP(s): [${wakeDps.map((s) => s.code).join(",")}] — sending all`,
                 );
                 for (const dp of wakeDps) {
-                  // wireless_powermode uses string value "1" (performance).
+                  // ipc_work_mode uses string value "1" (performance mode).
                   // All other wake DPs use boolean true.
-                  const value = dp.code === "wireless_powermode" ? "1" : true;
+                  const value = dp.code === "ipc_work_mode" ? "1" : true;
                   dm.sendCommands(tuyaDevice.id, [
                     { code: dp.code, value },
                   ]).then(
-                    () => log("info", `[WebRTC] Wake-up sent (dp=${dp.code}${dp.code === "wireless_powermode" ? "=1" : ""})`),
+                    () => log("info", `[WebRTC] Wake-up sent (dp=${dp.code}${dp.code === "ipc_work_mode" ? "=1" : ""})`),
                     (e) =>
                       log(
                         "debug",
@@ -3167,9 +3166,9 @@ module.exports = {
                 );
               }
 
-              // Remember that we sent wireless_powermode so we can restore
+              // Remember that we sent ipc_work_mode so we can restore
               // it to "0" when the stream ends (battery conservation).
-              if (tuyaDevice.schema?.some((s) => s.code === "wireless_powermode")) {
+              if (tuyaDevice.schema?.some((s) => s.code === "ipc_work_mode")) {
                 ctx._powerModeChanged = ctx._powerModeChanged || new Set();
                 ctx._powerModeChanged.add(tuyaDevice.id);
               }
@@ -3307,16 +3306,16 @@ module.exports = {
               );
             }
 
-            // Restore wireless_powermode to "0" (power-save) so the
+            // Restore ipc_work_mode to "0" (power-save) so the
             // battery camera doesn't stay in performance mode indefinitely.
             if (ctx._powerModeChanged?.has(tuyaId)) {
               const tuyaDevice = dm.getDevice(tuyaId);
               if (tuyaDevice) {
                 dm.sendCommands(tuyaId, [
-                  { code: "wireless_powermode", value: "0" },
+                  { code: "ipc_work_mode", value: "0" },
                 ]).then(
                   () => log("info", `WebRTC disconnected — restored power-save mode for "${tuyaDevice.name}"`),
-                  (e) => log("debug", `[WebRTC] Restore wireless_powermode failed: ${e.message || e}`),
+                  (e) => log("debug", `[WebRTC] Restore ipc_work_mode failed: ${e.message || e}`),
                 );
               }
               ctx._powerModeChanged.delete(tuyaId);
