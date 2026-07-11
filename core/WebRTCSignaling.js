@@ -630,6 +630,51 @@ class WebRTCSignaling {
     this.sessionId = null;
   }
 
+  /**
+   * Send a protocol 312 resolution command to the camera via IPC MQTT.
+   * Tuya camera WebRTC stacks wait for this after answering the offer
+   * to begin encoding video. Without it, the camera sends a disconnect
+   * after ~10s. This is what go2rtc does in its PeerConnectionStateConnected
+   * handler (pkg/tuya/webrtc.go).
+   *
+   * @param {number} resolution - 0 = HD, 1 = SD (default: 0)
+   */
+  sendResolution(resolution = 0) {
+    if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) {
+      this.log("debug", `[WebRTC] Cannot send resolution — no active session`);
+      return;
+    }
+
+    const RESOLUTION_PROTOCOL = 312;
+
+    const msg = {
+      protocol: RESOLUTION_PROTOCOL,
+      pv: "2.2",
+      t: Math.floor(Date.now() / 1000),
+      data: {
+        header: {
+          from: this._getFrom(),
+          to: this.webrtcConfig.deviceId,
+          sessionid: this.sessionId,
+          moto_id: this.webrtcConfig.motoId,
+          type: "resolution",
+        },
+        msg: {
+          cmdValue: resolution,
+          type: "resolution",
+        },
+      },
+    };
+
+    const payload = JSON.stringify(msg);
+    const topic = this._resolveTopic();
+    this.log(
+      "info",
+      `[WebRTC] Sending resolution command (resolution=${resolution}, HD=${resolution === 0}, session=${this.sessionId})`,
+    );
+    this._publish(payload);
+  }
+
   _flushCandidates() {
     if (this._pendingCandidates.length === 0) return;
     this.log(
@@ -740,7 +785,8 @@ class WebRTCSignaling {
       this.mqttConfig?.source_topic?.ipc || this.mqttConfig?.client_id || "";
     const resolved = this._resolveTemplateTopic(raw);
     const parts = resolved.split("/");
-    return parts[parts.length - 1] || resolved;
+    // go2rtc: from = parts[3] (the UID after /av/u/)
+    return parts[3] || parts[parts.length - 1] || resolved;
   }
 
   _publish(payload) {
@@ -795,6 +841,14 @@ class WebRTCSignaling {
       }
       if (out.endsWith("/moto_id")) {
         out = out.replace(/\/moto_id$/, `/${motoId}`);
+      }
+    }
+
+    if (out.includes("{uid}")) {
+      // The uid is typically the client_id from the MQTT config
+      const uid = this.mqttConfig?.client_id || deviceId || "";
+      if (uid) {
+        out = out.replace(/\{uid\}/g, uid);
       }
     }
 

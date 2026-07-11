@@ -2948,6 +2948,13 @@ module.exports = {
             });
             wr.on("answer", (data) => {
               api.sendWebrtcSignaling(deviceID, { event: "answer", ...data });
+              // Send resolution command to start video encoding.
+              // Tuya cameras wait for protocol 312 (type=resolution) after
+              // answering the WebRTC offer. Without it, the camera sends a
+              // disconnect ~10s later. This matches go2rtc's behavior.
+              if (typeof wr.sendResolution === "function") {
+                wr.sendResolution(0);
+              }
             });
             wr.on("candidate", (data) => {
               api.sendWebrtcSignaling(deviceID, {
