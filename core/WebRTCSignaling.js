@@ -323,18 +323,21 @@ class WebRTCSignaling {
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
 
-            // Send the offer immediately, not after a 35s delay.  go2rtc
-            // sends the CRC32 wake and the WebRTC offer back-to-back with
-            // no waiting, and battery cameras respond within 5-10s.  Our
-            // camera sends an internal WebRTC disconnect ~10s after the
-            // session starts if no offer arrives — so any delay >10s
-            // guarantees failure.
             if (this._pendingOffer) {
               const { sdp, streamType } = this._pendingOffer;
               this._pendingOffer = null;
+              // Re-send CRC32 wake just before the offer to ensure
+              // the camera's network module is active.  The first
+              // wake was sent above; this second one covers the gap
+              // while getConfigs() fetched credentials and the
+              // cloud DP commands (ipc_work_mode=1) activated the
+              // video subsystem.
+              for (const wt of wakeTopics) {
+                this.mqttClient.publish(wt, wakePayload, { qos: 1 }, () => {});
+              }
               this.log(
                 "info",
-                "[WebRTC] Battery camera — sending offer immediately after CRC32 wake",
+                "[WebRTC] Battery camera — second CRC32 wake + offer sent",
               );
               this._doSendOffer(sdp, streamType);
             } else {
