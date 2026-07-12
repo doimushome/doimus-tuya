@@ -3121,64 +3121,81 @@ module.exports = {
                 `[WebRTC] Camera "${tuyaDevice.name}" is battery-powered, sending wake-up...`,
               );
 
-              // ── Phase 1a: Send ALL available cloud DP wakes ─────
-              // Tuya battery cameras (peephole, doorbell) may have
-              // multiple wake DPs. Sending all of them maximizes the
-              // chance of waking the camera. Fire-and-forget — don't
-              // block the setup flow.
+              // ── Phase 1a: Send cloud DP wakes ───────────────────
+              // Tuya battery cameras (peephole, doorbell) need their
+              // video subsystem activated before WebRTC streaming can
+              // work.  The CRC32 IPC MQTT wake only activates the
+              // network module — the camera sensor/encoder stays in
+              // deep sleep until performance mode is enabled.
               //
-              // Critical: ipc_work_mode must be set to "1" (performance
-              // mode) BEFORE wireless_awake — the camera's video subsystem
-              // stays powered off in power-save mode ("0") even when the
-              // network interface wakes up.  The official Tuya app always
-              // switches to performance mode before streaming, which is why
-              // the camera's LED turns on with the app but not with Doimus.
-              // Note: wireless_powermode exists on some models but is
-              // read-only; ipc_work_mode is the writable equivalent.
+              // The official Tuya app always sends ipc_work_mode=1
+              // (performance mode) before starting a video stream.
+              // This is what turns on the camera's LED.  We must do
+              // the same, even if ipc_work_mode is not in the device
+              // schema — many battery cameras accept this command
+              // despite not advertising it.
+              //
+              // Strategy: Send BOTH schema-matched wake DPs AND
+              // always-send DPs (ipc_work_mode, wireless_powermode)
+              // to maximise compatibility across camera models.
+
+              // Always-send DPs: activate video subsystem regardless
+              // of what the schema lists.
+              const alwaysSendWakeDps = [
+                { code: "ipc_work_mode", value: "1" },
+                { code: "wireless_powermode", value: 1 },
+              ];
+
+              // Schema-matched wake DPs (legacy logic).
               const wakeDpCodes = [
-                "ipc_work_mode",      // must be first — set performance mode ("1")
+                "ipc_work_mode",
                 "cruise",
                 "basic_awake",
                 "video_call",
                 "wireless_awake",
               ];
-              const wakeDps =
+              const schemaWakeDps =
                 tuyaDevice.schema?.filter((s) =>
                   wakeDpCodes.includes(s.code),
                 ) || [];
-              if (wakeDps.length > 0) {
-                log(
-                  "info",
-                  `[WebRTC] Found ${wakeDps.length} wake DP(s): [${wakeDps.map((s) => s.code).join(",")}] — sending all`,
-                );
-                for (const dp of wakeDps) {
-                  // ipc_work_mode uses string value "1" (performance mode).
-                  // All other wake DPs use boolean true.
+
+              // Merge: always-send wins over schema-matched.
+              const wakeDpsMap = new Map();
+              for (const dp of alwaysSendWakeDps) {
+                wakeDpsMap.set(dp.code, dp);
+              }
+              for (const dp of schemaWakeDps) {
+                if (!wakeDpsMap.has(dp.code)) {
                   const value = dp.code === "ipc_work_mode" ? "1" : true;
-                  dm.sendCommands(tuyaDevice.id, [
-                    { code: dp.code, value },
-                  ]).then(
-                    () => log("info", `[WebRTC] Wake-up sent (dp=${dp.code}${dp.code === "ipc_work_mode" ? "=1" : ""})`),
-                    (e) =>
-                      log(
-                        "debug",
-                        `[WebRTC] Wake-up (dp=${dp.code}) send failed: ${e.message || e}`,
-                      ),
-                  );
+                  wakeDpsMap.set(dp.code, { code: dp.code, value });
                 }
-              } else {
-                log(
-                  "info",
-                  `[WebRTC] No wake DP (${wakeDpCodes.join("/")}) in schema codes=[${(tuyaDevice.schema || []).map((s) => s.code).join(",")}] — relying on CRC32 IPC wake`,
+              }
+              const wakeDps = Array.from(wakeDpsMap.values());
+
+              log(
+                "info",
+                `[WebRTC] Sending ${wakeDps.length} wake DP(s): [${wakeDps.map((d) => `${d.code}=${d.value}`).join(", ")}]`,
+              );
+              for (const dp of wakeDps) {
+                dm.sendCommands(tuyaDevice.id, [
+                  { code: dp.code, value: dp.value },
+                ]).then(
+                  () =>
+                    log(
+                      "info",
+                      `[WebRTC] Wake-up sent (dp=${dp.code}=${dp.value})`,
+                    ),
+                  (e) =>
+                    log(
+                      "debug",
+                      `[WebRTC] Wake-up (dp=${dp.code}) send failed: ${e.message || e}`,
+                    ),
                 );
               }
 
-              // Remember that we sent ipc_work_mode so we can restore
-              // it to "0" when the stream ends (battery conservation).
-              if (tuyaDevice.schema?.some((s) => s.code === "ipc_work_mode")) {
-                ctx._powerModeChanged = ctx._powerModeChanged || new Set();
-                ctx._powerModeChanged.add(tuyaDevice.id);
-              }
+              // Track so we restore ipc_work_mode to "0" on disconnect.
+              ctx._powerModeChanged = ctx._powerModeChanged || new Set();
+              ctx._powerModeChanged.add(tuyaDevice.id);
 
               // ── Phase 1b: Background wake watcher (non-blocking) ──
               // Monitor cloud MQTT for wireless_awake=true from camera.
@@ -3243,7 +3260,24 @@ module.exports = {
               });
             }
 
-            // ── Phase 2: Get configs + connect IPC MQTT (immediate) ──
+            // ── Phase 1c: Wait for video subsystem to activate ──────
+            // The cloud DP commands (ipc_work_mode=1) need time to
+            // reach the camera and activate the video subsystem.
+            // Without this delay, the camera receives the WebRTC
+            // offer before the encoder is ready and responds with a
+            // disconnect ~10s later.  Only applies to battery cameras.
+            if (needsWake) {
+              const WAKE_SETTLE_MS = 5000;
+              log(
+                "info",
+                `[WebRTC] Waiting ${WAKE_SETTLE_MS / 1000}s for camera video subsystem to activate...`,
+              );
+              await new Promise((resolve) =>
+                setTimeout(resolve, WAKE_SETTLE_MS),
+              );
+            }
+
+            // ── Phase 2: Get configs + connect IPC MQTT ─────────────
             log(
               "info",
               `[WebRTC] Fetching configs for Tuya device ${tuyaDevice.id}`,
