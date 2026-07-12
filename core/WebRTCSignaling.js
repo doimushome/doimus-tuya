@@ -160,7 +160,17 @@ class WebRTCSignaling {
       iceServers,
       deviceId,
       supportsWebrtc: true,
+      // go2rtc uses the local_key from the WebRTC config response for
+      // the CRC32 IPC MQTT wake.  This may differ from the device
+      // schema's local_key — some Tuya firmware versions return a
+      // different key or encoding here.
+      localKey: wr.local_key || null,
     };
+
+    this.log(
+      "info",
+      `[WebRTC] WebRTC config parsed: motoId=${this.webrtcConfig.motoId} hasAuth=${!!this.webrtcConfig.auth} hasLocalKey=${!!this.webrtcConfig.localKey} iceCount=${this.webrtcConfig.iceServers.length}`,
+    );
 
     // 2. Get IPC MQTT configs
     const mqRes = await this.api.post("/v1.0/iot-03/open-hub/access-config", {
@@ -280,21 +290,28 @@ class WebRTCSignaling {
       // message on the IPC broker activates the WebRTC subsystem.
       // Always send for battery cameras — the skill.lowPower field may be
       // 0 even on battery devices that need IPC-level wake-up.
-      if (this._deviceId && this._localKey) {
-        try {
-          const skill =
-            typeof this._webrtcConfigFull?.skill === "string"
-              ? JSON.parse(this._webrtcConfigFull.skill)
-              : this._webrtcConfigFull?.skill || {};
-          const lowPower = skill.lowPower || skill.LowPower || 0;
-          this.log(
-            "info",
-            `[WebRTC] Skill: lowPower=${lowPower} videos=${JSON.stringify(skill.videos || skill.Videos || [])} full=${JSON.stringify(skill).slice(0, 300)}`,
-          );
-          if (this._needsWake) {
-            const crc = crc32(this._localKey);
-            const wakePayload = Buffer.alloc(4);
-            wakePayload.writeUInt32BE(crc, 0);
+    // Use the local_key from the WebRTC config (API response) for CRC32
+    // wake if available — it may differ from the device schema's local_key.
+    const wakeKey = this.webrtcConfig?.localKey || this._localKey;
+    this.log(
+      "info",
+      `[WebRTC] Wake key source: ${this.webrtcConfig?.localKey ? "WebRTC config API" : "device schema"} (len=${wakeKey?.length || 0})`,
+    );
+    if (this._deviceId && wakeKey) {
+      try {
+        const skill =
+          typeof this._webrtcConfigFull?.skill === "string"
+            ? JSON.parse(this._webrtcConfigFull.skill)
+            : this._webrtcConfigFull?.skill || {};
+        const lowPower = skill.lowPower || skill.LowPower || 0;
+        this.log(
+          "info",
+          `[WebRTC] Skill: lowPower=${lowPower} videos=${JSON.stringify(skill.videos || skill.Videos || [])} full=${JSON.stringify(skill).slice(0, 300)}`,
+        );
+        if (this._needsWake) {
+          const crc = crc32(wakeKey);
+          const wakePayload = Buffer.alloc(4);
+          wakePayload.writeUInt32BE(crc, 0);
 
             // Some camera firmwares listen on m/w/{deviceId}, others on
             // {deviceId}/w. Send both to cover more battery camera models

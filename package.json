@@ -1,6 +1,6 @@
 {
   "name": "doimus-tuya",
-  "version": "0.8.49",
+  "version": "0.8.50",
   "description": "Doimus plugin for Tuya/Smart Life devices",
   "license": "MIT",
   "main": "index.js",
@@ -8,7 +8,8 @@
     "type": "native"
   },
   "scripts": {
-    "test:webrtc": "node --test test/webrtc-signaling.test.js"
+    "test:webrtc": "node --test test/webrtc-signaling.test.js",
+    "webrtc:self-test": "node test/webrtc-self-test.js"
   },
   "dependencies": {
     "@roamhq/wrtc": "^0.10.0",
