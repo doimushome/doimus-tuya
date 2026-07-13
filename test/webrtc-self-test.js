@@ -273,7 +273,8 @@ function connectHub() {
 }
 
 function handleHubMessage(msg) {
-  if (msg.type === "webrtc_signaling" && msg.device_id === DEVICE_ID) {
+  // Hub broadcasts: {"event": "webrtc_signaling", "data": {"device_id": "...", "event": "config", ...}}
+  if (msg.event === "webrtc_signaling" && msg.data && msg.data.device_id === DEVICE_ID) {
     const data = msg.data;
     const event = data.event;
 
@@ -356,7 +357,7 @@ function sendToPlugin(event, extra = {}) {
   }
 
   const msg = JSON.stringify({
-    type: "webrtc_command",
+    type: "webrtc_signaling",
     device_id: DEVICE_ID,
     data: { event, ...extra },
   });
@@ -376,7 +377,7 @@ function sendToPluginRaw(action, extra = {}) {
   }
 
   const msg = JSON.stringify({
-    type: "webrtc_command",
+    type: "webrtc_signaling",
     device_id: DEVICE_ID,
     data: { action, ...extra },
   });

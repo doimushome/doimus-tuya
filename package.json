@@ -1,7 +1,7 @@
 {
   "name": "doimus-tuya",
-  "version": "0.8.50",
-  "description": "Doimus plugin for Tuya/Smart Life devices",
+  "version": "0.8.51",
+    "description": "Doimus plugin for Tuya/Smart Life devices",
   "license": "MIT",
   "main": "index.js",
   "doimus": {
