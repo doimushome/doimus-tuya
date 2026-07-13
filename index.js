@@ -3142,8 +3142,13 @@ module.exports = {
               // Always-send DPs: activate video subsystem regardless
               // of what the schema lists.
               const alwaysSendWakeDps = [
-                { code: "ipc_work_mode", value: "1" },
-                { code: "wireless_powermode", value: 1 },
+                // ipc_work_mode: 0=power saving, 1=performance.
+                // Must be integer, not string — Tuya API rejects type mismatches.
+                { code: "ipc_work_mode", value: 1 },
+                // wireless_powermode: 0=power saving, 1=standard, 2=performance.
+                // Some battery cameras need performance mode (2) to activate
+                // the video encoder — standard mode (1) keeps it in sleep.
+                { code: "wireless_powermode", value: 2 },
               ];
 
               // Schema-matched wake DPs (legacy logic).
@@ -3166,7 +3171,7 @@ module.exports = {
               }
               for (const dp of schemaWakeDps) {
                 if (!wakeDpsMap.has(dp.code)) {
-                  const value = dp.code === "ipc_work_mode" ? "1" : true;
+                  const value = dp.code === "ipc_work_mode" ? 1 : true;
                   wakeDpsMap.set(dp.code, { code: dp.code, value });
                 }
               }
@@ -3353,10 +3358,11 @@ module.exports = {
               const tuyaDevice = dm.getDevice(tuyaId);
               if (tuyaDevice) {
                 dm.sendCommands(tuyaId, [
-                  { code: "ipc_work_mode", value: "0" },
+                  { code: "ipc_work_mode", value: 0 },
+                  { code: "wireless_powermode", value: 0 },
                 ]).then(
                   () => log("info", `WebRTC disconnected — restored power-save mode for "${tuyaDevice.name}"`),
-                  (e) => log("debug", `[WebRTC] Restore ipc_work_mode failed: ${e.message || e}`),
+                  (e) => log("debug", `[WebRTC] Restore power mode failed: ${e.message || e}`),
                 );
               }
               ctx._powerModeChanged.delete(tuyaId);
