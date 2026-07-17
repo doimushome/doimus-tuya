@@ -273,9 +273,14 @@ function connectHub() {
 }
 
 function handleHubMessage(msg) {
-  // Hub broadcasts: {"event": "webrtc_signaling", "data": {"device_id": "...", "event": "config", ...}}
-  if (msg.event === "webrtc_signaling" && msg.data && msg.data.device_id === DEVICE_ID) {
-    const data = msg.data;
+  // Hub broadcasts webrtc_signaling in two possible formats:
+  // Old format: { "type": "webrtc_signaling", "data": {"event": "config", ...}, "device_id": "...", "plugin_id": "..." }
+  // The data field wraps the actual event payload.
+  if (msg.type === "webrtc_signaling" && msg.device_id === DEVICE_ID) {
+    // The hub relays the plugin's sendWebrtcSignaling() output directly.
+    // The plugin sends: { "type": "webrtc_signaling", "device_id": "...", "webrtc_signaling": { event, ... } }
+    // The hub broadcasts: { "type": "webrtc_signaling", "device_id": "...", "data": { event, ... } }
+    const data = msg.data || msg.webrtc_signaling || {};
     const event = data.event;
 
     log("info", `📨 Hub signaling event: ${event}`, JSON.stringify(data).slice(0, 200));

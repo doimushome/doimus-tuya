@@ -314,10 +314,16 @@ class WebRTCSignaling {
           wakePayload.writeUInt32BE(crc, 0);
 
             // Some camera firmwares listen on m/w/{deviceId}, others on
-            // {deviceId}/w. Send both to cover more battery camera models
-            // (peephole, doorbell, etc.).  The CRC32 wake payload is the
-            // same format used by go2rtc and ismartlife.me.
-            const wakeTopics = [`m/w/${this._deviceId}`, `${this._deviceId}/w`];
+            // {deviceId}/w. Send all three common topics to cover more
+            // battery camera models (peephole, doorbell, etc.).
+            // Also send to m/s/{deviceId} — some cameras listen here
+            // even in low-power mode and waking via the send topic can
+            // be more reliable than the dedicated wake topic.
+            const wakeTopics = [
+              `m/w/${this._deviceId}`,
+              `${this._deviceId}/w`,
+              `m/s/${this._deviceId}`,
+            ];
             for (const wt of wakeTopics) {
               this.mqttClient.publish(wt, wakePayload, { qos: 1 }, (err) => {
                 if (err) {
@@ -340,45 +346,52 @@ class WebRTCSignaling {
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
 
-            if (this._pendingOffer) {
-              const { sdp, streamType } = this._pendingOffer;
-              this._pendingOffer = null;
-              // Re-send CRC32 wake just before the offer to ensure
-              // the camera's network module is active.  The first
-              // wake was sent above; this second one covers the gap
-              // while getConfigs() fetched credentials and the
-              // cloud DP commands (ipc_work_mode=1) activated the
-              // video subsystem.
-              for (const wt of wakeTopics) {
-                this.mqttClient.publish(wt, wakePayload, { qos: 1 }, () => {});
-              }
-              this.log(
-                "info",
-                "[WebRTC] Battery camera — second CRC32 wake + offer sent",
-              );
-              this._doSendOffer(sdp, streamType);
-            } else {
-              this.log(
-                "info",
-                "[WebRTC] Battery camera — CRC32 wake sent, awaiting offer from mobile",
-              );
-            }
+            // Give the CRC32 wake a short moment to reach the camera
+            // before sending the offer.  Battery cameras take 2-5s to
+            // wake their IPC MQTT subsystem after the wake message.
+            setTimeout(() => {
+              if (!this.running || !this.mqttClient) return;
 
-            // Safety net: if the mobile app's offer arrives very late
-            // (>30s), flush it via setWoken().  This is longer than the
-            // camera's 10s session timeout, but prevents a permanently
-            // stuck session if the mobile app takes unusually long.
-            if (!this._wakeFlushTimer) {
-              this._wakeFlushTimer = setTimeout(() => {
-                this._wakeFlushTimer = null;
-                if (!this._woken) {
+              // Re-send CRC32 wake just before the offer to ensure
+              // the camera's network module is active.
+              for (const wt of wakeTopics) {
+                try {
+                  this.mqttClient.publish(wt, wakePayload, { qos: 1 }, () => {});
+                } catch (_) {}
+              }
+
+              // If we have a pending offer, send it now.
+              if (this._pendingOffer) {
+                const { sdp, streamType } = this._pendingOffer;
+                this._pendingOffer = null;
+                this.log(
+                  "info",
+                  "[WebRTC] Battery camera — delayed offer sent after CRC32 wake",
+                );
+                this._doSendOffer(sdp, streamType);
+              } else {
+                this.log(
+                  "info",
+                  "[WebRTC] CCRC32 wake sent, offer will be sent when it arrives",
+                );
+              }
+            }, 3000);
+
+            // If no offer arrives after 12s, warn via error event.
+            // This is faster than the 30s safety net and gives the
+            // mobile app a chance to retry.
+            if (!this._offerBufferTimer) {
+              this._offerBufferTimer = setTimeout(() => {
+                this._offerBufferTimer = null;
+                if (this._pendingOffer || this._wakePendingOffer) {
                   this.log(
-                    "info",
-                    "[WebRTC] Proactive wake flush — sending buffered offer (safety net)",
+                    "warn",
+                    "[WebRTC] No offer received within 12s of wake — mobile app may be slow",
                   );
-                  this.setWoken();
+                  // Flush anyway as a last resort
+                  if (!this._woken) this.setWoken();
                 }
-              }, 30000);
+              }, 12000);
             }
             return;
           }
@@ -734,10 +747,14 @@ class WebRTCSignaling {
   setWoken() {
     if (this._woken) return;
     this._woken = true;
-    // Cancel the proactive wake flush timer since we're waking up now
+    // Cancel timers
     if (this._wakeFlushTimer) {
       clearTimeout(this._wakeFlushTimer);
       this._wakeFlushTimer = null;
+    }
+    if (this._offerBufferTimer) {
+      clearTimeout(this._offerBufferTimer);
+      this._offerBufferTimer = null;
     }
     this.log(
       "info",
@@ -781,6 +798,10 @@ class WebRTCSignaling {
     if (this._offerBufferTimer) {
       clearTimeout(this._offerBufferTimer);
       this._offerBufferTimer = null;
+    }
+    if (this._wakeDelayTimer) {
+      clearTimeout(this._wakeDelayTimer);
+      this._wakeDelayTimer = null;
     }
     if (this.mqttClient) {
       this.mqttClient.end(true);
