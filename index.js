@@ -3142,43 +3142,32 @@ module.exports = {
               // always-send DPs (ipc_work_mode, wireless_powermode)
               // to maximise compatibility across camera models.
 
-              // Always-send DPs: activate video subsystem regardless
-              // of what the schema lists.
-              const alwaysSendWakeDps = [
-                // ipc_work_mode: 0=power saving, 1=performance.
-                // Must be integer, not string — Tuya API rejects type mismatches.
-                { code: "ipc_work_mode", value: 1 },
-                // wireless_powermode: 0=power saving, 1=standard, 2=performance.
-                // Some battery cameras need performance mode (2) to activate
-                // the video encoder — standard mode (1) keeps it in sleep.
-                { code: "wireless_powermode", value: 2 },
-              ];
-
-              // Schema-matched wake DPs (legacy logic).
+              // Only send wake DPs that exist in the device schema.
+              // ipc_work_mode and wireless_awake are NOT supported by
+              // this camera (category=sp) — the Tuya API returns
+              // code=2008 (command or value not support) for both.
+              // Sending unsupported DPs is harmless (API rejects them)
+              // but clutters the logs with errors.
               const wakeDpCodes = [
-                "ipc_work_mode",
+                "wireless_powermode",
+                "wireless_awake",
                 "cruise",
                 "basic_awake",
                 "video_call",
-                "wireless_awake",
               ];
               const schemaWakeDps =
                 tuyaDevice.schema?.filter((s) =>
-                  wakeDpCodes.includes(s.code),
+                  wakeDpCodes.includes(s.code) && s.mode === "rw" || s.mode === "wo",
                 ) || [];
-
-              // Merge: always-send wins over schema-matched.
-              const wakeDpsMap = new Map();
-              for (const dp of alwaysSendWakeDps) {
-                wakeDpsMap.set(dp.code, dp);
+              const wakeDps = schemaWakeDps.map((s) => ({
+                code: s.code,
+                value: s.code === "wireless_powermode" ? 2 : true,
+              }));
+              // If schema has no writable wake DPs, try wireless_powermode
+              // as a last resort — most battery cameras support it.
+              if (wakeDps.length === 0) {
+                wakeDps.push({ code: "wireless_powermode", value: 2 });
               }
-              for (const dp of schemaWakeDps) {
-                if (!wakeDpsMap.has(dp.code)) {
-                  const value = dp.code === "ipc_work_mode" ? 1 : true;
-                  wakeDpsMap.set(dp.code, { code: dp.code, value });
-                }
-              }
-              const wakeDps = Array.from(wakeDpsMap.values());
 
               log(
                 "info",
@@ -3356,18 +3345,17 @@ module.exports = {
             // Restore ipc_work_mode to "0" (power-save) so the
             // battery camera doesn't stay in performance mode indefinitely.
             if (ctx._powerModeChanged?.has(tuyaId)) {
-              const tuyaDevice = dm.getDevice(tuyaId);
-              if (tuyaDevice) {
-                dm.sendCommands(tuyaId, [
-                  { code: "ipc_work_mode", value: 0 },
-                  { code: "wireless_powermode", value: 0 },
-                ]).then(
-                  () => log("info", `WebRTC disconnected — restored power-save mode for "${tuyaDevice.name}"`),
-                  (e) => log("debug", `[WebRTC] Restore power mode failed: ${e.message || e}`),
-                );
-              }
-              ctx._powerModeChanged.delete(tuyaId);
-            }
+          const tuyaDevice = dm.getDevice(tuyaId);
+          if (tuyaDevice) {
+            dm.sendCommands(tuyaId, [
+              { code: "wireless_powermode", value: 0 },
+            ]).then(
+              () => log("info", `WebRTC disconnected — restored power-save mode for "${tuyaDevice.name}"`),
+              (e) => log("debug", `[WebRTC] Restore power mode failed: ${e.message || e}`),
+            );
+          }
+          ctx._powerModeChanged.delete(tuyaId);
+        }
           }
           // Clean up any active stream allocation
           stopStreamAllocation(deviceID, ctx, log);
