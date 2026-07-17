@@ -2178,12 +2178,15 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
   const deviceName = tuyaDevice.name || "unknown";
   log("info", `[StreamAlloc] Trying stream allocation for "${deviceName}"`);
 
-  // Call the Tuya stream allocation API
+  // Call the Tuya stream allocation API with go2rtc-compatible parameters.
+  // expire=120 gives the camera 2 minutes to connect before the stream
+  // slot is released. transport=tcp ensures ffmpeg uses TCP (not UDP)
+  // which is more reliable through NAT/firewalls.
   let result;
   try {
     result = await ctx.deviceManager.api.post(
       `/v1.0/devices/${tuyaDevice.id}/stream/actions/allocate`,
-      { type: "rtsp" },
+      { type: "rtsp", expire: 120, transport: "tcp" },
     );
   } catch (e) {
     log(
@@ -2282,16 +2285,18 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
       }
     });
 
-    // Timeout: if no frames within 15s, clean up
+    // Timeout: if no frames within 30s, clean up
+    // Battery cameras (peephole, doorbell) can take 20-25s to boot
+    // after the wake command, so 15s was too short.
     frameTimer = setTimeout(() => {
       if (frameCount === 0) {
         log(
           "warn",
-          `[StreamAlloc] No frames received within 15s for "${deviceName}" — giving up`,
+          `[StreamAlloc] No frames received within 30s for "${deviceName}" — giving up`,
         );
         stopStreamAllocation(doimusID, ctx, log);
       }
-    }, 15000);
+    }, 30000);
     if (frameTimer.unref) frameTimer.unref();
 
     proc.on("error", (err) => {
@@ -2963,14 +2968,12 @@ module.exports = {
               });
             });
             wr.on("disconnect", (data) => {
-              // Battery-powered cameras (sp, doorbell) need ~40s to
-              // fully boot from deep sleep after wake commands are sent.
-              // WebRTC will fail (camera sends disconnect at ~T+10s)
-              // because the video subsystem isn't ready yet.
-              // Instead of immediately trying P2P/StreamAllocation
-              // (which also fails), wait for the camera to finish
-              // booting before attempting fallback streaming.
-              const BATTERY_DELAY_MS = needsWake ? 45000 : 0;
+              // Battery cameras (sp, doorbell) send WebRTC disconnect
+              // ~10s after the offer if the video subsystem isn't ready.
+              // Wait 20s for the camera to finish booting before trying
+              // P2P/StreamAllocation fallback.  The parallel stream
+              // allocation started earlier will already be in progress.
+              const BATTERY_DELAY_MS = needsWake ? 20000 : 0;
               log(
                 "info",
                 `[WebRTC] Camera disconnected session=${data.sessionId}${needsWake ? ` — waiting ${BATTERY_DELAY_MS / 1000}s for battery camera to wake before fallback` : " — trying cloud stream allocation"}`,
@@ -3202,22 +3205,21 @@ module.exports = {
               ctx._powerModeChanged = ctx._powerModeChanged || new Set();
               ctx._powerModeChanged.add(tuyaDevice.id);
 
-              // ── Phase 1b: Background wake watcher (non-blocking) ──
-              // Monitor cloud MQTT for wireless_awake=true from camera.
-              // When confirmed, call wr.setWoken() to flush buffered offer.
-              const WAKE_TIMEOUT_MS = 120000;
+              // ── Phase 1b: Background wake progress (non-blocking) ──
+              // The CRC32 wake sent via IPC MQTT should activate the camera.
+              // Monitor for 30s with progress updates for the mobile UI.
+              const WAKE_TIMEOUT_MS = 30000;
 
               // Send initial "waking" event so the mobile app can show
               // a "Camera is waking up..." status immediately.
               const wakeStartTime = Date.now();
               api.sendWebrtcSignaling(deviceID, {
                 event: "waking",
-                message: "Camera is waking up... (up to 120s)",
+                message: "Camera is waking up... (up to 30s)",
                 elapsed: 0,
               });
 
-              // Periodic progress logging and mobile app updates every 15s
-              // so both the logs and the UI show the camera is coming.
+              // Periodic progress logging and mobile app updates every 10s
               const progressInterval = setInterval(() => {
                 const elapsed = Math.round((Date.now() - wakeStartTime) / 1000);
                 log(
@@ -3229,21 +3231,17 @@ module.exports = {
                   message: `Camera is waking up... (${elapsed}s)`,
                   elapsed,
                 });
-              }, 15000);
+              }, 10000);
 
               const wakeTimer = setTimeout(() => {
                 clearInterval(progressInterval);
                 ctx._wakeWatchers.delete(tuyaDevice.id);
                 log(
                   "warn",
-                  `[WebRTC] Wake timeout (${WAKE_TIMEOUT_MS / 1000}s) for "${tuyaDevice.name}" — flushing offer anyway (camera may wake later)`,
+                  `[WebRTC] Wake timeout (${WAKE_TIMEOUT_MS / 1000}s) for "${tuyaDevice.name}" — flushing offer anyway`,
                 );
-                // Even if the camera didn't confirm wake, flush the
-                // buffered offer as a fallback. The camera may have
-                // woken up but we missed the MQTT message.
-                if (wr && typeof wr.setWoken === "function") {
-                  wr.setWoken();
-                }
+                // The offer was already sent by WebRTCSignaling after the
+                // 3s CRC32 wake delay.  This timeout just cleans up.
               }, WAKE_TIMEOUT_MS);
               ctx._wakeWatchers.set(tuyaDevice.id, {
                 resolve: () => {
@@ -3252,17 +3250,20 @@ module.exports = {
                   ctx._wakeWatchers.delete(tuyaDevice.id);
                   log(
                     "info",
-                    `[WebRTC] Camera "${tuyaDevice.name}" wake confirmed — flushing WebRTC offer`,
+                    `[WebRTC] Camera "${tuyaDevice.name}" wake confirmed — offer already sent via IPC MQTT`,
                   );
-                  // Tell WebRTCSignaling the camera is awake so it
-                  // flushes the buffered offer to the IPC MQTT broker.
-                  if (wr && typeof wr.setWoken === "function") {
-                    wr.setWoken();
-                  }
                 },
                 timer: wakeTimer,
                 progressInterval,
               });
+
+              // Start stream allocation in parallel with WebRTC, like
+              // go2rtc does.  The stream allocation API triggers a cloud
+              // push to the camera, which is a more reliable wake signal
+              // than CRC32 for some battery camera models.
+              startStreamAllocation(deviceID, tuyaDevice, ctx, log, api).catch(
+                (e) => log("debug", `[StreamAlloc] Parallel start failed: ${e.message}`),
+              );
             }
 
             // ── Phase 1c: Wait for video subsystem to activate ──────
