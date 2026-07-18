@@ -1384,73 +1384,79 @@ async function processCoalescedMotion(tuyaID, ctx, dm, api, log) {
     `Processing coalesced motion for "${device.name}" — eventKey=${eventKey} (${statuses.length} coalesced status items)`,
   );
 
-  // 1. Update state immediately with _capture_id so the backend creates
-  //    the timeline entry WITH the correct image_key from the start.
-  //    The backend strips _capture_id from device state — it never
-  //    persists as a real state key.
-  api.updateDeviceState(doimusID, {
-    motion: true,
-    _capture_id: eventKey,
-  });
+  // ── Helper: send the state update that creates the timeline entry ──
+  // Pulled into a function so both the inline path (after image store)
+  // and the async path (S3/REST) can call it at the right time.
+  const sendMotionStateUpdate = () => {
+    // Update state with _capture_id so the backend creates the timeline
+    // entry WITH the correct image_key. The backend strips _capture_id
+    // from device state — it never persists as a real state key.
+    api.updateDeviceState(doimusID, {
+      motion: true,
+      _capture_id: eventKey,
+    });
 
-  // ── Sync lastKnownState ───────────────────────────────────────────
-  // Keep the plugin's internal lastKnownState in sync with the backend
-  // so the auto-reset timer can correctly detect motion is still true.
-  // If a previous edge-detection timer already reset lastKnownState to
-  // false, the timer below would never fire — leaving motion stuck.
-  ctx.lastKnownState.set(tuyaID, {
-    ...(ctx.lastKnownState.get(tuyaID) || {}),
-    motion: true,
-  });
+    // Sync lastKnownState so the auto-reset timer detects motion is true.
+    ctx.lastKnownState.set(tuyaID, {
+      ...(ctx.lastKnownState.get(tuyaID) || {}),
+      motion: true,
+    });
 
-  // ── Motion auto-reset timer ──────────────────────────────────────
-  // processCoalescedMotion is the sole sender of motion:true.
-  // Ensure the auto-reset timer is active so motion:false is sent
-  // even if the coalesce window extended past the original edge-
-  // detection timer (which is only set on the false→true transition
-  // and is NOT extended by subsequent MQTT packets).
-  // Without this, motion gets stuck as true when:
-  //   t=0: motion edge → timer set for t=5, coalesce for t=1.5
-  //   t=3: another MQTT → coalesce extended to t=4.5 (timer not extended)
-  //   t=4: another MQTT → coalesce extended to t=5.5
-  //   t=5: auto-reset fires → motion:false + timer entry deleted
-  //   t=5.5: processCoalescedMotion → motion:true → STUCK (no timer)
-  if (!ctx._motionTimers) ctx._motionTimers = new Map();
-  const existing = ctx._motionTimers.get(tuyaID);
-  if (existing) clearTimeout(existing);
-  ctx._motionTimers.set(
-    tuyaID,
-    setTimeout(() => {
-      const current = ctx.lastKnownState.get(tuyaID);
-      if (current && current.motion === true) {
-        log(
-          "info",
-          `Motion auto-reset for "${device.name}" (from coalesce, 5s timeout)`,
-        );
-        const resetState = { motion: false };
-        api.updateDeviceState(doimusID, resetState);
-        ctx.lastKnownState.set(tuyaID, {
-          ...current,
-          ...resetState,
-        });
-        if (Array.isArray(device.status)) {
-          const motionPattern = /motion|movement|doorbell|human|person|pir/i;
-          for (const dp of device.status) {
-            if (motionPattern.test(dp.code)) {
-              dp.value = "";
+    // ── Motion auto-reset timer ──────────────────────────────────────
+    // processCoalescedMotion is the sole sender of motion:true.
+    // Ensure the auto-reset timer is active so motion:false is sent
+    // even if the coalesce window extended past the original edge-
+    // detection timer (which is only set on the false→true transition
+    // and is NOT extended by subsequent MQTT packets).
+    // Without this, motion gets stuck as true when:
+    //   t=0: motion edge → timer set for t=5, coalesce for t=1.5
+    //   t=3: another MQTT → coalesce extended to t=4.5 (timer not extended)
+    //   t=4: another MQTT → coalesce extended to t=5.5
+    //   t=5: auto-reset fires → motion:false + timer entry deleted
+    //   t=5.5: processCoalescedMotion → motion:true → STUCK (no timer)
+    if (!ctx._motionTimers) ctx._motionTimers = new Map();
+    const existing = ctx._motionTimers.get(tuyaID);
+    if (existing) clearTimeout(existing);
+    ctx._motionTimers.set(
+      tuyaID,
+      setTimeout(() => {
+        const current = ctx.lastKnownState.get(tuyaID);
+        if (current && current.motion === true) {
+          log(
+            "info",
+            `Motion auto-reset for "${device.name}" (from coalesce, 5s timeout)`,
+          );
+          const resetState = { motion: false };
+          api.updateDeviceState(doimusID, resetState);
+          ctx.lastKnownState.set(tuyaID, {
+            ...current,
+            ...resetState,
+          });
+          if (Array.isArray(device.status)) {
+            const motionPattern = /motion|movement|doorbell|human|person|pir/i;
+            for (const dp of device.status) {
+              if (motionPattern.test(dp.code)) {
+                dp.value = "";
+              }
             }
           }
         }
-      }
-      ctx._motionTimers.delete(tuyaID);
-    }, 5000),
-  );
+        ctx._motionTimers.delete(tuyaID);
+      }, 5000),
+    );
+  };
 
-  // 2. Try inline image decode (movement_detect_pic / doorbell_pic DPs).
+  // ── Step 1: Try to capture the image BEFORE creating the timeline entry ──
+  // This eliminates the race where the mobile fetches the timeline entry
+  // before the image is stored, causing a stale404 to be cached.
+  // For inline decode (synchronous), the image is available immediately.
+  // For DP URL download (async but fast), the image is available soon after.
+
+  // 1a. Try inline image decode (movement_detect_pic / doorbell_pic DPs).
   let imageData = tryDecodeCameraImage(device, statuses, log);
   let imageMime = imageData ? detectImageMime(imageData) : null;
 
-  // 3. Try DP URL (some doorbells embed a URL in a DP value).
+  // 1b. Try DP URL (some doorbells embed a URL in a DP value).
   if (!imageData) {
     const directUrl = extractSnapshotUrlFromStatus(statuses);
     if (directUrl) {
@@ -1470,6 +1476,7 @@ async function processCoalescedMotion(tuyaID, ctx, dm, api, log) {
     }
   }
 
+  // ── Inline/DP image captured — store FIRST, then create timeline entry ──
   if (imageData) {
     storeMotionImage(
       doimusID,
@@ -1480,11 +1487,22 @@ async function processCoalescedMotion(tuyaID, ctx, dm, api, log) {
       log,
       device,
     );
+    // Now that the image is in ImageStore, create the timeline entry.
+    // The mobile will find the image immediately — no 404 gap.
+    sendMotionStateUpdate();
     ctx._motionCoalesce.delete(tuyaID);
     return;
   }
 
-  // 4. No inline image — check for S3 metadata (initiative_message).
+  // ── No inline image — create timeline entry first, then async fetch ──
+  // For S3/REST, the image won't be available for 8-10 seconds.
+  // Create the timeline entry now so the event appears in the timeline,
+  // and the mobile falls back to snapshot_latest until the image arrives.
+  // The FrameUpdated WS event (from storeMotionImage) will trigger a
+  // re-fetch once the image is stored.
+  sendMotionStateUpdate();
+
+  // 2. No inline image — check for S3 metadata (initiative_message).
   const metadata = parseMotionMetadata(statuses, log, device.name);
   if (metadata) {
     log(
@@ -3245,34 +3263,11 @@ module.exports = {
                 timer: wakeTimer,
                 progressInterval,
               });
-
-              // Start stream allocation in parallel with WebRTC, like
-              // go2rtc does.  The stream allocation API triggers a cloud
-              // push to the camera, which is a more reliable wake signal
-              // than CRC32 for some battery camera models.
-              startStreamAllocation(deviceID, tuyaDevice, ctx, log, api).catch(
-                (e) => log("debug", `[StreamAlloc] Parallel start failed: ${e.message}`),
-              );
-            }
-
-            // ── Phase 1c: Wait for video subsystem to activate ──────
-            // The cloud DP commands (ipc_work_mode=1) need time to
-            // reach the camera and activate the video subsystem.
-            // Without this delay, the camera receives the WebRTC
-            // offer before the encoder is ready and responds with a
-            // disconnect ~10s later.  Only applies to battery cameras.
-            if (needsWake) {
-              const WAKE_SETTLE_MS = 5000;
-              log(
-                "info",
-                `[WebRTC] Waiting ${WAKE_SETTLE_MS / 1000}s for camera video subsystem to activate...`,
-              );
-              await new Promise((resolve) =>
-                setTimeout(resolve, WAKE_SETTLE_MS),
-              );
             }
 
             // ── Phase 2: Get configs + connect IPC MQTT ─────────────
+            // go2rtc has no delay here. The CRC32 wake is sent after
+            // IPC MQTT connects, and the offer follows immediately.
             log(
               "info",
               `[WebRTC] Fetching configs for Tuya device ${tuyaDevice.id}`,
@@ -3287,6 +3282,32 @@ module.exports = {
                 configs,
                 needsWake,
               );
+
+              // ── Phase 3: Parallel streaming paths (battery cameras) ─
+              // Battery-powered cameras (sp, doorbell) need the stream
+              // allocation API call to trigger the cloud push notification
+              // that wakes them up.  Without this, the camera stays in deep
+              // sleep and ignores both the WebRTC offer and P2P connection
+              // attempts.  Start these now, not just as fallback.
+              //
+              // For non-battery cameras, skip this — they handle WebRTC
+              // directly and P2P/stream allocation are unnecessary.
+              if (needsWake) {
+                log(
+                  "info",
+                  `[WebRTC] Battery camera — starting P2P + stream allocation in parallel for "${tuyaDevice.name}"`,
+                );
+                startP2P(deviceID, tuyaDevice, ctx, log, api);
+                startStreamAllocation(
+                  deviceID,
+                  tuyaDevice,
+                  ctx,
+                  log,
+                  api,
+                ).catch((e) =>
+                  log("debug", `[StreamAlloc] Failed: ${e.message}`),
+                );
+              }
             } else {
               log(
                 "warn",

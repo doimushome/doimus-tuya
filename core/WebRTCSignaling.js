@@ -165,6 +165,10 @@ class WebRTCSignaling {
       // schema's local_key — some Tuya firmware versions return a
       // different key or encoding here.
       localKey: wr.local_key || null,
+      // Preserve the raw skill string and parsed skill object so that
+      // connect() can read skill.lowPower (go2rtc uses this to decide
+      // whether to send the CRC32 IPC MQTT wake).
+      skill: wr.skill || null,
     };
 
     this.log(
@@ -173,12 +177,15 @@ class WebRTCSignaling {
     );
 
     // 2. Get IPC MQTT configs
-    const mqRes = await this.api.post("/v1.0/iot-03/open-hub/access-config", {
+    // go2rtc uses /v2.0/open-iot-hub/access/config with a fresh UUID
+    // per connection. Using a stale link_id from a previous session
+    // can cause the broker to reject the subscription.
+    this.linkId = uuidv4();
+    const mqRes = await this.api.post("/v2.0/open-iot-hub/access/config", {
       uid,
-      link_id: this.linkId,
+      unique_id: this.linkId,
       link_type: "mqtt",
       topics: "ipc",
-      msg_encrypted_version: "1.0",
     });
 
     if (!mqRes.success || !mqRes.result) {
@@ -346,36 +353,25 @@ class WebRTCSignaling {
                 this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
             });
 
-            // Give the CRC32 wake a short moment to reach the camera
-            // before sending the offer.  Battery cameras take 2-5s to
-            // wake their IPC MQTT subsystem after the wake message.
-            setTimeout(() => {
-              if (!this.running || !this.mqttClient) return;
-
-              // Re-send CRC32 wake just before the offer to ensure
-              // the camera's network module is active.
-              for (const wt of wakeTopics) {
-                try {
-                  this.mqttClient.publish(wt, wakePayload, { qos: 1 }, () => {});
-                } catch (_) {}
-              }
-
-              // If we have a pending offer, send it now.
-              if (this._pendingOffer) {
-                const { sdp, streamType } = this._pendingOffer;
-                this._pendingOffer = null;
-                this.log(
-                  "info",
-                  "[WebRTC] Battery camera — delayed offer sent after CRC32 wake",
-                );
-                this._doSendOffer(sdp, streamType);
-              } else {
-                this.log(
-                  "info",
-                  "[WebRTC] CCRC32 wake sent, offer will be sent when it arrives",
-                );
-              }
-            }, 3000);
+            // go2rtc sends wake and offer back-to-back with no delay.
+            // Battery cameras start processing the offer immediately
+            // after receiving the CRC32 wake — there is no need to wait.
+            // A delay here causes the camera's internal session timeout
+            // to fire before the offer arrives.
+            if (this._pendingOffer) {
+              const { sdp, streamType } = this._pendingOffer;
+              this._pendingOffer = null;
+              this.log(
+                "info",
+                "[WebRTC] Battery camera — sending offer immediately after CRC32 wake",
+              );
+              this._doSendOffer(sdp, streamType);
+            } else {
+              this.log(
+                "info",
+                "[WebRTC] CRC32 wake sent, offer will be sent when it arrives",
+              );
+            }
 
             // If no offer arrives after 12s, warn via error event.
             // This is faster than the 30s safety net and gives the
@@ -674,8 +670,24 @@ class WebRTCSignaling {
    */
   sendResolution(resolution = 0) {
     if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) {
-      this.log("debug", `[WebRTC] Cannot send resolution — no active session`);
+      this.log("debug", `[WebRTC] Cannot send resolution -- no active session`);
       return;
+    }
+
+    // go2rtc only sends resolution if clarity switching is supported.
+    // Bit 5 of skill.webrtc indicates clarity support. Sending it
+    // unconditionally can confuse cameras that don't support it.
+    try {
+      const skillRaw = this.webrtcConfig?.skill;
+      const skill = typeof skillRaw === "string" ? JSON.parse(skillRaw) : skillRaw || {};
+      const webrtcFlags = Number(skill.webrtc || skill.WebRTC || 0);
+      const claritySupported = (webrtcFlags & (1 << 5)) !== 0;
+      if (!claritySupported) {
+        this.log("debug", `[WebRTC] Clarity switching not supported (webrtc=0x${webrtcFlags.toString(16)}), skipping resolution command`);
+        return;
+      }
+    } catch (_) {
+      // If skill parsing fails, proceed with resolution command
     }
 
     const RESOLUTION_PROTOCOL = 312;
