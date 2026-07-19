@@ -92,7 +92,9 @@ class TuyaOpenAPI {
     this._reloginHandler = null;
     // Per-device cache of the snapshot endpoint that last succeeded.
     // Avoids probing all 8 endpoint patterns on every 30s poll cycle.
+    // Capped at 50 entries with LRU eviction.
     this._snapshotEndpointCache = new Map();
+    this._snapshotEndpointCache.maxSize = 50;
   }
 
   setReloginHandler(handler) {
@@ -582,6 +584,10 @@ class TuyaOpenAPI {
         typeof res.result === "string" ? res.result : res.result?.url;
       if (res.success && snapshotUrl) {
         // Cache the winning endpoint so subsequent polls skip the probe.
+        if (this._snapshotEndpointCache.size >= this._snapshotEndpointCache.maxSize) {
+          const firstKey = this._snapshotEndpointCache.keys().next().value;
+          this._snapshotEndpointCache.delete(firstKey);
+        }
         this._snapshotEndpointCache.set(deviceId, { method, path, body });
         this.log.info(
           "Snapshot URL obtained (method=%s path=%s, cached): %s",
@@ -615,16 +621,27 @@ class TuyaOpenAPI {
 
   // Downloads the image from a snapshot URL. Extracted as a helper so both
   // the cached and full-probe paths can reuse the same download logic.
-  _fetchSnapshotImage(url) {
+  _fetchSnapshotImage(url, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
-      https
-        .get(url, (r) => {
-          const chunks = [];
-          r.on("data", (c) => chunks.push(c));
-          r.on("end", () => resolve(Buffer.concat(chunks)));
-          r.on("error", reject);
-        })
-        .on("error", reject);
+      let timer = setTimeout(() => {
+        req.destroy(new Error(`Snapshot fetch timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const req = https.get(url, (r) => {
+        const chunks = [];
+        r.on("data", (c) => chunks.push(c));
+        r.on("end", () => {
+          clearTimeout(timer);
+          resolve(Buffer.concat(chunks));
+        });
+        r.on("error", (e) => {
+          clearTimeout(timer);
+          reject(e);
+        });
+      });
+      req.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
     });
   }
 }

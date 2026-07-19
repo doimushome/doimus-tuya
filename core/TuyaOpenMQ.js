@@ -313,7 +313,7 @@ class TuyaOpenMQ {
       this.log.debug("CurrentMessage: dataId = %s, t = %s", message.dataId, t);
 
       for (const _status of message.status) {
-        for (const payload of this.consumedQueue.reverse()) {
+        for (const payload of [...this.consumedQueue].reverse()) {
           if (message.devId !== payload.message.devId) continue;
           const latestStatus = payload.message.status.find(
             (item) => item.code === _status.code,
@@ -330,6 +330,9 @@ class TuyaOpenMQ {
     }
 
     this.consumedQueue.push(currentPayload);
+    while (this.consumedQueue.length > 100) {
+      this.consumedQueue.shift();
+    }
     while (this.consumedQueue.length > 0) {
       let entryT = this.consumedQueue[0].t;
       if (entryT > Math.pow(10, 12)) entryT = entryT / 1000;

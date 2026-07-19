@@ -327,6 +327,7 @@ class TuyaP2P extends EventEmitter {
 
     // Video reassembly buffer
     this.videoBuf = Buffer.alloc(0);
+    this._lastNalIdx = -1;
   }
 
   // ─── Connection ──────────────────────────────────────────────────────────
