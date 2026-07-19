@@ -164,6 +164,13 @@
             "condition": {
               "functionBody": "return model.options && model.options.debug;"
             }
+          },
+          "energyPollInterval": {
+            "title": "Energy Poll Interval (ms)",
+            "description": "How often to poll energy monitoring devices (cur_current, cur_power, etc.). Default 30000 (30s). Minimum 5000.",
+            "type": "integer",
+            "default": 30000,
+            "minimum": 5000
           }
         }
       }
