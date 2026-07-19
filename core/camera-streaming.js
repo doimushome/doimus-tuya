@@ -338,75 +338,119 @@ function stopP2P(doimusID, ctx, log) {
  * (especially "sp" category peepholes) respond better to the cloud-initiated
  * RTSP stream allocation than to direct P2P/WebRTC.
  */
+const STREAM_TYPES = ["rtsp", "flv", "hls"];
+
 async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
   if (!tuyaDevice || !tuyaDevice.id || !ctx.deviceManager) return;
 
   const deviceName = tuyaDevice.name || "unknown";
-  log("info", `[StreamAlloc] Trying stream allocation for "${deviceName}"`);
-
-  // Call the Tuya stream allocation API with go2rtc-compatible parameters.
-  // expire=120 gives the camera 2 minutes to connect before the stream
-  // slot is released. transport=tcp ensures ffmpeg uses TCP (not UDP)
-  // which is more reliable through NAT/firewalls.
-  let result;
-  try {
-    result = await ctx.deviceManager.api.post(
-      `/v1.0/devices/${tuyaDevice.id}/stream/actions/allocate`,
-      { type: "rtsp", expire: 120, transport: "tcp" },
-    );
-  } catch (e) {
-    log(
-      "debug",
-      `[StreamAlloc] API call failed for "${deviceName}": ${e.message}`,
-    );
-    return;
-  }
-
-  if (!result || !result.success || !result.result || !result.result.url) {
-    log(
-      "debug",
-      `[StreamAlloc] API returned no stream URL for "${deviceName}" (code=${result?.code} msg=${result?.msg})`,
-    );
-    return;
-  }
-
-  const streamUrl = result.result.url;
-  const streamId = result.result.stream_id || "";
-  log(
-    "info",
-    `[StreamAlloc] Got stream URL for "${deviceName}" (stream_id=${streamId})`,
+  const isBatteryCamera = ["sp", "doorbell", "mobilecam", "wxml"].includes(
+    tuyaDevice.category,
   );
+
+  // Try stream types in order: rtsp → flv → hls
+  let streamUrl = null;
+  let streamType = null;
+  for (const type of STREAM_TYPES) {
+    log("info", `[StreamAlloc] Trying type="${type}" for "${deviceName}"`);
+    const result = await tryAllocate(ctx, tuyaDevice.id, type, log, deviceName);
+    if (result && result.url) {
+      streamUrl = result.url;
+      streamType = type;
+      log(
+        "info",
+        `[StreamAlloc] Got URL with type="${type}" for "${deviceName}" (stream_id=${result.streamId})`,
+      );
+      break;
+    }
+  }
+
+  if (!streamUrl) {
+    log(
+      "warn",
+      `[StreamAlloc] All stream types failed for "${deviceName}"`,
+    );
+    return;
+  }
 
   // Clean up any previous stream allocation for this device
   stopStreamAllocation(doimusID, ctx, log);
 
-  // Spawn ffmpeg to connect to the RTSP stream and extract JPEG frames.
-  // The RTSP URL from Tuya typically requires TCP transport.
+  // Battery cameras need time to boot after the wake command
+  // before they can serve the stream.
+  if (isBatteryCamera) {
+    const bootDelay = Math.max(5000, ctx._streamAllocBootDelay || 30000);
+    log(
+      "info",
+      `[StreamAlloc] Battery camera "${deviceName}" — waiting ${bootDelay}ms before ffmpeg`,
+    );
+    await new Promise((r) => setTimeout(r, bootDelay));
+  }
+
+  await spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log, api);
+}
+
+async function tryAllocate(ctx, deviceId, type, log, deviceName) {
+  try {
+    const params = { type, expire: 120, transport: "tcp" };
+    const result = await ctx.deviceManager.api.post(
+      `/v1.0/devices/${deviceId}/stream/actions/allocate`,
+      params,
+    );
+    if (result && result.success && result.result && result.result.url) {
+      return {
+        url: result.result.url,
+        streamId: result.result.stream_id || "",
+      };
+    }
+    log(
+      "debug",
+      `[StreamAlloc] type="${type}" no URL for "${deviceName}" (code=${result?.code} msg=${result?.msg})`,
+    );
+  } catch (e) {
+    log("debug", `[StreamAlloc] type="${type}" failed for "${deviceName}": ${e.message}`);
+  }
+  return null;
+}
+
+async function spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log, api) {
   let buffer = Buffer.alloc(0);
   let frameCount = 0;
   let frameTimer = null;
 
   try {
     const { spawn } = require("child_process");
-    const proc = spawn(
-      "ffmpeg",
-      [
-        "-rtsp_transport",
-        "tcp",
-        "-i",
-        streamUrl,
-        "-f",
-        "mjpeg",
-        "-q:v",
-        "5",
-        "-r",
-        "5",
-        "pipe:1",
-      ],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    );
+    const ffmpegArgs =
+      streamType === "rtsp"
+        ? [
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            streamUrl,
+            "-f",
+            "mjpeg",
+            "-q:v",
+            "5",
+            "-r",
+            "5",
+            "pipe:1",
+          ]
+        : [
+            "-i",
+            streamUrl,
+            "-f",
+            "mjpeg",
+            "-q:v",
+            "5",
+            "-r",
+            "5",
+            "pipe:1",
+          ];
 
-    // Suppress ffmpeg log output
+    const proc = spawn("ffmpeg", ffmpegArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
     proc.stderr.on("data", () => {});
 
     if (!ctx._streamAllocProcs) ctx._streamAllocProcs = new Map();
@@ -415,7 +459,6 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
     proc.stdout.on("data", (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
 
-      // Extract complete JPEG frames (marked by FF D8 ... FF D9)
       while (buffer.length > 1) {
         const startIdx = buffer.indexOf(Buffer.from([0xff, 0xd8]));
         if (startIdx === -1) {
@@ -423,7 +466,6 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
           break;
         }
 
-        // Find end of JPEG (0xFF 0xD9)
         let endIdx = -1;
         for (let i = startIdx + 2; i < buffer.length - 1; i++) {
           if (buffer[i] === 0xff && buffer[i + 1] === 0xd9) {
@@ -432,7 +474,7 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
           }
         }
 
-        if (endIdx === -1) break; // incomplete frame, wait for more data
+        if (endIdx === -1) break;
 
         const jpeg = buffer.slice(startIdx, endIdx);
         frameCount++;
@@ -451,14 +493,11 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
       }
     });
 
-    // Timeout: if no frames within 30s, clean up
-    // Battery cameras (peephole, doorbell) can take 20-25s to boot
-    // after the wake command, so 15s was too short.
     frameTimer = setTimeout(() => {
       if (frameCount === 0) {
         log(
           "warn",
-          `[StreamAlloc] No frames received within 30s for "${deviceName}" — giving up`,
+          `[StreamAlloc] No frames within 30s for "${deviceName}" — giving up`,
         );
         stopStreamAllocation(doimusID, ctx, log);
       }
@@ -466,10 +505,7 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
     if (frameTimer.unref) frameTimer.unref();
 
     proc.on("error", (err) => {
-      log(
-        "warn",
-        `[StreamAlloc] ffmpeg error for "${deviceName}": ${err.message}`,
-      );
+      log("warn", `[StreamAlloc] ffmpeg error for "${deviceName}": ${err.message}`);
       stopStreamAllocation(doimusID, ctx, log);
     });
 

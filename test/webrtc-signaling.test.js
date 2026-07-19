@@ -240,10 +240,14 @@ test("sendOffer publishes to resolved sink topic with correct shape", async (t) 
       assert.equal(m.mode, "webrtc");
       assert.equal(m.stream_type, 1);
       assert.equal(m.auth, "auth-token-base64==");
-      // Per Tuya docs the offer msg contains only: mode, sdp, stream_type, auth.
-      // No token or datachannel_enable — some camera firmware rejects extras.
-      assert.equal(m.token, undefined);
-      assert.equal(m.datachannel_enable, undefined);
+      // token carries ICE server config so the camera can establish the relay
+      assert.ok(Array.isArray(m.token), "token should be ICE servers array");
+      assert.ok(m.token.length >= 2, "token should have STUN + TURN servers");
+      assert.ok(
+        m.token.some((s) => s.urls?.some?.((u) => u.startsWith("stun:"))),
+        "token should contain a STUN server",
+      );
+      assert.equal(m.datachannel_enable, false);
       // extmap lines stripped
       assert.ok(!m.sdp.includes("a=extmap"));
 
