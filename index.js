@@ -2362,8 +2362,8 @@ function stopStreamAllocation(doimusID, ctx, log) {
   ctx._streamAllocProcs.delete(doimusID);
 }
 
-// Module-level reference to the current plugin context so stop() can access it.
-let _ctx = null;
+// Context is stored on `this` (module exports) so stop() and setConfig() can access it
+// without a module-level variable singleton.
 
 function sendCommandsDebounced(tuyaDevice, commands, ctx, log) {
   const key = tuyaDevice.id;
@@ -2736,11 +2736,409 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
   log("info", "Device registration complete.");
 }
 
+// ── Domain-specific command handlers (extracted from onCommand) ──
+
+async function handleWebRTCCommand(deviceID, value, tuyaDevice, ctx, dm, api, log) {
+  if (!ctx._webrtcClients) ctx._webrtcClients = new Map();
+
+  if (value.action === "start") {
+    log(
+      "info",
+      `[WebRTC] START command received for deviceID=${deviceID} tuyaID=${tuyaDevice.id} name="${tuyaDevice.name}" category=${tuyaDevice.category}`,
+    );
+    try {
+      const existing = ctx._webrtcClients.get(deviceID);
+      if (existing) {
+        log("info", "[WebRTC] Disconnecting previous session before restart");
+        existing.disconnect();
+        ctx._webrtcClients.delete(deviceID);
+      }
+
+      const wr = new WebRTCSignaling(dm.api, log);
+      ctx._webrtcClients.set(deviceID, wr);
+
+      wr.on("config", (cfg) => {
+        api.sendWebrtcSignaling(deviceID, { event: "config", ...cfg });
+      });
+      wr.on("answer", (data) => {
+        api.sendWebrtcSignaling(deviceID, { event: "answer", ...data });
+        if (typeof wr.sendResolution === "function") {
+          wr.sendResolution(0);
+        }
+      });
+      wr.on("candidate", (data) => {
+        api.sendWebrtcSignaling(deviceID, { event: "candidate", ...data });
+      });
+      wr.on("disconnect", (data) => {
+        const needsWake = computeNeedsWake(tuyaDevice);
+        const BATTERY_DELAY_MS = needsWake ? 20000 : 0;
+        log(
+          "info",
+          `[WebRTC] Camera disconnected session=${data.sessionId}${needsWake ? ` — waiting ${BATTERY_DELAY_MS / 1000}s for battery camera to wake before fallback` : " — trying cloud stream allocation"}`,
+        );
+        api.sendWebrtcSignaling(deviceID, { event: "disconnect", ...data });
+        if (ctx._webrtcClients.has(deviceID)) {
+          if (BATTERY_DELAY_MS > 0) {
+            const prev = ctx._streamFallbackTimers.get(deviceID);
+            if (prev) clearTimeout(prev);
+            const timer = setTimeout(() => {
+              ctx._streamFallbackTimers.delete(deviceID);
+              log("info", `[WebRTC] Battery camera delay elapsed — starting fallback streaming for "${tuyaDevice.name}"`);
+              if (ctx._webrtcClients.has(deviceID)) {
+                const staleP2P = ctx.p2pClients?.get(deviceID);
+                if (staleP2P) {
+                  log("info", `[WebRTC] Closing stale P2P for "${tuyaDevice.name}" before fresh reconnect`);
+                  staleP2P.close();
+                  ctx.p2pClients.delete(deviceID);
+                }
+                startP2P(deviceID, tuyaDevice, ctx, log, api);
+                startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
+                  .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
+              }
+            }, BATTERY_DELAY_MS);
+            ctx._streamFallbackTimers.set(deviceID, timer);
+          } else {
+            startP2P(deviceID, tuyaDevice, ctx, log, api);
+            startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
+              .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
+          }
+        }
+      });
+      wr.on("error", (err) => {
+        api.sendWebrtcSignaling(deviceID, { event: "error", message: err.message });
+      });
+      wr.on("fallback", () => {
+        const needsWake = computeNeedsWake(tuyaDevice);
+        if (needsWake) {
+          log("info", `[WebRTC] WebRTC timed out for battery camera "${tuyaDevice.name}" — fallback streaming already scheduled by disconnect handler`);
+          api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
+          return;
+        }
+        log("info", `[WebRTC] WebRTC timed out, trying cloud stream allocation for "${tuyaDevice.name}"`);
+        api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
+        const p2pCloudRelay = tuyaDevice.category === "sp" || tuyaDevice.category === "doorbell";
+        if (!p2pCloudRelay) {
+          startP2P(deviceID, tuyaDevice, ctx, log, api);
+        }
+        startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
+          .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
+      });
+
+      const isCamera = ["sp", "mobilecam", "wxml", "doorbell"].includes(tuyaDevice.category);
+      const batteryCodes = tuyaDevice.schema
+        ?.filter((s) =>
+          s.code === "battery_percentage" ||
+          s.code === "battery_state" ||
+          s.code === "battery_value" ||
+          s.code === "va_battery" ||
+          s.code === "wireless_electricity" ||
+          s.code === "wireless_powermode" ||
+          (s.code && s.code.startsWith("battery")),
+        )
+        .map((s) => s.code) || [];
+      const hasBattery = batteryCodes.length > 0;
+      const needsWake = isCamera && hasBattery;
+      log("info", `[WebRTC] Camera check: category=${tuyaDevice.category} isCamera=${isCamera} hasBattery=${hasBattery} batteryCodes=[${batteryCodes.join(",")}] online=${tuyaDevice.online} needsWake=${needsWake}`);
+
+      if (needsWake) {
+        log("info", `[WebRTC] Camera "${tuyaDevice.name}" is battery-powered, sending wake-up...`);
+
+        const wakeDpCodes = ["wireless_powermode", "wireless_awake", "cruise", "basic_awake", "video_call"];
+        const schemaWakeDps = tuyaDevice.schema?.filter((s) =>
+          wakeDpCodes.includes(s.code) && s.mode === "rw" || s.mode === "wo",
+        ) || [];
+        const wakeDps = schemaWakeDps.map((s) => ({
+          code: s.code,
+          value: s.code === "wireless_powermode" ? 2 : true,
+        }));
+        if (wakeDps.length === 0) {
+          wakeDps.push({ code: "wireless_powermode", value: 2 });
+        }
+
+        log("info", `[WebRTC] Sending ${wakeDps.length} wake DP(s): [${wakeDps.map((d) => `${d.code}=${d.value}`).join(", ")}]`);
+        for (const dp of wakeDps) {
+          dm.sendCommands(tuyaDevice.id, [{ code: dp.code, value: dp.value }]).then(
+            () => log("info", `[WebRTC] Wake-up sent (dp=${dp.code}=${dp.value})`),
+            (e) => log("debug", `[WebRTC] Wake-up (dp=${dp.code}) send failed: ${e.message || e}`),
+          );
+        }
+
+        ctx._powerModeChanged = ctx._powerModeChanged || new Set();
+        ctx._powerModeChanged.add(tuyaDevice.id);
+
+        const WAKE_TIMEOUT_MS = 30000;
+        const wakeStartTime = Date.now();
+        api.sendWebrtcSignaling(deviceID, {
+          event: "waking",
+          message: "Camera is waking up... (up to 30s)",
+          elapsed: 0,
+        });
+
+        const progressInterval = setInterval(() => {
+          const elapsed = Math.round((Date.now() - wakeStartTime) / 1000);
+          log("info", `[WebRTC] Still waiting for "${tuyaDevice.name}" to wake... (${elapsed}s elapsed)`);
+          api.sendWebrtcSignaling(deviceID, {
+            event: "waking",
+            message: `Camera is waking up... (${elapsed}s)`,
+            elapsed,
+          });
+        }, 10000);
+
+        const wakeTimer = setTimeout(() => {
+          clearInterval(progressInterval);
+          ctx._wakeWatchers.delete(tuyaDevice.id);
+          log("warn", `[WebRTC] Wake timeout (${WAKE_TIMEOUT_MS / 1000}s) for "${tuyaDevice.name}" — flushing offer anyway`);
+        }, WAKE_TIMEOUT_MS);
+        ctx._wakeWatchers.set(tuyaDevice.id, {
+          resolve: () => {
+            clearInterval(progressInterval);
+            clearTimeout(wakeTimer);
+            ctx._wakeWatchers.delete(tuyaDevice.id);
+            log("info", `[WebRTC] Camera "${tuyaDevice.name}" wake confirmed — offer already sent via IPC MQTT`);
+          },
+          timer: wakeTimer,
+          progressInterval,
+        });
+      }
+
+      log("info", `[WebRTC] Fetching configs for Tuya device ${tuyaDevice.id}`);
+      const configs = await wr.getConfigs(tuyaDevice.id);
+
+      if (configs) {
+        log("info", `[WebRTC] Configs fetched, connecting to IPC MQTT`);
+        wr.connect(tuyaDevice.id, tuyaDevice.local_key, configs, needsWake);
+
+        if (needsWake) {
+          log("info", `[WebRTC] Battery camera — starting P2P + stream allocation in parallel for "${tuyaDevice.name}"`);
+          startP2P(deviceID, tuyaDevice, ctx, log, api);
+          startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
+            .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
+        }
+      } else {
+        log("warn", `[WebRTC] WebRTC not supported for device ${tuyaDevice.id}`);
+        api.sendWebrtcSignaling(deviceID, { event: "error", message: "WebRTC not supported by this device" });
+        ctx._webrtcClients.delete(deviceID);
+      }
+    } catch (e) {
+      log("error", `[WebRTC] Start failed: ${e.message || e}`);
+      api.sendWebrtcSignaling(deviceID, { event: "error", message: `WebRTC start failed: ${e.message || e}` });
+      if (ctx._webrtcClients) ctx._webrtcClients.delete(deviceID);
+    }
+    return;
+  }
+
+  const wr = ctx._webrtcClients.get(deviceID);
+  if (!wr) {
+    api.sendWebrtcSignaling(deviceID, { event: "error", message: "No active WebRTC session — call 'start' first" });
+    return;
+  }
+
+  if (value.event === "offer") {
+    wr.sendOffer(value.sdp, value.stream_type);
+  } else if (value.event === "answer") {
+    wr.sendAnswer(value.sdp);
+  } else if (value.event === "candidate") {
+    wr.sendCandidate(value.candidate);
+  } else if (value.event === "disconnect") {
+    wr.sendDisconnect();
+    wr.disconnect();
+    ctx._webrtcClients.delete(deviceID);
+    const tuyaId = ctx.doimusDeviceMap.get(deviceID);
+    if (tuyaId) {
+      const existing = ctx._wakeWatchers.get(tuyaId);
+      if (existing) {
+        clearTimeout(existing.timer);
+        if (existing.progressInterval) clearInterval(existing.progressInterval);
+        ctx._wakeWatchers.delete(tuyaId);
+        log("info", `WebRTC disconnected — cleaned up wake watcher for device ${deviceID}`);
+      }
+      if (ctx._powerModeChanged?.has(tuyaId)) {
+        const td = dm.getDevice(tuyaId);
+        if (td) {
+          dm.sendCommands(tuyaId, [{ code: "wireless_powermode", value: 0 }]).then(
+            () => log("info", `WebRTC disconnected — restored power-save mode for "${td.name}"`),
+            (e) => log("debug", `[WebRTC] Restore power mode failed: ${e.message || e}`),
+          );
+        }
+        ctx._powerModeChanged.delete(tuyaId);
+      }
+    }
+    stopStreamAllocation(deviceID, ctx, log);
+    const fallbackTimer = ctx._streamFallbackTimers.get(deviceID);
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer);
+      ctx._streamFallbackTimers.delete(deviceID);
+      log("info", `Stream disconnected — cleaned up fallback timer for device ${deviceID}`);
+    }
+  }
+}
+
+async function handleIRCommand(deviceID, key, value, tuyaDevice, ctx, dm, api, log) {
+  if (tuyaDevice.category === "infrared_ac") {
+    const cur = {};
+    for (const s of tuyaDevice.status || []) {
+      if (s.code === "power") cur.power = Number(s.value);
+      if (s.code === "mode") cur.mode = Number(s.value);
+      if (s.code === "temp") cur.temp = Number(s.value);
+      if (s.code === "wind") cur.wind = Number(s.value);
+    }
+    if (key === "on") cur.power = value === true ? 1 : 0;
+    if (key === "target_temp") cur.temp = Number(value);
+    if (key === "heating_mode") cur.mode = Number(value);
+    if (key === "rotation_speed") cur.wind = Number(value);
+    await dm.sendInfraredACCommands(tuyaDevice.parent_id, tuyaDevice.id, cur.power, cur.mode, cur.temp, cur.wind);
+    const newState = {};
+    if (cur.power !== undefined) newState.on = cur.power === 1;
+    if (cur.temp !== undefined) newState.target_temp = cur.temp;
+    if (cur.mode !== undefined) newState.heating_mode = cur.mode;
+    if (cur.wind !== undefined) newState.rotation_speed = cur.wind;
+    api.updateDeviceState(deviceID, newState);
+    ctx.lastKnownState.set(tuyaDevice.id, { ...ctx.lastKnownState.get(tuyaDevice.id), ...newState });
+  } else {
+    const keyList = tuyaDevice.remote_keys && tuyaDevice.remote_keys.key_list;
+    if (keyList && key === "on") {
+      const powerKey = keyList.find((k) => k.key === "power" || /power/i.test(k.key_name || ""));
+      if (powerKey) {
+        await dm.sendInfraredCommands(tuyaDevice.parent_id, tuyaDevice.id, 5, 0, powerKey.key, powerKey.key_id);
+        api.updateDeviceState(deviceID, { on: value === true });
+        ctx.lastKnownState.set(tuyaDevice.id, { ...ctx.lastKnownState.get(tuyaDevice.id), on: value === true });
+      }
+    }
+  }
+}
+
+function computeNeedsWake(tuyaDevice) {
+  const isCamera = ["sp", "mobilecam", "wxml", "doorbell"].includes(tuyaDevice.category);
+  const batteryCodes = tuyaDevice.schema
+    ?.filter((s) =>
+      s.code === "battery_percentage" ||
+      s.code === "battery_state" ||
+      s.code === "battery_value" ||
+      s.code === "va_battery" ||
+      s.code === "wireless_electricity" ||
+      s.code === "wireless_powermode" ||
+      (s.code && s.code.startsWith("battery")),
+    )
+    .map((s) => s.code) || [];
+  return isCamera && batteryCodes.length > 0;
+}
+
+function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
+  const commands = [];
+
+  if (key === "on") {
+    const onSchema = tuyaDevice.schema.find(
+      (s) => s.code === "switch_1" || s.code === "switch_fan" || s.code === "fan_switch",
+    );
+    if (onSchema) {
+      commands.push({ code: onSchema.code, value: value === true });
+    } else if (tuyaDevice.schema.some((s) => s.code === "switch")) {
+      commands.push({ code: "switch", value: value === true });
+    } else if (tuyaDevice.schema.some((s) => s.code === "light")) {
+      commands.push({ code: "light", value: value === true });
+      if (value === true) {
+        const brightSchema = tuyaDevice.schema.find(
+          (s) => s.code === "bright_value" || s.code === "bright_value_v2" || s.code === "bright_value_1",
+        );
+        if (brightSchema) {
+          const currentBright = tuyaDevice.status.find((s) => s.code === brightSchema.code);
+          if (currentBright && currentBright.value !== undefined) {
+            commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, currentBright.value));
+          }
+        }
+      }
+    } else if (tuyaDevice.schema.some((s) => s.code === "switch_led")) {
+      commands.push({ code: "switch_led", value: value === true });
+    } else {
+      const anySwitch = tuyaDevice.schema.find((s) => s.code && s.code.startsWith("switch"));
+      if (anySwitch) {
+        commands.push({ code: anySwitch.code, value: value === true });
+      }
+    }
+  } else if (key === "brightness") {
+    const brightSchema = tuyaDevice.schema.find(
+      (s) => s.code === "bright_value" || s.code === "bright_value_v2" || s.code === "bright_value_1",
+    );
+    if (brightSchema) {
+      const tuyaBrightness = Math.round((Number(value) / 100) * 1000);
+      commands.push(buildCommand(tuyaDevice.schema, brightSchema.code, tuyaBrightness));
+    }
+  } else if (key === "color_temp") {
+    const tempSchema = tuyaDevice.schema.find((s) => s.code === "temp_value" || s.code === "temp_value_v2");
+    if (tempSchema) {
+      const tuyaValue = kelvinToTuyaTemp(value, tempSchema.property);
+      commands.push({ code: tempSchema.code, value: tuyaValue });
+    }
+  } else if (key === "hue" || key === "saturation") {
+    const colourSchema = tuyaDevice.schema.find((s) => s.code === "colour_data" || s.code === "colour_data_v2");
+    if (colourSchema) {
+      const currentColour = (tuyaDevice.status || []).find((s) => s.code === colourSchema.code);
+      let colourData = { hue: 0, saturation: 0, value: 1000 };
+      if (currentColour && typeof currentColour.value === "object") {
+        colourData = { ...colourData, ...currentColour.value };
+      }
+      if (key === "hue") colourData.hue = Number(value);
+      if (key === "saturation") colourData.saturation = Number(value);
+      commands.push({ code: colourSchema.code, value: colourData });
+    }
+  } else if (key === "target_temp") {
+    const tempSetSchema = tuyaDevice.schema.find((s) => s.code === "temp_set" || s.code === "target_temp");
+    if (tempSetSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, tempSetSchema.code, value));
+    }
+  } else if (key === "heating_mode") {
+    const modeSchema = tuyaDevice.schema.find((s) => s.code === "mode" || s.code === "work_mode" || s.code === "hvac_mode");
+    if (modeSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, modeSchema.code, value));
+    }
+  } else if (key === "locked") {
+    commands.push({ code: "lock_state", value: value === true });
+  } else if (key === "child_lock") {
+    const childLockSchema = tuyaDevice.schema.find((s) => s.code === "child_lock");
+    if (childLockSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, childLockSchema.code, value));
+    }
+  } else if (key === "position") {
+    const posSchema = tuyaDevice.schema.find(
+      (s) => (s.code && s.code.startsWith("percent") && s.code !== "percent_state") || s.code === "position",
+    );
+    if (posSchema) {
+      const cmd = buildCommand(tuyaDevice.schema, posSchema.code, value);
+      log("info", `POSITION command → DP=${posSchema.code} raw=${value} cmd=${JSON.stringify(cmd)}`);
+      commands.push(cmd);
+    } else {
+      log("warn", `No writable position DP found for blind ${deviceID} ` +
+        `(schema: [${(tuyaDevice.schema || []).map((s) => s.code).join(", ")}])`);
+    }
+  } else if (key === "control") {
+    const controlSchema = tuyaDevice.schema.find((s) => s.code === "control" || s.code === "control_back");
+    if (controlSchema) {
+      commands.push({ code: controlSchema.code, value: String(value) });
+    }
+  } else if (key === "rotation_speed") {
+    const speedSchema = tuyaDevice.schema.find(
+      (s) => (s.code && s.code.startsWith("fan_speed")) || s.code === "wind_speed",
+    );
+    if (speedSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, speedSchema.code, value));
+    }
+  } else if (key === "mode") {
+    commands.push({ code: "work_state", value: String(value) });
+  } else if (key === "countdown") {
+    const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");
+    if (countdownSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, countdownSchema.code, value));
+    }
+  }
+
+  return commands;
+}
+
 module.exports = {
   async start(cfg, api) {
     const ctx = createPluginInstance();
     ctx.apiRef = api;
-    _ctx = ctx;
+    this._ctx = ctx;
     const options = (cfg && cfg.options) || {};
     const log = createLogger(api, "TuyaPlatform");
 
@@ -2939,725 +3337,35 @@ module.exports = {
     ctx._snapshotTimer = null;
 
     api.onCommand(async (deviceID, key, value) => {
-      // ── WebRTC signaling relay ────────────────────────────────────
       if (key === "webrtc" && value && typeof value === "object") {
         const tuyaDevice = dm.getDevice(ctx.doimusDeviceMap.get(deviceID));
         if (!tuyaDevice) return;
-        if (!ctx._webrtcClients) ctx._webrtcClients = new Map();
-        let wr = ctx._webrtcClients.get(deviceID);
-
-        if (value.action === "start") {
-          log(
-            "info",
-            `[WebRTC] START command received for deviceID=${deviceID} tuyaID=${tuyaDevice.id} name="${tuyaDevice.name}" category=${tuyaDevice.category}`,
-          );
-          try {
-            // Disconnect any existing session before creating a new one.
-            const existing = ctx._webrtcClients.get(deviceID);
-            if (existing) {
-              log(
-                "info",
-                "[WebRTC] Disconnecting previous session before restart",
-              );
-              existing.disconnect();
-              ctx._webrtcClients.delete(deviceID);
-            }
-
-            wr = new WebRTCSignaling(dm.api, log);
-            ctx._webrtcClients.set(deviceID, wr);
-
-            wr.on("config", (cfg) => {
-              api.sendWebrtcSignaling(deviceID, { event: "config", ...cfg });
-            });
-            wr.on("answer", (data) => {
-              api.sendWebrtcSignaling(deviceID, { event: "answer", ...data });
-              // Send resolution command to start video encoding.
-              // Tuya cameras wait for protocol 312 (type=resolution) after
-              // answering the WebRTC offer. Without it, the camera sends a
-              // disconnect ~10s later. This matches go2rtc's behavior.
-              if (typeof wr.sendResolution === "function") {
-                wr.sendResolution(0);
-              }
-            });
-            wr.on("candidate", (data) => {
-              api.sendWebrtcSignaling(deviceID, {
-                event: "candidate",
-                ...data,
-              });
-            });
-            wr.on("disconnect", (data) => {
-              // Battery cameras (sp, doorbell) send WebRTC disconnect
-              // ~10s after the offer if the video subsystem isn't ready.
-              // Wait 20s for the camera to finish booting before trying
-              // P2P/StreamAllocation fallback.  The parallel stream
-              // allocation started earlier will already be in progress.
-              const BATTERY_DELAY_MS = needsWake ? 20000 : 0;
-              log(
-                "info",
-                `[WebRTC] Camera disconnected session=${data.sessionId}${needsWake ? ` — waiting ${BATTERY_DELAY_MS / 1000}s for battery camera to wake before fallback` : " — trying cloud stream allocation"}`,
-              );
-              api.sendWebrtcSignaling(deviceID, {
-                event: "disconnect",
-                ...data,
-              });
-              if (ctx._webrtcClients.has(deviceID)) {
-                if (BATTERY_DELAY_MS > 0) {
-                  // Cancel any previous pending fallback timer for this device
-                  const prev = ctx._streamFallbackTimers.get(deviceID);
-                  if (prev) clearTimeout(prev);
-                  const timer = setTimeout(() => {
-                    ctx._streamFallbackTimers.delete(deviceID);
-                    log(
-                      "info",
-                      `[WebRTC] Battery camera delay elapsed — starting fallback streaming for "${tuyaDevice.name}"`,
-                    );
-                    if (ctx._webrtcClients.has(deviceID)) {
-                      // Battery cameras may have a stale P2P connection
-                      // from an earlier attempt when the camera was still
-                      // asleep (deep sleep = no response to stream commands).
-                      // Close it so we establish a fresh session now that
-                      // the camera should be awake and responsive.
-                      const staleP2P = ctx.p2pClients?.get(deviceID);
-                      if (staleP2P) {
-                        log(
-                          "info",
-                          `[WebRTC] Closing stale P2P for "${tuyaDevice.name}" before fresh reconnect`,
-                        );
-                        staleP2P.close();
-                        ctx.p2pClients.delete(deviceID);
-                      }
-                      startP2P(deviceID, tuyaDevice, ctx, log, api);
-                      startStreamAllocation(
-                        deviceID,
-                        tuyaDevice,
-                        ctx,
-                        log,
-                        api,
-                      ).catch((e) =>
-                        log("debug", `[StreamAlloc] Failed: ${e.message}`),
-                      );
-                    }
-                  }, BATTERY_DELAY_MS);
-                  ctx._streamFallbackTimers.set(deviceID, timer);
-                } else {
-                  // Non-battery camera: try P2P/StreamAllocation immediately
-                  startP2P(deviceID, tuyaDevice, ctx, log, api);
-                  startStreamAllocation(
-                    deviceID,
-                    tuyaDevice,
-                    ctx,
-                    log,
-                    api,
-                  ).catch((e) =>
-                    log("debug", `[StreamAlloc] Failed: ${e.message}`),
-                  );
-                }
-              }
-            });
-            wr.on("error", (err) => {
-              api.sendWebrtcSignaling(deviceID, {
-                event: "error",
-                message: err.message,
-              });
-            });
-            wr.on("fallback", () => {
-              // Battery cameras: the fallback timer fires when WebRTC
-              // gets no answer (60s for battery cameras). This means
-              // the camera hasn't responded at all — P2P/StreamAllocation
-              // would also fail because the camera isn't ready. The
-              // disconnect handler (fires at T+10) already scheduled
-              // the fallback streaming after a 45s delay, so this is
-              // mostly a safety net. For non-battery cameras, fire
-              // immediately.
-              if (needsWake) {
-                log(
-                  "info",
-                  `[WebRTC] WebRTC timed out for battery camera "${tuyaDevice.name}" — fallback streaming already scheduled by disconnect handler`,
-                );
-                api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
-                return;
-              }
-              log(
-                "info",
-                `[WebRTC] WebRTC timed out, trying cloud stream allocation for "${tuyaDevice.name}"`,
-              );
-              api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
-              const p2pCloudRelay =
-                tuyaDevice.category === "sp" ||
-                tuyaDevice.category === "doorbell";
-              if (!p2pCloudRelay) {
-                startP2P(deviceID, tuyaDevice, ctx, log, api);
-              }
-              startStreamAllocation(deviceID, tuyaDevice, ctx, log, api).catch(
-                (e) => log("debug", `[StreamAlloc] Failed: ${e.message}`),
-              );
-            });
-
-            // Battery-powered cameras (peephole, doorbell) sleep to
-            // conserve power and will not connect to the IPC MQTT broker
-            // until woken.  Two-phase wake-up:
-            //  1. Try a direct Tuya cloud command (cruise/basic_awake/video_call)
-            //  2. getConfigs() calls the access-config API which also triggers
-            //     a cloud push to the camera.
-            // After both, poll for the camera to report online.
-            //
-            // Always wake battery cameras proactively — the cached online
-            // status from the last MQTT heartbeat may be stale (the camera
-            // enters low-power sleep between events).  The wake command is a
-            // cheap cloud push the camera ignores if already awake.
-            const isCamera = ["sp", "mobilecam", "wxml", "doorbell"].includes(
-              tuyaDevice.category,
-            );
-            const batteryCodes =
-              tuyaDevice.schema
-                ?.filter(
-                  (s) =>
-                    s.code === "battery_percentage" ||
-                    s.code === "battery_state" ||
-                    s.code === "battery_value" ||
-                    s.code === "va_battery" ||
-                    s.code === "wireless_electricity" ||
-                    s.code === "wireless_powermode" ||
-                    (s.code && s.code.startsWith("battery")),
-                )
-                .map((s) => s.code) || [];
-            const hasBattery = batteryCodes.length > 0;
-            // Always wake battery cameras — even if they appear online now,
-            // they may have entered low-power sleep since the last MQTT heartbeat.
-            const needsWake = isCamera && hasBattery;
-            log(
-              "info",
-              `[WebRTC] Camera check: category=${tuyaDevice.category} isCamera=${isCamera} hasBattery=${hasBattery} batteryCodes=[${batteryCodes.join(",")}] online=${tuyaDevice.online} needsWake=${needsWake}`,
-            );
-
-            // ── Battery camera wake (two-phase) ────────────────────
-            // Phase 1: Send wake DP via cloud API (fire-and-forget, don't block)
-            //          + start background wake watcher for wireless_awake=true
-            // Phase 2: Immediately get configs + connect IPC MQTT (sends CRC32)
-            //          The offer is buffered in WebRTCSignaling until
-            //          setWoken() is called after wake confirmation.
-            if (needsWake) {
-              log(
-                "info",
-                `[WebRTC] Camera "${tuyaDevice.name}" is battery-powered, sending wake-up...`,
-              );
-
-              // ── Phase 1a: Send cloud DP wakes ───────────────────
-              // Tuya battery cameras (peephole, doorbell) need their
-              // video subsystem activated before WebRTC streaming can
-              // work.  The CRC32 IPC MQTT wake only activates the
-              // network module — the camera sensor/encoder stays in
-              // deep sleep until performance mode is enabled.
-              //
-              // The official Tuya app always sends ipc_work_mode=1
-              // (performance mode) before starting a video stream.
-              // This is what turns on the camera's LED.  We must do
-              // the same, even if ipc_work_mode is not in the device
-              // schema — many battery cameras accept this command
-              // despite not advertising it.
-              //
-              // Strategy: Send BOTH schema-matched wake DPs AND
-              // always-send DPs (ipc_work_mode, wireless_powermode)
-              // to maximise compatibility across camera models.
-
-              // Only send wake DPs that exist in the device schema.
-              // ipc_work_mode and wireless_awake are NOT supported by
-              // this camera (category=sp) — the Tuya API returns
-              // code=2008 (command or value not support) for both.
-              // Sending unsupported DPs is harmless (API rejects them)
-              // but clutters the logs with errors.
-              const wakeDpCodes = [
-                "wireless_powermode",
-                "wireless_awake",
-                "cruise",
-                "basic_awake",
-                "video_call",
-              ];
-              const schemaWakeDps =
-                tuyaDevice.schema?.filter((s) =>
-                  wakeDpCodes.includes(s.code) && s.mode === "rw" || s.mode === "wo",
-                ) || [];
-              const wakeDps = schemaWakeDps.map((s) => ({
-                code: s.code,
-                value: s.code === "wireless_powermode" ? 2 : true,
-              }));
-              // If schema has no writable wake DPs, try wireless_powermode
-              // as a last resort — most battery cameras support it.
-              if (wakeDps.length === 0) {
-                wakeDps.push({ code: "wireless_powermode", value: 2 });
-              }
-
-              log(
-                "info",
-                `[WebRTC] Sending ${wakeDps.length} wake DP(s): [${wakeDps.map((d) => `${d.code}=${d.value}`).join(", ")}]`,
-              );
-              for (const dp of wakeDps) {
-                dm.sendCommands(tuyaDevice.id, [
-                  { code: dp.code, value: dp.value },
-                ]).then(
-                  () =>
-                    log(
-                      "info",
-                      `[WebRTC] Wake-up sent (dp=${dp.code}=${dp.value})`,
-                    ),
-                  (e) =>
-                    log(
-                      "debug",
-                      `[WebRTC] Wake-up (dp=${dp.code}) send failed: ${e.message || e}`,
-                    ),
-                );
-              }
-
-              // Track so we restore ipc_work_mode to "0" on disconnect.
-              ctx._powerModeChanged = ctx._powerModeChanged || new Set();
-              ctx._powerModeChanged.add(tuyaDevice.id);
-
-              // ── Phase 1b: Background wake progress (non-blocking) ──
-              // The CRC32 wake sent via IPC MQTT should activate the camera.
-              // Monitor for 30s with progress updates for the mobile UI.
-              const WAKE_TIMEOUT_MS = 30000;
-
-              // Send initial "waking" event so the mobile app can show
-              // a "Camera is waking up..." status immediately.
-              const wakeStartTime = Date.now();
-              api.sendWebrtcSignaling(deviceID, {
-                event: "waking",
-                message: "Camera is waking up... (up to 30s)",
-                elapsed: 0,
-              });
-
-              // Periodic progress logging and mobile app updates every 10s
-              const progressInterval = setInterval(() => {
-                const elapsed = Math.round((Date.now() - wakeStartTime) / 1000);
-                log(
-                  "info",
-                  `[WebRTC] Still waiting for "${tuyaDevice.name}" to wake... (${elapsed}s elapsed)`,
-                );
-                api.sendWebrtcSignaling(deviceID, {
-                  event: "waking",
-                  message: `Camera is waking up... (${elapsed}s)`,
-                  elapsed,
-                });
-              }, 10000);
-
-              const wakeTimer = setTimeout(() => {
-                clearInterval(progressInterval);
-                ctx._wakeWatchers.delete(tuyaDevice.id);
-                log(
-                  "warn",
-                  `[WebRTC] Wake timeout (${WAKE_TIMEOUT_MS / 1000}s) for "${tuyaDevice.name}" — flushing offer anyway`,
-                );
-                // The offer was already sent by WebRTCSignaling after the
-                // 3s CRC32 wake delay.  This timeout just cleans up.
-              }, WAKE_TIMEOUT_MS);
-              ctx._wakeWatchers.set(tuyaDevice.id, {
-                resolve: () => {
-                  clearInterval(progressInterval);
-                  clearTimeout(wakeTimer);
-                  ctx._wakeWatchers.delete(tuyaDevice.id);
-                  log(
-                    "info",
-                    `[WebRTC] Camera "${tuyaDevice.name}" wake confirmed — offer already sent via IPC MQTT`,
-                  );
-                },
-                timer: wakeTimer,
-                progressInterval,
-              });
-            }
-
-            // ── Phase 2: Get configs + connect IPC MQTT ─────────────
-            // go2rtc has no delay here. The CRC32 wake is sent after
-            // IPC MQTT connects, and the offer follows immediately.
-            log(
-              "info",
-              `[WebRTC] Fetching configs for Tuya device ${tuyaDevice.id}`,
-            );
-            const configs = await wr.getConfigs(tuyaDevice.id);
-
-            if (configs) {
-              log("info", `[WebRTC] Configs fetched, connecting to IPC MQTT`);
-              wr.connect(
-                tuyaDevice.id,
-                tuyaDevice.local_key,
-                configs,
-                needsWake,
-              );
-
-              // ── Phase 3: Parallel streaming paths (battery cameras) ─
-              // Battery-powered cameras (sp, doorbell) need the stream
-              // allocation API call to trigger the cloud push notification
-              // that wakes them up.  Without this, the camera stays in deep
-              // sleep and ignores both the WebRTC offer and P2P connection
-              // attempts.  Start these now, not just as fallback.
-              //
-              // For non-battery cameras, skip this — they handle WebRTC
-              // directly and P2P/stream allocation are unnecessary.
-              if (needsWake) {
-                log(
-                  "info",
-                  `[WebRTC] Battery camera — starting P2P + stream allocation in parallel for "${tuyaDevice.name}"`,
-                );
-                startP2P(deviceID, tuyaDevice, ctx, log, api);
-                startStreamAllocation(
-                  deviceID,
-                  tuyaDevice,
-                  ctx,
-                  log,
-                  api,
-                ).catch((e) =>
-                  log("debug", `[StreamAlloc] Failed: ${e.message}`),
-                );
-              }
-            } else {
-              log(
-                "warn",
-                `[WebRTC] WebRTC not supported for device ${tuyaDevice.id}`,
-              );
-              api.sendWebrtcSignaling(deviceID, {
-                event: "error",
-                message: "WebRTC not supported by this device",
-              });
-              ctx._webrtcClients.delete(deviceID);
-            }
-          } catch (e) {
-            log("error", `[WebRTC] Start failed: ${e.message || e}`);
-            api.sendWebrtcSignaling(deviceID, {
-              event: "error",
-              message: `WebRTC start failed: ${e.message || e}`,
-            });
-            if (ctx._webrtcClients) ctx._webrtcClients.delete(deviceID);
-          }
-          return;
-        }
-
-        if (!wr) {
-          api.sendWebrtcSignaling(deviceID, {
-            event: "error",
-            message: "No active WebRTC session — call 'start' first",
-          });
-          return;
-        }
-
-        if (value.event === "offer") {
-          wr.sendOffer(value.sdp, value.stream_type);
-        } else if (value.event === "answer") {
-          wr.sendAnswer(value.sdp);
-        } else if (value.event === "candidate") {
-          wr.sendCandidate(value.candidate);
-        } else if (value.event === "disconnect") {
-          wr.sendDisconnect();
-          wr.disconnect();
-          ctx._webrtcClients.delete(deviceID);
-          // Clean up wake watcher if still pending
-          const tuyaId = ctx.doimusDeviceMap.get(deviceID);
-          if (tuyaId) {
-            const existing = ctx._wakeWatchers.get(tuyaId);
-            if (existing) {
-              clearTimeout(existing.timer);
-              if (existing.progressInterval)
-                clearInterval(existing.progressInterval);
-              ctx._wakeWatchers.delete(tuyaId);
-              log(
-                "info",
-                `WebRTC disconnected — cleaned up wake watcher for device ${deviceID}`,
-              );
-            }
-
-            // Restore ipc_work_mode to "0" (power-save) so the
-            // battery camera doesn't stay in performance mode indefinitely.
-            if (ctx._powerModeChanged?.has(tuyaId)) {
-          const tuyaDevice = dm.getDevice(tuyaId);
-          if (tuyaDevice) {
-            dm.sendCommands(tuyaId, [
-              { code: "wireless_powermode", value: 0 },
-            ]).then(
-              () => log("info", `WebRTC disconnected — restored power-save mode for "${tuyaDevice.name}"`),
-              (e) => log("debug", `[WebRTC] Restore power mode failed: ${e.message || e}`),
-            );
-          }
-          ctx._powerModeChanged.delete(tuyaId);
-        }
-          }
-          // Clean up any active stream allocation
-          stopStreamAllocation(deviceID, ctx, log);
-          // Clean up pending fallback timer for battery cameras
-          const fallbackTimer = ctx._streamFallbackTimers.get(deviceID);
-          if (fallbackTimer) {
-            clearTimeout(fallbackTimer);
-            ctx._streamFallbackTimers.delete(deviceID);
-            log(
-              "info",
-              `Stream disconnected — cleaned up fallback timer for device ${deviceID}`,
-            );
-          }
-        }
-        return;
+        return handleWebRTCCommand(deviceID, value, tuyaDevice, ctx, dm, api, log);
       }
 
       const tuyaID = ctx.doimusDeviceMap.get(deviceID);
       if (!tuyaID) {
-        log(
-          "warn",
-          `onCommand: no Tuya device mapped for doimusID="${deviceID}" ` +
-            `(key=${key}). Map has ${ctx.doimusDeviceMap.size} entries.`,
-        );
+        log("warn", `onCommand: no Tuya device mapped for doimusID="${deviceID}" (key=${key}). Map has ${ctx.doimusDeviceMap.size} entries.`);
         return;
       }
       try {
         const tuyaDevice = dm.getDevice(tuyaID);
         if (!tuyaDevice) return;
 
-        // ── IR remote sub-devices ───────────────────────────────────────────
-        if (tuyaDevice.isIRRemoteControl && tuyaDevice.isIRRemoteControl()) {
-          if (tuyaDevice.category === "infrared_ac") {
-            // Build complete AC command state from current status + delta.
-            const cur = {};
-            for (const s of tuyaDevice.status || []) {
-              if (s.code === "power") cur.power = Number(s.value);
-              if (s.code === "mode") cur.mode = Number(s.value);
-              if (s.code === "temp") cur.temp = Number(s.value);
-              if (s.code === "wind") cur.wind = Number(s.value);
-            }
-            if (key === "on") cur.power = value === true ? 1 : 0;
-            if (key === "target_temp") cur.temp = Number(value);
-            if (key === "heating_mode") cur.mode = Number(value);
-            if (key === "rotation_speed") cur.wind = Number(value);
-            await dm.sendInfraredACCommands(
-              tuyaDevice.parent_id,
-              tuyaDevice.id,
-              cur.power,
-              cur.mode,
-              cur.temp,
-              cur.wind,
-            );
-            // Optimistically update state so UI reflects change immediately.
-            const newState = {};
-            if (cur.power !== undefined) newState.on = cur.power === 1;
-            if (cur.temp !== undefined) newState.target_temp = cur.temp;
-            if (cur.mode !== undefined) newState.heating_mode = cur.mode;
-            if (cur.wind !== undefined) newState.rotation_speed = cur.wind;
-            api.updateDeviceState(deviceID, newState);
-            ctx.lastKnownState.set(tuyaDevice.id, {
-              ...ctx.lastKnownState.get(tuyaDevice.id),
-              ...newState,
-            });
-          } else {
-            // Non-AC IR remote — find the power key and send it.
-            const keyList =
-              tuyaDevice.remote_keys && tuyaDevice.remote_keys.key_list;
-            if (keyList && key === "on") {
-              const powerKey = keyList.find(
-                (k) => k.key === "power" || /power/i.test(k.key_name || ""),
-              );
-              if (powerKey) {
-                await dm.sendInfraredCommands(
-                  tuyaDevice.parent_id,
-                  tuyaDevice.id,
-                  5, // category_id for generic IR
-                  0, // remote_index
-                  powerKey.key,
-                  powerKey.key_id,
-                );
-                api.updateDeviceState(deviceID, { on: value === true });
-                ctx.lastKnownState.set(tuyaDevice.id, {
-                  ...ctx.lastKnownState.get(tuyaDevice.id),
-                  on: value === true,
-                });
-              }
-            }
-          }
-          return; // IR command handled — skip normal flow.
+        if (key === "p2p_start") {
+          return startP2P(deviceID, tuyaDevice, ctx, log, api);
         }
-
-        let commands = [];
-
-        if (key === "on") {
-          const onSchema = tuyaDevice.schema.find(
-            (s) =>
-              s.code === "switch_1" ||
-              s.code === "switch_fan" ||
-              s.code === "fan_switch",
-          );
-          if (onSchema) {
-            commands.push({ code: onSchema.code, value: value === true });
-          } else if (tuyaDevice.schema.some((s) => s.code === "switch")) {
-            commands.push({ code: "switch", value: value === true });
-          } else if (tuyaDevice.schema.some((s) => s.code === "light")) {
-            commands.push({ code: "light", value: value === true });
-            if (value === true) {
-              const brightSchema = tuyaDevice.schema.find(
-                (s) =>
-                  s.code === "bright_value" ||
-                  s.code === "bright_value_v2" ||
-                  s.code === "bright_value_1",
-              );
-              if (brightSchema) {
-                const currentBright = tuyaDevice.status.find(
-                  (s) => s.code === brightSchema.code,
-                );
-                if (currentBright && currentBright.value !== undefined) {
-                  commands.push(
-                    buildCommand(
-                      tuyaDevice.schema,
-                      brightSchema.code,
-                      currentBright.value,
-                    ),
-                  );
-                }
-              }
-            }
-          } else if (tuyaDevice.schema.some((s) => s.code === "switch_led")) {
-            commands.push({ code: "switch_led", value: value === true });
-          } else {
-            const anySwitch = tuyaDevice.schema.find(
-              (s) => s.code && s.code.startsWith("switch"),
-            );
-            if (anySwitch) {
-              commands.push({ code: anySwitch.code, value: value === true });
-            }
-          }
-        } else if (key === "brightness") {
-          const brightSchema = tuyaDevice.schema.find(
-            (s) =>
-              s.code === "bright_value" ||
-              s.code === "bright_value_v2" ||
-              s.code === "bright_value_1",
-          );
-          if (brightSchema) {
-            // Convert Doimus 0–100 back to Tuya 0–1000 range before sending
-            const tuyaBrightness = Math.round((Number(value) / 100) * 1000);
-            commands.push(
-              buildCommand(
-                tuyaDevice.schema,
-                brightSchema.code,
-                tuyaBrightness,
-              ),
-            );
-          }
-        } else if (key === "color_temp") {
-          const tempSchema = tuyaDevice.schema.find(
-            (s) => s.code === "temp_value" || s.code === "temp_value_v2",
-          );
-          if (tempSchema) {
-            const tuyaValue = kelvinToTuyaTemp(value, tempSchema.property);
-            commands.push({ code: tempSchema.code, value: tuyaValue });
-          }
-        } else if (key === "hue" || key === "saturation") {
-          const colourSchema = tuyaDevice.schema.find(
-            (s) => s.code === "colour_data" || s.code === "colour_data_v2",
-          );
-          if (colourSchema) {
-            const currentState = tuyaDevice.status;
-            const currentColour = currentState.find(
-              (s) => s.code === colourSchema.code,
-            );
-            let colourData = { hue: 0, saturation: 0, value: 1000 };
-            if (currentColour && typeof currentColour.value === "object") {
-              colourData = { ...colourData, ...currentColour.value };
-            }
-            if (key === "hue") colourData.hue = Number(value);
-            if (key === "saturation") colourData.saturation = Number(value);
-            commands.push({ code: colourSchema.code, value: colourData });
-          }
-        } else if (key === "target_temp") {
-          const tempSetSchema = tuyaDevice.schema.find(
-            (s) => s.code === "temp_set" || s.code === "target_temp",
-          );
-          if (tempSetSchema) {
-            commands.push(
-              buildCommand(tuyaDevice.schema, tempSetSchema.code, value),
-            );
-          }
-        } else if (key === "heating_mode") {
-          // Send numeric heating mode (0=off, 1=heat, 2=cool, 3=auto) to
-          // the Tuya mode/work_mode/hvac_mode DP. Value is a Doimus int.
-          const modeSchema = tuyaDevice.schema.find(
-            (s) =>
-              s.code === "mode" ||
-              s.code === "work_mode" ||
-              s.code === "hvac_mode",
-          );
-          if (modeSchema) {
-            // If the schema property defines a range (Enum), send the value
-            // as-is. Tuya expects the raw integer for numeric mode codes.
-            commands.push(
-              buildCommand(tuyaDevice.schema, modeSchema.code, value),
-            );
-          }
-        } else if (key === "locked") {
-          commands.push({ code: "lock_state", value: value === true });
-        } else if (key === "child_lock") {
-          const childLockSchema = tuyaDevice.schema.find(
-            (s) => s.code === "child_lock",
-          );
-          if (childLockSchema) {
-            commands.push(
-              buildCommand(tuyaDevice.schema, childLockSchema.code, value),
-            );
-          }
-        } else if (key === "position") {
-          // Match writable position DPs (percent_control, percent, position).
-          // Exclude read-only codes ("percent_state") and direction-only
-          // codes ("control_back" — takes "open"/"close"/"stop", not 0-100).
-          const posSchema = tuyaDevice.schema.find(
-            (s) =>
-              (s.code &&
-                s.code.startsWith("percent") &&
-                s.code !== "percent_state") ||
-              s.code === "position",
-          );
-          if (posSchema) {
-            const cmd = buildCommand(tuyaDevice.schema, posSchema.code, value);
-            log(
-              "info",
-              `POSITION command → DP=${posSchema.code} raw=${value} cmd=${JSON.stringify(cmd)}`,
-            );
-            commands.push(cmd);
-          } else {
-            log(
-              "warn",
-              `No writable position DP found for blind ${deviceID} ` +
-                `(schema: [${(tuyaDevice.schema || []).map((s) => s.code).join(", ")}])`,
-            );
-          }
-        } else if (key === "control") {
-          const controlSchema = tuyaDevice.schema.find(
-            (s) => s.code === "control" || s.code === "control_back",
-          );
-          if (controlSchema) {
-            commands.push({ code: controlSchema.code, value: String(value) });
-          }
-        } else if (key === "rotation_speed") {
-          const speedSchema = tuyaDevice.schema.find(
-            (s) =>
-              (s.code && s.code.startsWith("fan_speed")) ||
-              s.code === "wind_speed",
-          );
-          if (speedSchema) {
-            commands.push(
-              buildCommand(tuyaDevice.schema, speedSchema.code, value),
-            );
-          }
-        } else if (key === "mode") {
-          commands.push({ code: "work_state", value: String(value) });
-        } else if (key === "countdown") {
-          const countdownSchema = tuyaDevice.schema.find(
-            (s) => s.code === "countdown" || s.code === "count_down",
-          );
-          if (countdownSchema) {
-            commands.push(
-              buildCommand(tuyaDevice.schema, countdownSchema.code, value),
-            );
-          }
-        } else if (key === "p2p_start") {
-          await startP2P(deviceID, tuyaDevice, ctx, log, api);
-          return;
-        } else if (key === "p2p_stop") {
+        if (key === "p2p_stop") {
           stopP2P(deviceID, ctx, log);
           stopStreamAllocation(deviceID, ctx, log);
           return;
         }
 
+        if (tuyaDevice.isIRRemoteControl && tuyaDevice.isIRRemoteControl()) {
+          return handleIRCommand(deviceID, key, value, tuyaDevice, ctx, dm, api, log);
+        }
+
+        const commands = buildDeviceCommands(key, value, tuyaDevice, deviceID, log);
         if (commands.length > 0) {
           sendCommandsDebounced(tuyaDevice, commands, ctx, log);
         }
@@ -4026,80 +3734,76 @@ module.exports = {
   },
 
   async setConfig(cfg) {
-    const api = _ctx ? _ctx.apiRef : null;
+    const api = this._ctx ? this._ctx.apiRef : null;
     if (!api) return;
     this.stop();
     await this.start(cfg, api);
   },
 
   stop() {
-    if (_ctx) {
-      if (_ctx._energyPollTimer) {
-        clearInterval(_ctx._energyPollTimer);
-        _ctx._energyPollTimer = null;
+    const ctx = this._ctx;
+    if (ctx) {
+      if (ctx._energyPollTimer) {
+        clearInterval(ctx._energyPollTimer);
+        ctx._energyPollTimer = null;
       }
-      if (_ctx._snapshotTimer) {
-        clearInterval(_ctx._snapshotTimer);
-        _ctx._snapshotTimer = null;
+      if (ctx._snapshotTimer) {
+        clearInterval(ctx._snapshotTimer);
+        ctx._snapshotTimer = null;
       }
-      if (_ctx._initRetryTimer) {
-        clearTimeout(_ctx._initRetryTimer);
-        _ctx._initRetryTimer = null;
+      if (ctx._initRetryTimer) {
+        clearTimeout(ctx._initRetryTimer);
+        ctx._initRetryTimer = null;
       }
-      if (_ctx.deviceManager && _ctx.deviceManager.mq) {
+      if (ctx.deviceManager && ctx.deviceManager.mq) {
         try {
-          _ctx.deviceManager.mq.stop();
+          ctx.deviceManager.mq.stop();
         } catch (_) {}
       }
-      for (const [, debounced] of _ctx.debounceMap.entries()) {
+      for (const [, debounced] of ctx.debounceMap.entries()) {
         debounced.clear();
       }
-      _ctx.debounceMap.clear();
-      _ctx.lastKnownState.clear();
-      _ctx.deviceManager = null;
-      _ctx.doimusDeviceMap.clear();
-      // Close all active P2P connections
-      if (_ctx.p2pClients) {
-        for (const [id, p2p] of _ctx.p2pClients) {
+      ctx.debounceMap.clear();
+      ctx.lastKnownState.clear();
+      ctx.deviceManager = null;
+      ctx.doimusDeviceMap.clear();
+      if (ctx.p2pClients) {
+        for (const [id, p2p] of ctx.p2pClients) {
           try {
             p2p.close();
           } catch (_) {}
         }
-        _ctx.p2pClients.clear();
+        ctx.p2pClients.clear();
       }
-      // Close all active stream allocation ffmpeg processes
-      if (_ctx._streamAllocProcs) {
-        for (const [, proc] of _ctx._streamAllocProcs) {
+      if (ctx._streamAllocProcs) {
+        for (const [, proc] of ctx._streamAllocProcs) {
           try {
             proc.kill("SIGTERM");
           } catch (_) {}
         }
-        _ctx._streamAllocProcs.clear();
+        ctx._streamAllocProcs.clear();
       }
-      // Clear motion auto-reset timers
-      if (_ctx._motionTimers) {
-        for (const [, timer] of _ctx._motionTimers) {
+      if (ctx._motionTimers) {
+        for (const [, timer] of ctx._motionTimers) {
           clearTimeout(timer);
         }
-        _ctx._motionTimers.clear();
+        ctx._motionTimers.clear();
       }
-      // Clear motion coalesce timers (debounce + async S3/REST)
-      if (_ctx._motionCoalesce) {
-        for (const [, entry] of _ctx._motionCoalesce) {
+      if (ctx._motionCoalesce) {
+        for (const [, entry] of ctx._motionCoalesce) {
           clearTimeout(entry.timer);
           clearTimeout(entry.asyncTimer);
         }
-        _ctx._motionCoalesce.clear();
+        ctx._motionCoalesce.clear();
       }
-      // Clear online snapshot timers
-      if (_ctx._onlineSnapshotTimers) {
-        for (const [, timer] of _ctx._onlineSnapshotTimers) {
+      if (ctx._onlineSnapshotTimers) {
+        for (const [, timer] of ctx._onlineSnapshotTimers) {
           clearTimeout(timer);
         }
-        _ctx._onlineSnapshotTimers.clear();
+        ctx._onlineSnapshotTimers.clear();
       }
-      _ctx.apiRef = null;
-      _ctx = null;
+      ctx.apiRef = null;
+      this._ctx = null;
     }
   },
 };
