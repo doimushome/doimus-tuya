@@ -171,6 +171,13 @@
             "type": "integer",
             "default": 30000,
             "minimum": 5000
+          },
+          "streamAllocBootDelay": {
+            "title": "Stream Allocation Boot Delay (ms)",
+            "description": "How long to wait after stream allocation before spawning ffmpeg for battery cameras. Default 30000 (30s). Minimum 5000.",
+            "type": "integer",
+            "default": 30000,
+            "minimum": 5000
           }
         }
       }

@@ -745,6 +745,8 @@ module.exports = {
     const options = (cfg && cfg.options) || {};
     const log = createLogger(api, "TuyaPlatform");
 
+    ctx._streamAllocBootDelay = options.streamAllocBootDelay || 30000;
+
     log("info", "Starting Tuya Platform plugin");
 
     if (!options.accessId || !options.accessKey) {
