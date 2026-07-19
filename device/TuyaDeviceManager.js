@@ -298,6 +298,7 @@ class TuyaDeviceManager extends EventEmitter {
             return;
           }
           await new Promise((r) => setTimeout(r, 10000));
+          if (!this.mq.running) return; // plugin stopped during delay
           const device = await this.updateDevice(devId);
           if (!device) return;
           this.mq.start();
