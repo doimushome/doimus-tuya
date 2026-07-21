@@ -223,21 +223,32 @@ async function initCustomProject(api, options, log) {
 
   // Set up automatic re-login when token refresh expires (after ~7 days).
   // Also restarts MQTT after successful re-login so it fetches fresh credentials.
+  // Guard prevents re-entrancy when multiple 1010 recoveries race.
+  let reLoginInFlight = false;
   openAPI.setReloginHandler(async () => {
-    log("info", "Re-logging in default user due to token expiry...");
-    const result = await openAPI.customLogin(DEFAULT_USER, DEFAULT_USER);
-    if (result && result.success) {
-      log(
-        "info",
-        "Re-login successful, restarting MQTT with fresh credentials...",
-      );
-      try {
-        dm.mq.start();
-      } catch (mqErr) {
-        log("warn", `MQTT restart after re-login failed: ${mqErr.message}`);
-      }
+    if (reLoginInFlight) {
+      log("warn", "Re-login already in progress — skipping duplicate");
+      return { success: true };
     }
-    return result;
+    reLoginInFlight = true;
+    log("info", "Re-logging in default user due to token expiry...");
+    try {
+      const result = await openAPI.customLogin(DEFAULT_USER, DEFAULT_USER);
+      if (result && result.success) {
+        log(
+          "info",
+          "Re-login successful, restarting MQTT with fresh credentials...",
+        );
+        try {
+          dm.mq.start();
+        } catch (mqErr) {
+          log("warn", `MQTT restart after re-login failed: ${mqErr.message}`);
+        }
+      }
+      return result;
+    } finally {
+      reLoginInFlight = false;
+    }
   });
 
   log("info", "Starting MQTT connection.");
@@ -296,26 +307,37 @@ async function initHomeProject(api, options, log) {
 
   // Set up automatic re-login when token refresh expires.
   // Also restarts MQTT after successful re-login so it fetches fresh credentials.
+  // Guard prevents re-entrancy when multiple 1010 recoveries race.
+  let reLoginInFlight = false;
   openAPI.setReloginHandler(async () => {
-    log("info", "Re-logging in to Tuya Cloud due to token expiry...");
-    const result = await openAPI.homeLogin(
-      countryCode,
-      username,
-      password,
-      appSchema,
-    );
-    if (result && result.success) {
-      log(
-        "info",
-        "Re-login successful, restarting MQTT with fresh credentials...",
-      );
-      try {
-        dm.mq.start();
-      } catch (mqErr) {
-        log("warn", `MQTT restart after re-login failed: ${mqErr.message}`);
-      }
+    if (reLoginInFlight) {
+      log("warn", "Re-login already in progress — skipping duplicate");
+      return { success: true };
     }
-    return result;
+    reLoginInFlight = true;
+    log("info", "Re-logging in to Tuya Cloud due to token expiry...");
+    try {
+      const result = await openAPI.homeLogin(
+        countryCode,
+        username,
+        password,
+        appSchema,
+      );
+      if (result && result.success) {
+        log(
+          "info",
+          "Re-login successful, restarting MQTT with fresh credentials...",
+        );
+        try {
+          dm.mq.start();
+        } catch (mqErr) {
+          log("warn", `MQTT restart after re-login failed: ${mqErr.message}`);
+        }
+      }
+      return result;
+    } finally {
+      reLoginInFlight = false;
+    }
   });
 
   log("info", "Starting MQTT connection.");
@@ -759,6 +781,21 @@ module.exports = {
       return;
     }
 
+    if (options.projectType === "2") {
+      if (!options.countryCode) {
+        log("error", "Smart Home: countryCode is required.");
+        return;
+      }
+      if (!options.username) {
+        log("error", "Smart Home: username is required.");
+        return;
+      }
+      if (!options.password) {
+        log("error", "Smart Home: password is required.");
+        return;
+      }
+    }
+
     if (!validateConfig(options, log)) {
       log("error", "Configuration validation failed.");
       return;
@@ -863,6 +900,7 @@ module.exports = {
         `Starting energy monitoring polling for ${energyPollDevices.length} device(s): ${energyPollDevices.map((d) => d.name).join(", ")}`,
       );
       ctx._energyPollTimer = setInterval(async () => {
+        if (!this._ctx) return; // stop() was called
         for (const device of energyPollDevices) {
           try {
             const res = await dm.getDeviceInfo(device.id);
@@ -1423,6 +1461,32 @@ module.exports = {
       }
       if (ctx._pendingCommandBatches) {
         ctx._pendingCommandBatches.clear();
+      }
+      if (ctx._webrtcClients) {
+        for (const [, wr] of ctx._webrtcClients) {
+          try { wr.close(); } catch (_) {}
+        }
+        ctx._webrtcClients.clear();
+      }
+      if (ctx._wakeWatchers) {
+        for (const [, watcher] of ctx._wakeWatchers) {
+          clearTimeout(watcher.timer);
+          clearInterval(watcher.progressInterval);
+          if (watcher.resolve) watcher.resolve();
+        }
+        ctx._wakeWatchers.clear();
+      }
+      if (ctx._streamFallbackTimers) {
+        for (const [, timer] of ctx._streamFallbackTimers) {
+          clearTimeout(timer);
+        }
+        ctx._streamFallbackTimers.clear();
+      }
+      if (ctx._powerModeChanged) {
+        ctx._powerModeChanged.clear();
+      }
+      if (ctx._firstUpdateSeen) {
+        ctx._firstUpdateSeen.clear();
       }
       ctx.apiRef = null;
       this._ctx = null;

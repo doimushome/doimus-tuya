@@ -104,6 +104,12 @@ class TuyaOpenMQ {
       return;
     }
 
+    // stop() may have been called while we were awaiting — bail if so
+    if (!this.running) {
+      this._connecting = false;
+      return;
+    }
+
     if (res.success === false) {
       this.log.warn(
         "Get MQTT config failed. code = %s, msg = %s. Will retry.",
@@ -209,6 +215,11 @@ class TuyaOpenMQ {
     client.subscribe(source_topic.device, (err) => {
       if (err) {
         this.log.error("MQTT Subscribe error: %s", err.message);
+        this.log.warn("Subscription failed — will reconnect to retry");
+        // Trigger reconnect so we get fresh credentials and retry subscribe
+        if (this.running && !this._retryTimer) {
+          this._scheduleReconnect();
+        }
       } else {
         this.log.info("MQTT Subscribed to: %s", source_topic.device);
       }
@@ -222,13 +233,14 @@ class TuyaOpenMQ {
 
     // Schedule periodic reconnection before MQTT token expires
     // Stored in _expireTimer (separate from _retryTimer to avoid conflicts)
+    const expireDelay = Math.max(5000, (Number(expire_time) || 0) - 60) * 1000;
     this._expireTimer = setTimeout(
       () => {
         this._expireTimer = null;
         this.log.debug("MQTT expire_time reached, reconnecting...");
         this._connect();
       },
-      (expire_time - 60) * 1000,
+      expireDelay,
     );
   }
 
