@@ -2,6 +2,7 @@ const https = require("https");
 const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const retry = require("async-await-retry");
+const { version: PLUGIN_VERSION } = require("../package.json");
 const { PrefixLogger } = require("../util/Logger");
 
 const Endpoints = {
@@ -332,7 +333,7 @@ class TuyaOpenAPI {
       lang: this.lang,
       dev_lang: "javascript",
       dev_channel: "doimus",
-      devVersion: "1.7.0-beta.58",
+      devVersion: PLUGIN_VERSION,
     };
 
     this.log.debug(
