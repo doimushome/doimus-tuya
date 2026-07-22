@@ -2,31 +2,33 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
-const TuyaOpenAPI = require("./core/TuyaOpenAPI");
-const TuyaCustomDeviceManager = require("./device/TuyaCustomDeviceManager");
-const TuyaHomeDeviceManager = require("./device/TuyaHomeDeviceManager");
-const TuyaDeviceManager = require("./device/TuyaDeviceManager");
-const WebRTCSignaling = require("./core/WebRTCSignaling");
+const TuyaOpenAPI = require("./cloud/api/TuyaOpenAPI");
+const TuyaCustomDeviceManager = require("./cloud/device/TuyaCustomDeviceManager");
+const TuyaHomeDeviceManager = require("./cloud/device/TuyaHomeDeviceManager");
+const TuyaDeviceManager = require("./shared/TuyaDeviceManager");
+const TuyaLocalDeviceManager = require("./local/LocalDeviceManager");
+const TuyaHybridDeviceManager = require("./shared/TuyaHybridDeviceManager");
+const WebRTCSignaling = require("./camera/WebRTCSignaling");
 
 const {
   applySchemaOverride,
   mapTuyaStatusToDoimusState,
   determineCapabilities,
   getDoimusType,
-} = require("./util/state-mapper");
+} = require("./shared/state-mapper");
 const {
   buildDeviceCommands,
   sendCommandsDebounced,
-} = require("./util/command-builder");
+} = require("./shared/command-builder");
 const {
   startP2P,
   stopP2P,
   startStreamAllocation,
   stopStreamAllocation,
-} = require("./core/camera-streaming");
+} = require("./camera/camera-streaming");
 const {
   startMotionCoalesce,
-} = require("./core/motion-pipeline");
+} = require("./camera/motion-pipeline");
 
 /**
  * Retry an async function with exponential backoff.
@@ -801,15 +803,52 @@ module.exports = {
       return;
     }
 
-    let result = null;
+    const mode = options.mode || "cloud";
+
+    let dm = null;
+    let uid = null;
+    let debugMode = false;
+
     try {
-      if (options.projectType === "1") {
-        result = await initCustomProject(api, options, log);
-      } else if (options.projectType === "2") {
-        result = await initHomeProject(api, options, log);
+      if (mode === "local") {
+        const localDM = new TuyaLocalDeviceManager(options.local || {}, options.debugLevel?.includes("local"));
+        await localDM.pullDevices();
+        dm = localDM;
+        uid = "local";
+        debugMode = !!(options.debug && (options.debugLevel || "").includes("local"));
       } else {
-        log("error", `Unsupported projectType: ${options.projectType}`);
-        return;
+        let result = null;
+        if (options.projectType === "1") {
+          result = await initCustomProject(api, options, log);
+        } else if (options.projectType === "2") {
+          result = await initHomeProject(api, options, log);
+        } else {
+          log("error", `Unsupported projectType: ${options.projectType}`);
+          return;
+        }
+        if (!result || !result.dm) {
+          log("error", "Failed to initialize Tuya connection. Will retry in 60s.");
+          ctx._initRetryTimer = setTimeout(() => module.exports.start(cfg, api), 60000);
+          return;
+        }
+        dm = result.dm;
+        uid = result.uid;
+        debugMode = result.debugMode;
+
+        if (mode === "both") {
+          const localConfig = options.local || {};
+          const localDM = new TuyaLocalDeviceManager(localConfig, debugMode);
+          await localDM.pullDevices();
+          // Enrich local devices with cloud keys
+          for (const cloudDev of dm.devices) {
+            const localDev = localDM.getDevice(cloudDev.id);
+            if (localDev && cloudDev.local_key) {
+              localDev.localKey = cloudDev.local_key;
+            }
+          }
+          localDM.connectAllDevices();
+          dm = new TuyaHybridDeviceManager(dm, localDM, debugMode);
+        }
       }
     } catch (e) {
       log("warn", `Initialization failed: ${e.message}. Will retry in 60s.`);
@@ -817,40 +856,36 @@ module.exports = {
       return;
     }
 
-    if (!result || !result.dm) {
-      log("error", "Failed to initialize Tuya connection. Will retry in 60s.");
-      ctx._initRetryTimer = setTimeout(() => module.exports.start(cfg, api), 60000);
-      return;
-    }
-
-    const { dm, uid, debugMode } = result;
     ctx.deviceManager = dm;
 
-    // Populate IR remote sub-devices (keys, AC status, etc.) before registration.
-    await dm.updateInfraredRemotes(dm.devices);
+    if (mode !== "local") {
+      // Populate IR remote sub-devices (keys, AC status, etc.) before registration.
+      await dm.updateInfraredRemotes(dm.devices);
 
-    await persistDeviceList(api, dm, uid, log);
-    await registerDevicesWithDoimus(api, dm, options, ctx, log);
+      await persistDeviceList(api, dm, uid, log);
 
-    // Fetch local_key for camera/doorbell devices (needed for image decryption).
-    // The bulk device list API omits local_key — must fetch per-device.
-    for (const device of dm.devices) {
-      if (
-        ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
-        !device.local_key
-      ) {
-        const info = await dm.getDeviceInfo(device.id);
-        if (info.success && info.result && info.result.local_key) {
-          device.local_key = info.result.local_key;
-          log("info", `Fetched local_key for camera device "${device.name}"`);
-        } else {
-          log(
-            "warn",
-            `No local_key for camera device "${device.name}" (api success=${info.success})`,
-          );
+      // Fetch local_key for camera/doorbell devices (needed for image decryption).
+      // The bulk device list API omits local_key — must fetch per-device.
+      for (const device of dm.devices) {
+        if (
+          ["sp", "doorbell", "mobilecam", "wxml"].includes(device.category) &&
+          !device.local_key
+        ) {
+          const info = await dm.getDeviceInfo(device.id);
+          if (info.success && info.result && info.result.local_key) {
+            device.local_key = info.result.local_key;
+            log("info", `Fetched local_key for camera device "${device.name}"`);
+          } else {
+            log(
+              "warn",
+              `No local_key for camera device "${device.name}" (api success=${info.success})`,
+            );
+          }
         }
       }
     }
+
+    await registerDevicesWithDoimus(api, dm, options, ctx, log);
 
     // Auto-start P2P for camera devices (opt-in via config.p2pAutoStart for testing)
     if (options.p2pAutoStart) {
@@ -966,8 +1001,8 @@ module.exports = {
     // Periodic REST polling is disabled — Tuya cameras don't reliably
     // serve snapshots on a timer, and constant polling drowns out real
     // motion events with noise.
-    if (result.dm) {
-      const cameraDevices = result.dm.devices.filter((d) =>
+    if (dm) {
+      const cameraDevices = dm.devices.filter((d) =>
         ["sp", "mobilecam", "wxml", "doorbell"].includes(d.category),
       );
       if (cameraDevices.length > 0) {
@@ -1412,10 +1447,17 @@ module.exports = {
         clearTimeout(ctx._initRetryTimer);
         ctx._initRetryTimer = null;
       }
-      if (ctx.deviceManager && ctx.deviceManager.mq) {
-        try {
-          ctx.deviceManager.mq.stop();
-        } catch (_) {}
+      if (ctx.deviceManager) {
+        if (ctx.deviceManager.mq) {
+          try {
+            ctx.deviceManager.mq.stop();
+          } catch (_) {}
+        }
+        if (ctx.deviceManager.stopLocalDevices) {
+          try {
+            ctx.deviceManager.stopLocalDevices();
+          } catch (_) {}
+        }
       }
       for (const [, debounced] of ctx.debounceMap.entries()) {
         debounced.clear();

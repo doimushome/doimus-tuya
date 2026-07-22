@@ -2,16 +2,18 @@ const mqtt = require("mqtt");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const CryptoJS = require("crypto-js");
-const { PrefixLogger } = require("../util/Logger");
+const dns = require("dns");
+const { PrefixLogger } = require("../../shared/Logger");
 
 const GCM_TAG_LENGTH = 16;
 const INITIAL_RETRY_DELAY = 2000; // 2 seconds
 const MAX_RETRY_DELAY = 120000; // 2 minutes
 
 class TuyaOpenMQ {
-  constructor(api, log = console, debug = false) {
+  constructor(api, log = console, debug = false, forceIPv4 = false) {
     this.api = api;
     this.debug = debug;
+    this.forceIPv4 = forceIPv4;
     this.version = "1.0";
     this.messageListeners = new Set();
     this.linkId = uuidv4();
@@ -165,12 +167,21 @@ class TuyaOpenMQ {
     // via _scheduleReconnect() which fetches fresh credentials before retrying.
     // mqtt.js auto-reconnect with stale credentials causes auth errors that
     // trigger destructive plugin restarts in the Go backend.
-    const client = mqtt.connect(url, {
+    const opts = {
       clientId: client_id,
       username,
       password,
       reconnectPeriod: 0,
-    });
+    };
+
+    if (this.forceIPv4) {
+      opts.family = 4;
+      opts.lookup = (hostname, options, callback) => {
+        dns.lookup(hostname, { family: 4 }, callback);
+      };
+    }
+
+    const client = mqtt.connect(url, opts);
 
     client.on("connect", () => {
       this.log.info("MQTT Connected");

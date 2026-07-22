@@ -1,7 +1,6 @@
 "use strict";
 
 const mqtt = require("mqtt");
-const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 
 /**
@@ -213,10 +212,11 @@ class WebRTCSignaling {
    */
   connect(deviceId, localKey, webrtcConfig, needsWake) {
     // Store these for the wake-up message and offer Token field.
-    this._deviceId = deviceId;
-    this._localKey = localKey;
-    this._webrtcConfigFull = webrtcConfig;
-    this._needsWake = !!needsWake;
+    // When called from reconnect (no args), use the stored values.
+    this._deviceId = deviceId || this._deviceId;
+    this._localKey = localKey || this._localKey;
+    this._webrtcConfigFull = webrtcConfig || this._webrtcConfigFull;
+    if (needsWake !== undefined) this._needsWake = !!needsWake;
 
     if (!this.mqttConfig) {
       this.log("warn", "[WebRTC] No MQTT config — call getConfigs() first");

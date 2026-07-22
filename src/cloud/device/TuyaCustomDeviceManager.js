@@ -1,5 +1,5 @@
-const TuyaDevice = require("./TuyaDevice");
-const TuyaDeviceManager = require("./TuyaDeviceManager");
+const TuyaDevice = require("../../shared/TuyaDevice");
+const TuyaDeviceManager = require("../../shared/TuyaDeviceManager");
 
 class TuyaCustomDeviceManager extends TuyaDeviceManager {
   constructor(api, debug = false) {

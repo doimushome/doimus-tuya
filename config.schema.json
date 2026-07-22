@@ -2,8 +2,8 @@
   "pluginAlias": "TuyaPlatform",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Tuya / Smart Life cloud integration. Supports lights, switches, sensors, covers, locks, cameras, IR hubs, and more.",
-  "footerDisplay": "Create a project at https://iot.tuya.com, add your devices, then enter your Access ID/Secret and app credentials below.",
+  "headerDisplay": "Tuya / Smart Life device integration. Cloud (REST/MQTT), Local LAN (TCP/UDP), or both simultaneously.",
+  "footerDisplay": "Cloud mode: create a project at https://iot.tuya.com. Local mode: devices must be on the same LAN with local_key extracted via tuya-cli.",
   "schema": {
     "type": "object",
     "properties": {
@@ -14,10 +14,20 @@
         "default": "Tuya"
       },
       "options": {
-        "title": "Project Info",
+        "title": "Connection Mode",
         "type": "object",
         "required": true,
         "properties": {
+          "mode": {
+            "title": "Mode",
+            "type": "string",
+            "default": "cloud",
+            "oneOf": [
+              { "title": "Cloud (default)", "enum": ["cloud"] },
+              { "title": "Local LAN", "enum": ["local"] },
+              { "title": "Both (Hybrid)", "enum": ["both"] }
+            ]
+          },
           "projectType": {
             "title": "Project Type (Development Method)",
             "type": "string",
@@ -26,36 +36,48 @@
               { "title": "Custom", "enum": ["1"] },
               { "title": "Smart Home", "enum": ["2"] }
             ],
-            "required": true
+            "required": true,
+            "condition": {
+              "functionBody": "return model.options.mode !== 'local';"
+            }
           },
           "endpoint": {
             "title": "Endpoint URL",
             "type": "string",
-            "format": "url"
+            "format": "url",
+            "condition": {
+              "functionBody": "return model.options.mode !== 'local';"
+            }
           },
           "accessId": {
             "title": "Access ID",
             "type": "string",
-            "required": true
+            "required": true,
+            "condition": {
+              "functionBody": "return model.options.mode !== 'local';"
+            }
           },
           "accessKey": {
             "title": "Access Secret",
             "type": "string",
-            "required": true
+            "required": true,
+            "condition": {
+              "functionBody": "return model.options.mode !== 'local';"
+            }
           },
           "countryCode": {
             "title": "Country Code",
             "type": "integer",
             "minimum": 1,
             "condition": {
-              "functionBody": "return model.options.projectType === '2';"
+              "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
             }
           },
           "username": {
             "title": "Username (email)",
             "type": "string",
             "condition": {
-              "functionBody": "return model.options.projectType === '2';"
+              "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
             }
           },
           "password": {
@@ -63,7 +85,7 @@
             "type": "string",
             "format": "password",
             "condition": {
-              "functionBody": "return model.options.projectType === '2';"
+              "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
             }
           },
           "appSchema": {
@@ -75,7 +97,7 @@
               { "title": "Smart Life", "enum": ["smartlife"] }
             ],
             "condition": {
-              "functionBody": "return model.options.projectType === '2';"
+              "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
             }
           },
           "homeWhitelist": {
@@ -84,7 +106,67 @@
             "type": "array",
             "items": { "title": "Home ID", "type": "integer" },
             "condition": {
-              "functionBody": "return model.options.projectType === '2';"
+              "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
+            }
+          },
+          "local": {
+            "title": "Local LAN Settings",
+            "type": "object",
+            "condition": {
+              "functionBody": "return model.options.mode === 'local' || model.options.mode === 'both';"
+            },
+            "properties": {
+              "autoDiscoverDevices": {
+                "title": "Auto-discover devices",
+                "type": "boolean",
+                "default": true
+              },
+              "discoverTimeout": {
+                "title": "Discovery timeout (seconds)",
+                "type": "integer",
+                "default": 30,
+                "minimum": 5
+              },
+              "rediscoverInterval": {
+                "title": "Rediscover interval (seconds)",
+                "description": "How often to re-scan the LAN for devices. 0 to disable.",
+                "type": "integer",
+                "default": 900,
+                "minimum": 0
+              },
+              "devices": {
+                "title": "Local Devices",
+                "type": "array",
+                "description": "Manually configured local devices. Auto-discovered devices can also be added here with a local_key to enable control.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tuyaDeviceId": { "title": "Device ID", "type": "string", "required": true },
+                    "tuyaKey": { "title": "Local Key (32 hex chars)", "type": "string" },
+                    "ip": { "title": "IP Address", "type": "string" },
+                    "name": { "title": "Name", "type": "string" },
+                    "protocolVersion": {
+                      "title": "Protocol Version",
+                      "type": "string",
+                      "oneOf": [
+                        { "title": "3.1", "enum": ["3.1"] },
+                        { "title": "3.2", "enum": ["3.2"] },
+                        { "title": "3.3", "enum": ["3.3"] },
+                        { "title": "3.4", "enum": ["3.4"] },
+                        { "title": "3.5", "enum": ["3.5"] }
+                      ]
+                    },
+                    "category": { "title": "Override Category", "type": "string" },
+                    "switchCount": { "title": "Switch Count", "type": "integer", "minimum": 1 },
+                    "outletCount": { "title": "Outlet Count", "type": "integer", "minimum": 1 },
+                    "dpMapping": {
+                      "title": "DP Mapping (JSON object)",
+                      "description": "Custom DP code to DP ID mapping, e.g. {\"switch_1\":1}",
+                      "type": "object"
+                    }
+                  }
+                }
+              }
             }
           },
           "deviceOverrides": {
@@ -158,7 +240,7 @@
           },
           "debugLevel": {
             "title": "Debug Level",
-            "description": "Set to `api` to enable verbose API/MQTT request logging. Leave empty for device-level debug only.",
+            "description": "Set to `api` to enable verbose API/MQTT request logging. Set to `local` for local LAN protocol debug. Leave empty for device-level debug only.",
             "type": "string",
             "default": "api",
             "condition": {
@@ -170,7 +252,10 @@
             "description": "How often to poll energy monitoring devices (cur_current, cur_power, etc.). Default 30000 (30s). Minimum 5000.",
             "type": "integer",
             "default": 30000,
-            "minimum": 5000
+            "minimum": 5000,
+            "condition": {
+              "functionBody": "return model.options.mode !== 'local';"
+            }
           },
           "streamAllocBootDelay": {
             "title": "Stream Allocation Boot Delay (ms)",

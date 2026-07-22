@@ -10,12 +10,15 @@ device categories as Doimus devices.
 
 ## Repository Structure
 
-- `index.js` — Plugin entry point; all device management, MQTT, motion/snapshot handling
-- `core/` — Tuya OpenAPI client, MQTT client, device management
-- `device/` — Device category handlers (lights, switches, cameras, doorbells, etc.)
-- `util/` — Utilities (DP parsing, HMAC, etc.)
+- `src/index.js` — Plugin entry point; all device management, MQTT, motion/snapshot handling
+- `src/cloud/api/` — Tuya OpenAPI client (`TuyaOpenAPI.js`) and MQTT client (`TuyaOpenMQ.js`)
+- `src/cloud/device/` — Cloud device managers (Custom/Smart Home)
+- `src/local/` — Local LAN mode: TCP device connections, UDP discovery, protocol handlers (v3.1–v3.5)
+- `src/local/protocol/` — Protocol implementation: frame encode/decode, key exchange, AES/GCM encryption
+- `src/shared/` — Shared utilities: `TuyaDevice`, `TuyaDeviceManager`, `TuyaHybridDeviceManager`, `Logger`, `state-mapper`, `command-builder`, `image-utils`
+- `src/camera/` — Camera handling: WebRTC signaling, P2P streaming, motion pipeline
 - `test/` — Tests (WebRTC signaling)
-- `config.schema.json` — Plugin configuration schema (rendered in app wizard)
+- `config.schema.json` — Plugin configuration schema (rendered in app wizard; supports `cloud`/`local`/`both` mode)
 
 ## Key Commands
 
@@ -29,15 +32,16 @@ npm run lint
 
 ## Architecture
 
-- **Entry point**: `index.js` — exports `createPluginInstance()` which returns the Doimus plugin API
+- **Entry point**: `src/index.js` — exports `createPluginInstance()` which returns the Doimus plugin API; supports mode selection (`cloud`/`local`/`both`)
 - **Communication**: JSON stdio protocol via `api.registerDevice`, `api.updateDeviceState`, `api.onCommand`
-- **MQTT**: Real-time device updates via Tuya's MQTT with AES decryption (`core/tuya-mqtt.js`)
-- **REST API**: Tuya OpenAPI for device control, status queries, snapshots (`core/tuya-client.js`)
+- **MQTT**: Real-time device updates via Tuya's MQTT with AES decryption (`src/cloud/api/TuyaOpenMQ.js`)
+- **REST API**: Tuya OpenAPI for device control, status queries, snapshots (`src/cloud/api/TuyaOpenAPI.js`)
+- **Local LAN mode**: Direct TCP connections to Tuya devices with protocol v3.1–v3.5, UDP discovery, cloud+local hybrid fallback (`src/local/`, `src/shared/TuyaHybridDeviceManager.js`)
 - **Camera handling**: WebRTC live view, motion snapshots via S3/Inline/REST fallback, snapshot_latest
 
 ## Camera Motion & Image Pipeline
 
-### Motion detection flow (`index.js` ~L2870–3120)
+### Motion detection flow (`src/index.js` ~L2870–3120)
 
 1. Tuya MQTT delivers `DEVICE_STATUS_UPDATE` with `movement_detect_pic`, `doorbell_pic`, or similar
 2. Edge detection: `motionActivated = state.motion === true && !lastKnown.motion`

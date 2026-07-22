@@ -2,8 +2,8 @@ const https = require("https");
 const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const retry = require("async-await-retry");
-const { version: PLUGIN_VERSION } = require("../package.json");
-const { PrefixLogger } = require("../util/Logger");
+const { version: PLUGIN_VERSION } = require("../../../package.json");
+const { PrefixLogger } = require("../../shared/Logger");
 
 const Endpoints = {
   AMERICA: "https://openapi.tuyaus.com",

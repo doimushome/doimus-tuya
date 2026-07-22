@@ -5,7 +5,7 @@ const {
   downloadImageFromUrl,
   fetchMotionImageFromS3,
   detectImageMime,
-} = require("../util/image-utils");
+} = require("../shared/image-utils");
 
 // ── Motion Capture Coordinator ──────────────────────────────────────────
 // Replaces the old timer-race approach: multiple MQTT packets per physical

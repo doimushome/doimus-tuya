@@ -178,7 +178,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       if (schemaOverride) {
         if (schemaOverride.hidden) continue;
         if (schemaOverride.newCode) code = schemaOverride.newCode;
-        if (schemaOverride.onGet) {
+        if (schemaOverride.onGet && typeof schemaOverride.onGet === 'string') {
           try {
             const fn = new Function(
               "device",
@@ -902,15 +902,6 @@ function getDeviceConfig(device, options) {
   );
   const globalConfig = options.deviceOverrides.find((c) => c.id === "global");
   return deviceConfig || productConfig || globalConfig;
-}
-
-function getDeviceSchemaConfig(device, code, options) {
-  const deviceConfig = getDeviceConfig(device, options);
-  if (!deviceConfig || !deviceConfig.schema) return undefined;
-  const schemaConfig = deviceConfig.schema.find((item) =>
-    item.newCode ? item.newCode === code : item.code === code,
-  );
-  return schemaConfig;
 }
 
 module.exports = {

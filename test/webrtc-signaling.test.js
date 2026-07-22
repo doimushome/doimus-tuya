@@ -71,7 +71,7 @@ function withMockedDeps({ mqttMock, uuidValues }, fn) {
     return originalLoad.apply(this, arguments);
   };
 
-  const modPath = path.resolve(__dirname, "../core/WebRTCSignaling.js");
+  const modPath = path.resolve(__dirname, "../src/camera/WebRTCSignaling.js");
   delete require.cache[modPath];
 
   try {

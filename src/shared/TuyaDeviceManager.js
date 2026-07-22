@@ -1,6 +1,6 @@
 const EventEmitter = require("events");
-const TuyaOpenMQ = require("../core/TuyaOpenMQ");
-const { PrefixLogger } = require("../util/Logger");
+const TuyaOpenMQ = require("../cloud/api/TuyaOpenMQ");
+const { PrefixLogger } = require("./Logger");
 const TuyaDevice = require("./TuyaDevice");
 
 const Events = {
@@ -24,7 +24,7 @@ class TuyaDeviceManager extends EventEmitter {
     this.devices = [];
     const log = this.api.log;
     this.log = new PrefixLogger(log, "TuyaDeviceManager", debug);
-    this.mq = new TuyaOpenMQ(api, this.log, debug);
+    this.mq = new TuyaOpenMQ(api, this.log, debug, api.forceIPv4 || false);
     this.mq.addMessageListener(this.onMQTTMessage.bind(this));
   }
 
