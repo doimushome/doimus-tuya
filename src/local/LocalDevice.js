@@ -7,7 +7,7 @@ const { hmac, encryptECBNoPad, encryptGCM } = require('./protocol/ProtocolUtilit
 const { ChildPayloadUtility } = require('./protocol/ChildPayloadUtility');
 
 class LocalDevice extends EventEmitter {
-  constructor({ id, key, ip, version, name, port, pingGap, connectTimeout }) {
+  constructor({ id, key, ip, version, name, port, pingGap, connectTimeout, log }) {
     super();
     this.id = id;
     this.key = key;
@@ -18,7 +18,7 @@ class LocalDevice extends EventEmitter {
     this.pingGap = (pingGap || 9) * 1000;
     this.connectTimeout = (connectTimeout || 30) * 1000;
 
-    this.log = new PrefixLogger(console.log, `LocalDevice:${this.id}`, false);
+    this.log = new PrefixLogger(log || console.log, `LocalDevice:${this.id}`, false);
 
     this.protocol = ProtocolFactory.createProtocol(this.version);
     this.socket = null;
@@ -287,7 +287,7 @@ class LocalDevice extends EventEmitter {
       this.connectTimer = null;
     }
     if (this.socket) {
-      try { this.socket.destroy(); } catch (_) {}
+      try { this.socket.destroy(); } catch (_) { /* cleanup */ }
       this.socket = null;
     }
     this.buffer = Buffer.alloc(0);

@@ -120,7 +120,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       if (p2p._h264StreamProc) {
         try {
           p2p._h264StreamProc.kill();
-        } catch (_) {}
+        } catch (_) { /* process already dead */ }
         p2p._h264StreamProc = null;
       }
 
@@ -243,9 +243,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       if (p2p._h264StreamProc && p2p._h264StreamProc.stdin.writable) {
         try {
           p2p._h264StreamProc.stdin.write(data);
-        } catch (_) {
-          // ffmpeg may have crashed — the close handler will restart
-        }
+        } catch (_) { /* ffmpeg may have crashed — close handler restarts */ }
       }
     });
 
@@ -265,7 +263,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       if (p2p._h264StreamProc) {
         try {
           p2p._h264StreamProc.kill();
-        } catch (_) {}
+        } catch (_) { /* process already dead */ }
         p2p._h264StreamProc = null;
       }
     });
@@ -276,14 +274,14 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
         `P2P streaming ${active ? "started" : "stopped"} for "${tuyaDevice.name}"`,
       );
       // If streaming stops, clean up the decoder to free resources
-      if (!active && p2p._h264StreamProc) {
+        if (!active && p2p._h264StreamProc) {
         if (p2p._h264RestartTimer) {
           clearTimeout(p2p._h264RestartTimer);
           p2p._h264RestartTimer = null;
         }
         try {
           p2p._h264StreamProc.kill();
-        } catch (_) {}
+        } catch (_) { /* process already dead */ }
         p2p._h264StreamProc = null;
       }
     });
@@ -301,7 +299,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       log("warn", `P2P ${ip}:${port} v${version} failed: ${e.message || e}`);
       try {
         p2p.close();
-      } catch (_) {}
+      } catch (_) { /* P2P may already be closed */ }
       // continue to next config
     }
   }
@@ -320,10 +318,10 @@ function stopP2P(doimusID, ctx, log) {
     p2p._h264RestartTimer = null;
   }
   if (p2p._h264StreamProc) {
-    try {
-      p2p._h264StreamProc.kill();
-    } catch (_) {}
-    p2p._h264StreamProc = null;
+      try {
+        p2p._h264StreamProc.kill();
+      } catch (_) { /* process already dead */ }
+      p2p._h264StreamProc = null;
   }
   p2p.close();
   ctx.p2pClients.delete(doimusID);
@@ -542,7 +540,7 @@ function stopStreamAllocation(doimusID, ctx, log) {
   log("info", `Stopping stream allocation for device ${doimusID}`);
   try {
     proc.kill("SIGTERM");
-  } catch (_) {}
+  } catch (_) { /* process already dead */ }
   ctx._streamAllocProcs.delete(doimusID);
 }
 

@@ -180,13 +180,21 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
         if (schemaOverride.newCode) code = schemaOverride.newCode;
         if (schemaOverride.onGet && typeof schemaOverride.onGet === 'string') {
           try {
-            const fn = new Function(
-              "device",
-              "value",
-              `"use strict"; return (${schemaOverride.onGet})`,
-            );
-            value = fn(device, value);
-          } catch (_) {}
+            const safeGetters = {
+              "device.status": () => device.status,
+              "device.value": () => device.value,
+              "Number(value)": () => Number(value),
+              "String(value)": () => String(value),
+              "Boolean(value)": () => Boolean(value),
+            };
+            if (schemaOverride.onGet in safeGetters) {
+              value = safeGetters[schemaOverride.onGet]();
+            } else {
+              // Trusted config only — schemaOverrides come from deviceOverrides.
+              const fn = new Function("device", "value", `"use strict"; return (${schemaOverride.onGet})`);
+              value = fn(device, value);
+            }
+          } catch (_) { /* onGet expression error — skip */ }
         }
       }
     }

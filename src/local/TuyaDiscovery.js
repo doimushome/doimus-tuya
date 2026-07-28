@@ -197,7 +197,7 @@ class TuyaDiscovery extends EventEmitter {
       this._retryTimer = null;
     }
     for (const socket of this.sockets) {
-      try { socket.close(); } catch (_) {}
+      try { socket.close(); } catch (_) { /* cleanup */ }
     }
     this.sockets = [];
   }

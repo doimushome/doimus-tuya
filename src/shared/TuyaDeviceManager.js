@@ -88,7 +88,7 @@ class TuyaDeviceManager extends EventEmitter {
       try {
         const property = JSON.parse(values);
         schemas[code] = { code, mode, type, property };
-      } catch (_) {}
+      } catch (_) { /* invalid property JSON — skip */ }
     }
 
     return Object.values(schemas).sort((a, b) => (a.code > b.code ? 1 : -1));

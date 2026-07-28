@@ -400,7 +400,7 @@ async function persistDeviceList(api, dm, uid, log) {
     }));
     fs.writeFileSync(file, JSON.stringify(devices, null, 2));
     log("info", `Device list saved at ${file}`);
-  } catch (_) {}
+  } catch (e) { log("debug", `Persist device list failed: ${e.message}`); }
 }
 
 async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
@@ -1451,12 +1451,12 @@ module.exports = {
         if (ctx.deviceManager.mq) {
           try {
             ctx.deviceManager.mq.stop();
-          } catch (_) {}
+          } catch (_) { /* cleanup */ }
         }
         if (ctx.deviceManager.stopLocalDevices) {
           try {
             ctx.deviceManager.stopLocalDevices();
-          } catch (_) {}
+          } catch (_) { /* cleanup */ }
         }
       }
       for (const [, debounced] of ctx.debounceMap.entries()) {
@@ -1470,7 +1470,7 @@ module.exports = {
         for (const [id, p2p] of ctx.p2pClients) {
           try {
             p2p.close();
-          } catch (_) {}
+          } catch (_) { /* cleanup */ }
         }
         ctx.p2pClients.clear();
       }
@@ -1478,7 +1478,7 @@ module.exports = {
         for (const [, proc] of ctx._streamAllocProcs) {
           try {
             proc.kill("SIGTERM");
-          } catch (_) {}
+          } catch (_) { /* cleanup */ }
         }
         ctx._streamAllocProcs.clear();
       }
@@ -1506,7 +1506,7 @@ module.exports = {
       }
       if (ctx._webrtcClients) {
         for (const [, wr] of ctx._webrtcClients) {
-          try { wr.close(); } catch (_) {}
+          try { wr.close(); } catch (_) { /* cleanup */ }
         }
         ctx._webrtcClients.clear();
       }

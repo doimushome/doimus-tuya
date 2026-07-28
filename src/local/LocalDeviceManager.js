@@ -20,7 +20,7 @@ const DEFAULT_DP_MAP = {
 };
 
 class LocalDeviceManager extends TuyaDeviceManager {
-  constructor(localConfig, debug = false) {
+  constructor(localConfig, debug = false, logFn) {
     const stubApi = {
       log: () => {},
       get: async () => ({ success: false }),
@@ -30,11 +30,11 @@ class LocalDeviceManager extends TuyaDeviceManager {
     this.localConfig = localConfig || {};
     this.debug = debug;
     this.log = new (require('../shared/Logger').PrefixLogger)(
-      console.log,
+      logFn || console.log,
       'LocalDeviceManager',
       debug,
     );
-    this.discovery = new TuyaDiscovery(console.log, debug);
+    this.discovery = new TuyaDiscovery(this.log, debug);
     this.localDevices = new Map();
     this.discoveredDevices = new Map();
     this._discoveryTimer = null;
@@ -220,6 +220,7 @@ class LocalDeviceManager extends TuyaDeviceManager {
       ip: device.ip,
       version: device.version || '3.1',
       name: device.name,
+      log: this.log,
     });
 
     localDevice.on('connect', () => {
