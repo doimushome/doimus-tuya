@@ -324,7 +324,13 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.smoke = value === true || value === 1 || value === "alarm";
     } else if (code === "gas_sensor" || code === "co_gas_sensor") {
       state.gas = value === true || value === 1 || value === "alarm";
-    } else if (code === "battery_percentage" || code === "battery_state") {
+    } else if (
+      code === "battery_percentage" ||
+      code === "battery_state" ||
+      code === "va_battery"
+    ) {
+      state.battery = Number(value);
+    } else if (code === "wireless_electricity") {
       state.battery = Number(value);
     } else if (code === "battery_value") {
       // Some Tuya sensors/cameras use battery_value (0-100)
@@ -498,6 +504,25 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.position = Number(value);
     } else if (code === "countdown" || code === "count_down") {
       state.countdown = Number(value);
+    } else if (code === "pm25" || code === "pm25_value") {
+      state.pm25 = Number(value);
+    } else if (code === "co2" || code === "co2_value") {
+      state.co2 = Number(value);
+    } else if (
+      code === "tvoc" ||
+      code === "tvoc_value" ||
+      code === "voc_value"
+    ) {
+      state.tvoc = Number(value);
+    } else if (
+      code === "ch2o" ||
+      code === "ch2o_value" ||
+      code === "hcho" ||
+      code === "formaldehyde"
+    ) {
+      state.formaldehyde = Number(value);
+    } else if (code === "air_quality" || code === "air_quality_index") {
+      state.air_quality = String(value);
     }
   }
 
@@ -636,6 +661,26 @@ function determineCapabilities(device) {
         device.schema.some((s) => s.code && s.code.startsWith("lock"))
       ) {
         capabilities.add("locked");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            (s.code && s.code.startsWith("battery")) || s.code === "va_battery",
+        )
+      ) {
+        capabilities.add("battery");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "battery_low" ||
+            s.code === "low_battery" ||
+            s.code === "battery_alarm",
+        )
+      ) {
+        capabilities.add("battery_low");
       }
       break;
     case "thermostat":
@@ -811,6 +856,52 @@ function determineCapabilities(device) {
         capabilities.add("power");
         capabilities.add("voltage");
         capabilities.add("energy");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "pm25" || s.code === "pm25_value",
+        )
+      ) {
+        capabilities.add("pm25");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "co2" || s.code === "co2_value",
+        )
+      ) {
+        capabilities.add("co2");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            (s.code && (s.code.startsWith("tvoc") || s.code.startsWith("voc"))),
+        )
+      ) {
+        capabilities.add("tvoc");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "ch2o" ||
+            s.code === "ch2o_value" ||
+            s.code === "hcho" ||
+            s.code === "formaldehyde",
+        )
+      ) {
+        capabilities.add("formaldehyde");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "air_quality" || s.code === "air_quality_index",
+        )
+      ) {
+        capabilities.add("air_quality");
       }
       break;
     case "outlet":
