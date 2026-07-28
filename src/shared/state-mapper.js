@@ -3,6 +3,10 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   dsd: "light",
   xdd: "light",
   fwd: "light",
+  fwl: "light",
+  hxd: "light",
+  mbd: "light",
+  tyd: "light",
   dc: "light",
   dd: "light",
   gyd: "light",
@@ -14,6 +18,7 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   kg: "switch",
   tdq: "switch",
   qjdcz: "switch",
+  sd: "switch",
   szjqr: "switch",
   cz: "outlet",
   pc: "outlet",
@@ -21,8 +26,8 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   wxkg: "switch",
   cjkg: "switch",
   bzyd: "light",
-  kt: "switch",
-  ktkzq: "switch",
+  kt: "thermostat",
+  ktkzq: "thermostat",
   qtwk: "switch",
   qn: "thermostat",
   kj: "fan",
@@ -30,19 +35,30 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   ckmkzq: "switch",
   cl: "blind",
   clkg: "blind",
+  jdcljqr: "blind",
   mc: "blind",
   wk: "thermostat",
   wkf: "thermostat",
+  bgl: "thermostat",
+  ntq: "thermostat",
+  rs: "thermostat",
+  znrb: "thermostat",
   ggq: "switch",
   sfkzq: "switch",
-  jsq: "switch",
-  cs: "switch",
+  jsq: "fan",
+  cs: "fan",
+  yyj: "fan",
   fs: "fan",
   fsd: "fan",
+  ks: "fan",
   fskg: "fan",
-  yyj: "switch",
+  bh: "switch",
+  kfj: "switch",
+  cwysj: "switch",
+  ykq: "switch",
   sp: "camera",
   mobilecam: "camera",
+  dghsxq: "camera",
   ywbj: "sensor",
   mcs: "sensor",
   zd: "sensor",
@@ -65,17 +81,36 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   dyl: "sensor",
   sf: "sensor",
   cw: "sensor",
+  voc: "sensor",
+  ylcg: "sensor",
+  jqbj: "sensor",
+  zndb: "sensor",
+  qxj: "sensor",
   mk: "lock",
   ms: "lock",
+  gyms: "lock",
+  hotelms: "lock",
+  jtmsbh: "lock",
+  jtmspro: "lock",
+  ms_category: "lock",
+  photolock: "lock",
+  videolock: "lock",
   sgbj: "sensor",
   sos: "sensor",
   doorbell: "doorbell",
   wxml: "doorbell",
-  wxky: "switch",
+  wxky: "sensor",
   cwwsq: "switch",
-  msp: "switch",
+  msp: "sensor",
   mal: "sensor",
   hjjcy: "sensor",
+  aqcz: "sensor",
+  dgnbj: "sensor",
+  szjcy: "sensor",
+  swtz: "sensor",
+  ywcgq: "sensor",
+  znsb: "sensor",
+  zwjcy: "sensor",
   // IR control hubs — not registered themselves, sub-devices are
   wnykq: "ir_hub",
   hwktwkq: "ir_hub",
@@ -86,6 +121,13 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   infrared_fan: "fan",
   infrared_stb: "switch",
   infrared_diy: "switch",
+  infrared_box: "switch",
+  infrared_light: "switch",
+  infrared_amplifier: "switch",
+  infrared_projector: "switch",
+  infrared_waterheater: "switch",
+  infrared_airpurifier: "switch",
+  infrared_humidifier: "switch",
 };
 
 function applySchemaOverride(device, options) {
@@ -422,6 +464,26 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.child_lock = value === true || value === 1;
     } else if (code === "light") {
       if (state.on === undefined) state.on = value === true || value === 1;
+    } else if (code === "switch_go") {
+      state.on = value === true || value === 1;
+    } else if (
+      code === "direction" ||
+      code === "remote_control"
+    ) {
+      state.control = String(value);
+    } else if (
+      code === "status" ||
+      code === "clean_state" ||
+      code === "robot_state"
+    ) {
+      state.mode = String(value);
+    } else if (
+      code === "suction" ||
+      code === "suction_power"
+    ) {
+      if (state.rotation_speed === undefined) {
+        state.rotation_speed = Number(value);
+      }
     } else if (code === "cur_current") {
       state.current = Number(value) / getScale(device, code);
     } else if (code === "cur_power") {
@@ -535,7 +597,9 @@ function determineCapabilities(device) {
         device.schema.some(
           (s) =>
             (s.code && s.code.startsWith("fan_speed")) ||
-            (s.code && s.code.startsWith("wind_speed")),
+            (s.code && s.code.startsWith("wind_speed")) ||
+            s.code === "suction" ||
+            s.code === "suction_power",
         )
       ) {
         capabilities.add("rotation_speed");
@@ -787,6 +851,41 @@ function determineCapabilities(device) {
         )
       ) {
         capabilities.add("outlet_in_use");
+      }
+      // Robot/rover: mode, control (directional), battery capabilities
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "work_state" ||
+            s.code === "mode" ||
+            s.code === "status" ||
+            s.code === "clean_state" ||
+            s.code === "robot_state",
+        )
+      ) {
+        capabilities.add("mode");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "control" ||
+            s.code === "control_back" ||
+            s.code === "direction" ||
+            s.code === "remote_control",
+        )
+      ) {
+        capabilities.add("control");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            (s.code && s.code.startsWith("battery")) || s.code === "va_battery",
+        )
+      ) {
+        capabilities.add("battery");
       }
       break;
     case "camera":

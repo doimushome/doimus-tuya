@@ -69,7 +69,7 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
 
   if (key === "on") {
     const onSchema = tuyaDevice.schema.find(
-      (s) => s.code === "switch_1" || s.code === "switch_fan" || s.code === "fan_switch",
+      (s) => s.code === "switch_1" || s.code === "switch_fan" || s.code === "fan_switch" || s.code === "switch_go",
     );
     if (onSchema) {
       commands.push({ code: onSchema.code, value: value === true });
@@ -152,19 +152,26 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
         `(schema: [${(tuyaDevice.schema || []).map((s) => s.code).join(", ")}])`);
     }
   } else if (key === "control") {
-    const controlSchema = tuyaDevice.schema.find((s) => s.code === "control" || s.code === "control_back");
+    const controlSchema = tuyaDevice.schema.find((s) => s.code === "control" || s.code === "control_back" || s.code === "direction" || s.code === "remote_control");
     if (controlSchema) {
       commands.push({ code: controlSchema.code, value: String(value) });
     }
   } else if (key === "rotation_speed") {
     const speedSchema = tuyaDevice.schema.find(
-      (s) => (s.code && s.code.startsWith("fan_speed")) || s.code === "wind_speed",
+      (s) => (s.code && s.code.startsWith("fan_speed")) || s.code === "wind_speed" || s.code === "suction" || s.code === "suction_power",
     );
     if (speedSchema) {
       commands.push(buildCommand(tuyaDevice.schema, speedSchema.code, value));
     }
   } else if (key === "mode") {
-    commands.push({ code: "work_state", value: String(value) });
+    const modeSchema = tuyaDevice.schema.find(
+      (s) => s.code === "work_state" || s.code === "status" || s.code === "clean_state" || s.code === "robot_state",
+    );
+    if (modeSchema) {
+      commands.push({ code: modeSchema.code, value: String(value) });
+    } else {
+      commands.push({ code: "work_state", value: String(value) });
+    }
   } else if (key === "countdown") {
     const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");
     if (countdownSchema) {

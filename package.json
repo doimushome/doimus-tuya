@@ -1,6 +1,6 @@
 {
   "name": "doimus-tuya",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Doimus plugin for Tuya/Smart Life devices — Cloud + Local LAN + Hybrid mode",
   "license": "MIT",
   "main": "src/index.js",
