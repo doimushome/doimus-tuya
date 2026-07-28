@@ -500,6 +500,12 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.energy = Number(value);
     } else if (code === "electricity") {
       state.current = Number(value);
+    } else if (
+      code === "swing" ||
+      code === "swing_switch" ||
+      code === "oscillate"
+    ) {
+      state.swing = value === true || value === 1 || value === "true";
     } else if (code === "percent_state") {
       state.position = Number(value);
     } else if (code === "countdown" || code === "count_down") {
@@ -523,6 +529,26 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.formaldehyde = Number(value);
     } else if (code === "air_quality" || code === "air_quality_index") {
       state.air_quality = String(value);
+    } else if (code === "uv_index" || code === "uv") {
+      state.uv_index = Number(value);
+    } else if (
+      code === "lux" ||
+      code === "illuminance" ||
+      code === "illuminance_value"
+    ) {
+      state.illuminance = Number(value);
+    } else if (
+      code === "noise" ||
+      code === "decibel" ||
+      code === "sound_intensity"
+    ) {
+      state.noise = Number(value);
+    } else if (
+      code === "pressure" ||
+      code === "barometric_pressure" ||
+      code === "atm_pressure"
+    ) {
+      state.pressure = Number(value);
     }
   }
 
@@ -629,6 +655,17 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("rotation_speed");
       }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "swing" ||
+            s.code === "swing_switch" ||
+            s.code === "oscillate",
+        )
+      ) {
+        capabilities.add("swing");
+      }
       break;
     case "blind":
       // Only add "position" capability for writable position DPs — exclude
@@ -731,6 +768,18 @@ function determineCapabilities(device) {
         )
       ) {
         capabilities.add("heating_state");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            (s.code && s.code.startsWith("va_humidity")) ||
+            s.code === "humidity" ||
+            s.code === "humidity_value" ||
+            s.code === "humidity_current",
+        )
+      ) {
+        capabilities.add("humidity");
       }
       break;
     case "sensor":
@@ -903,6 +952,46 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("air_quality");
       }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "uv_index" || s.code === "uv",
+        )
+      ) {
+        capabilities.add("uv_index");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "lux" ||
+            (s.code && s.code.startsWith("illuminance")),
+        )
+      ) {
+        capabilities.add("illuminance");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "noise" ||
+            s.code === "decibel" ||
+            s.code === "sound_intensity",
+        )
+      ) {
+        capabilities.add("noise");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "pressure" ||
+            s.code === "barometric_pressure" ||
+            s.code === "atm_pressure",
+        )
+      ) {
+        capabilities.add("pressure");
+      }
       break;
     case "outlet":
     case "switch":
@@ -1027,11 +1116,20 @@ function determineCapabilities(device) {
     case "doorbell":
       capabilities.delete("on");
       capabilities.add("doorbell");
-      // Video peepholes and wireless doorbells with camera capabilities
-      // need p2p_start/p2p_stop for live view streaming.
       capabilities.add("p2p_start");
       capabilities.add("p2p_stop");
-      // Wireless doorbells often have battery
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "motion_sensor" ||
+            s.code === "pir" ||
+            s.code === "motion_detect" ||
+            s.code === "movement_detect_pic",
+        )
+      ) {
+        capabilities.add("motion");
+      }
       if (
         device.schema &&
         device.schema.some(

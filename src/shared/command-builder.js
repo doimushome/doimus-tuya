@@ -172,6 +172,13 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
     } else {
       commands.push({ code: "work_state", value: String(value) });
     }
+  } else if (key === "swing") {
+    const swingSchema = tuyaDevice.schema.find(
+      (s) => s.code === "swing" || s.code === "swing_switch" || s.code === "oscillate",
+    );
+    if (swingSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, swingSchema.code, value));
+    }
   } else if (key === "countdown") {
     const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");
     if (countdownSchema) {
