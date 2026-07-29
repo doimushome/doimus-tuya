@@ -707,9 +707,9 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
 
   // Strip internal keys (prefixed with _) before returning.
   // These are used internally for deduplication and must not leak to Doimus.
-  delete state._relayOverride;
-  delete state._brightValue;
-  delete state._colourData;
+  for (const key of Object.keys(state)) {
+    if (key.startsWith("_")) delete state[key];
+  }
 
   return state;
 }

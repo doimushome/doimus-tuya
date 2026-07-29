@@ -293,6 +293,7 @@ class LocalDevice extends EventEmitter {
       this.socket = null;
     }
     this.buffer = Buffer.alloc(0);
+    this.children.clear();
   }
 
   _scheduleReconnect() {

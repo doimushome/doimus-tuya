@@ -73,16 +73,53 @@ function generateUUID(id) {
 }
 
 
-function createPluginInstance() {
-  return {
-    debounceMap: new Map(),
-    lastKnownState: new Map(),
-    deviceManager: null,
-    doimusDeviceMap: new Map(),
-    apiRef: null,
-    _wakeWatchers: new Map(),
-    _streamFallbackTimers: new Map(), // fallback delay timers for battery cameras
-  };
+class BiMap {
+  constructor() {
+    this._fwd = new Map();
+    this._rev = new Map();
+  }
+  set(a, b) {
+    const oldB = this._fwd.get(a);
+    const oldA = this._rev.get(b);
+    if (oldB !== undefined) this._rev.delete(oldB);
+    if (oldA !== undefined) this._fwd.delete(oldA);
+    this._fwd.set(a, b);
+    this._rev.set(b, a);
+  }
+  get(a) { return this._fwd.get(a) ?? this._rev.get(a); }
+  delete(a) {
+    const b = this._fwd.get(a);
+    const c = this._rev.get(a);
+    if (b !== undefined) { this._fwd.delete(a); this._rev.delete(b); }
+    if (c !== undefined) { this._rev.delete(a); this._fwd.delete(c); }
+  }
+  has(a) { return this._fwd.has(a) || this._rev.has(a); }
+  get size() { return this._fwd.size; }
+  keys() { return this._fwd.keys(); }
+  values() { return this._fwd.values(); }
+}
+
+class PluginContext {
+  constructor() {
+    this.debounceMap = new Map();
+    this.lastKnownState = new Map();
+    this.deviceManager = null;
+    this.doimusDeviceMap = new BiMap();
+    this.apiRef = null;
+    this._wakeWatchers = new Map();
+    this._streamFallbackTimers = new Map();
+    this._motionTimers = null;
+    this._onlineSnapshotTimers = null;
+    this._webrtcClients = null;
+    this._powerModeChanged = null;
+    this._streamAllocProcs = null;
+    this._streamAllocBootDelay = 30000;
+    this._initRetryTimer = null;
+    this._energyPollTimer = null;
+    this._snapshotTimer = null;
+    this._firstUpdateSeen = null;
+    this.p2pClients = null;
+  }
 }
 
 function validateConfig(options, log) {
@@ -768,7 +805,7 @@ function computeNeedsWake(tuyaDevice) {
 
 module.exports = {
   async start(cfg, api) {
-    const ctx = createPluginInstance();
+    const ctx = new PluginContext();
     ctx.apiRef = api;
     this._ctx = ctx;
     const options = (cfg && cfg.options) || {};
