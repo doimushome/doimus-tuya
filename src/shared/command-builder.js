@@ -9,12 +9,11 @@ function buildCommand(commandSchemas, code, value) {
       schema.property?.scale != null ? Math.pow(10, schema.property.scale) : 1;
 
     if (type === "Integer" && schema.property?.min !== undefined && schema.property?.max !== undefined) {
+      if (typeof value !== "number" || isNaN(value)) return { code, value: null };
       const realMin = schema.property.min / scale;
       const realMax = schema.property.max / scale;
-      if (typeof value === "number") {
-        value = Math.max(realMin, Math.min(realMax, value));
-      }
-      return { code, value: Math.round(Number(value) * scale) };
+      value = Math.max(realMin, Math.min(realMax, value));
+      return { code, value: Math.round(value * scale) };
     }
 
     if (type === "Enum") {
@@ -91,7 +90,7 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
     } else if (tuyaDevice.schema.some((s) => s.code === "switch_led")) {
       commands.push({ code: "switch_led", value: value === true });
     } else {
-      const anySwitch = tuyaDevice.schema.find((s) => s.code && s.code.startsWith("switch"));
+      const anySwitch = tuyaDevice.schema.find((s) => s.code && s.code.startsWith("switch") && s.mode !== "ro");
       if (anySwitch) {
         commands.push({ code: anySwitch.code, value: value === true });
       }

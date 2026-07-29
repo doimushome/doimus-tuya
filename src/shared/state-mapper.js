@@ -7,7 +7,7 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   hxd: "light",
   mbd: "light",
   tyd: "light",
-  dc: "light",
+  dc: "outlet",
   dd: "light",
   gyd: "light",
   tyndj: "light",
@@ -231,10 +231,6 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
             };
             if (schemaOverride.onGet in safeGetters) {
               value = safeGetters[schemaOverride.onGet]();
-            } else {
-              // Trusted config only — schemaOverrides come from deviceOverrides.
-              const fn = new Function("device", "value", `"use strict"; return (${schemaOverride.onGet})`);
-              value = fn(device, value);
             }
           } catch (_) { /* onGet expression error — skip */ }
         }

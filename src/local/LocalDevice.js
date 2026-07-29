@@ -57,7 +57,9 @@ class LocalDevice extends EventEmitter {
       this._handleConnect();
     });
 
-    this.socket.on('data', (data) => this._handleData(data));
+    this.socket.on('data', (data) => {
+      try { this._handleData(data); } catch (e) { this.log.error('Unhandled data error: %s', e.message); }
+    });
     this.socket.on('error', (err) => this._handleError(err));
     this.socket.on('close', () => this._handleClose());
     this.socket.on('timeout', () => {

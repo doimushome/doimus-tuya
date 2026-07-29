@@ -529,14 +529,16 @@ async function handleWebRTCCommand(deviceID, value, tuyaDevice, ctx, dm, api, lo
                   staleP2P.close();
                   ctx.p2pClients.delete(deviceID);
                 }
-                startP2P(deviceID, tuyaDevice, ctx, log, api);
+                startP2P(deviceID, tuyaDevice, ctx, log, api)
+                  .catch((e) => log("debug", `[WebRTC] P2P start failed: ${e.message}`));
                 startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
                   .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
               }
             }, BATTERY_DELAY_MS);
             ctx._streamFallbackTimers.set(deviceID, timer);
           } else {
-            startP2P(deviceID, tuyaDevice, ctx, log, api);
+            startP2P(deviceID, tuyaDevice, ctx, log, api)
+              .catch((e) => log("debug", `[WebRTC] P2P start failed: ${e.message}`));
             startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
               .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
           }
@@ -556,7 +558,8 @@ async function handleWebRTCCommand(deviceID, value, tuyaDevice, ctx, dm, api, lo
         api.sendWebrtcSignaling(deviceID, { event: "p2p_fallback" });
         const p2pCloudRelay = tuyaDevice.category === "sp" || tuyaDevice.category === "doorbell";
         if (!p2pCloudRelay) {
-          startP2P(deviceID, tuyaDevice, ctx, log, api);
+          startP2P(deviceID, tuyaDevice, ctx, log, api)
+            .catch((e) => log("debug", `[WebRTC] P2P start failed: ${e.message}`));
         }
         startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
           .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
@@ -648,7 +651,8 @@ async function handleWebRTCCommand(deviceID, value, tuyaDevice, ctx, dm, api, lo
 
         if (needsWake) {
           log("info", `[WebRTC] Battery camera — starting P2P + stream allocation in parallel for "${tuyaDevice.name}"`);
-          startP2P(deviceID, tuyaDevice, ctx, log, api);
+          startP2P(deviceID, tuyaDevice, ctx, log, api)
+            .catch((e) => log("debug", `[WebRTC] P2P start failed: ${e.message}`));
           startStreamAllocation(deviceID, tuyaDevice, ctx, log, api)
             .catch((e) => log("debug", `[StreamAlloc] Failed: ${e.message}`));
         }
@@ -897,7 +901,8 @@ module.exports = {
           const doimusID = ctx.doimusDeviceMap.get(device.id);
           if (doimusID) {
             log("info", `Auto-starting P2P for camera "${device.name}"`);
-            startP2P(doimusID, device, ctx, log, api);
+            startP2P(doimusID, device, ctx, log, api)
+              .catch((e) => log("debug", `[WebRTC] P2P start failed: ${e.message}`));
           }
         }
       }
