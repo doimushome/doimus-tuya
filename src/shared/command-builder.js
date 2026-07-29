@@ -133,7 +133,12 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
       commands.push(buildCommand(tuyaDevice.schema, modeSchema.code, value));
     }
   } else if (key === "locked") {
-    commands.push({ code: "lock_state", value: value === true });
+    const lockSchema = tuyaDevice.schema.find(
+      (s) => s.code === "lock_state" || s.code === "lock_sta" || s.code === "lock_motor_state",
+    );
+    if (lockSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, lockSchema.code, value === true));
+    }
   } else if (key === "child_lock") {
     const childLockSchema = tuyaDevice.schema.find((s) => s.code === "child_lock");
     if (childLockSchema) {
@@ -178,6 +183,48 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
     );
     if (swingSchema) {
       commands.push(buildCommand(tuyaDevice.schema, swingSchema.code, value));
+    }
+  } else if (key === "anion") {
+    const anionSchema = tuyaDevice.schema.find(
+      (s) => s.code === "anion" || s.code === "anion_switch" || s.code === "ionizer",
+    );
+    if (anionSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, anionSchema.code, value));
+    }
+  } else if (key === "eco_mode") {
+    const ecoSchema = tuyaDevice.schema.find(
+      (s) => s.code === "eco" || s.code === "eco_mode" || s.code === "energy_saving",
+    );
+    if (ecoSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, ecoSchema.code, value));
+    }
+  } else if (key === "night_vision") {
+    const nightSchema = tuyaDevice.schema.find(
+      (s) => s.code === "night_vision" || s.code === "infrared_led" || s.code === "night_mode",
+    );
+    if (nightSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, nightSchema.code, value));
+    }
+  } else if (key === "floodlight") {
+    const floodSchema = tuyaDevice.schema.find(
+      (s) => s.code === "floodlight" || s.code === "floodlight_switch" || s.code === "floodlight_state",
+    );
+    if (floodSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, floodSchema.code, value));
+    }
+  } else if (key === "siren") {
+    const sirenSchema = tuyaDevice.schema.find(
+      (s) => s.code === "siren_state" || s.code === "siren_switch" || s.code === "alarm_state",
+    );
+    if (sirenSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, sirenSchema.code, value));
+    }
+  } else if (key === "privacy_mode") {
+    const privSchema = tuyaDevice.schema.find(
+      (s) => s.code === "basic_private" || s.code === "basics_private" || s.code === "privacy_mode",
+    );
+    if (privSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, privSchema.code, value));
     }
   } else if (key === "countdown") {
     const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");

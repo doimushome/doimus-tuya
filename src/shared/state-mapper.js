@@ -549,6 +549,97 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       code === "atm_pressure"
     ) {
       state.pressure = Number(value);
+    } else if (code === "eco" || code === "eco_mode" || code === "energy_saving") {
+      state.eco_mode = value === true || value === 1 || value === "true";
+    } else if (code === "frost_protection" || code === "anti_freeze") {
+      state.frost_protection = value === true || value === 1 || value === "true";
+    } else if (
+      code === "floor_temp" ||
+      code === "floor_temperature" ||
+      code === "floor_temp_current"
+    ) {
+      state.floor_temp = Number(value);
+    } else if (code === "outdoor_temp" || code === "outdoor_temperature") {
+      state.outdoor_temp = Number(value);
+    } else if (code === "pm1" || code === "pm1_value") {
+      state.pm1 = Number(value);
+    } else if (code === "pm10" || code === "pm10_value") {
+      state.pm10 = Number(value);
+    } else if (
+      code === "windspeed" ||
+      code === "windspeed_avg"
+    ) {
+      state.windspeed = Number(value);
+    } else if (code === "wind_direct" || code === "wind_direction") {
+      state.wind_direction = String(value);
+    } else if (
+      code === "rain_24h" ||
+      code === "rain_rate" ||
+      code === "rainfall"
+    ) {
+      state.rainfall = Number(value);
+    } else if (code === "soil_humidity" || code === "soil_humidity_value") {
+      state.soil_moisture = Number(value);
+    } else if (
+      code === "soil_temperature" ||
+      code === "soil_temp"
+    ) {
+      state.soil_temperature = Number(value);
+    } else if (
+      code === "anion" ||
+      code === "anion_switch" ||
+      code === "ionizer"
+    ) {
+      state.anion = value === true || value === 1 || value === "true";
+    } else if (
+      code === "night_vision" ||
+      code === "infrared_led" ||
+      code === "night_mode"
+    ) {
+      state.night_vision = value === true || value === 1 || value === "true";
+    } else if (
+      code === "floodlight" ||
+      code === "floodlight_switch" ||
+      code === "floodlight_state"
+    ) {
+      state.floodlight = value === true || value === 1 || value === "true";
+    } else if (
+      code === "siren_state" ||
+      code === "siren_switch" ||
+      code === "alarm_state"
+    ) {
+      state.siren = value === true || value === 1 || value === "true";
+    } else if (
+      code === "record_state" ||
+      code === "recording_switch" ||
+      code === "ipc_record"
+    ) {
+      state.recording = value === true || value === 1 || value === "true";
+    } else if (
+      code === "sd_status" ||
+      code === "sd_card" ||
+      code === "storage" ||
+      code === "sd_state"
+    ) {
+      state.sd_status = String(value);
+    } else if (
+      code === "basic_private" ||
+      code === "basics_private" ||
+      code === "privacy_mode"
+    ) {
+      state.privacy_mode = value === true || value === 1 || value === "true";
+    } else if (
+      code === "ptz_control" ||
+      code === "cruise" ||
+      code === "pid_cruise"
+    ) {
+      state.ptz = String(value);
+    } else if (
+      code === "talk_switch" ||
+      code === "audio_switch" ||
+      code === "audio_talk"
+    ) {
+      state.talkback = value === true || value === 1 || value === "true";
     }
   }
 
@@ -666,6 +757,17 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("swing");
       }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "anion" ||
+            s.code === "anion_switch" ||
+            s.code === "ionizer",
+        )
+      ) {
+        capabilities.add("anion");
+      }
       break;
     case "blind":
       // Only add "position" capability for writable position DPs — exclude
@@ -718,6 +820,25 @@ function determineCapabilities(device) {
         )
       ) {
         capabilities.add("battery_low");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "contact_state" || s.code === "doorcontact_state",
+        )
+      ) {
+        capabilities.add("contact");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "tamper" ||
+            s.code === "tamper_state" ||
+            s.code === "tamper_alarm",
+        )
+      ) {
+        capabilities.add("tamper");
       }
       break;
     case "thermostat":
@@ -780,6 +901,23 @@ function determineCapabilities(device) {
         )
       ) {
         capabilities.add("humidity");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "eco" || s.code === "eco_mode" || s.code === "energy_saving",
+        )
+      ) {
+        capabilities.add("eco_mode");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "frost_protection" || s.code === "anti_freeze",
+        )
+      ) {
+        capabilities.add("frost_protection");
       }
       break;
     case "sensor":
@@ -992,6 +1130,72 @@ function determineCapabilities(device) {
       ) {
         capabilities.add("pressure");
       }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "pm1" || s.code === "pm1_value",
+        )
+      ) {
+        capabilities.add("pm1");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "pm10" || s.code === "pm10_value",
+        )
+      ) {
+        capabilities.add("pm10");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "windspeed" ||
+            s.code === "windspeed_avg" ||
+            s.code === "wind_level",
+        )
+      ) {
+        capabilities.add("windspeed");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) => s.code === "wind_direct" || s.code === "wind_direction",
+        )
+      ) {
+        capabilities.add("wind_direction");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "rain_24h" ||
+            s.code === "rain_rate" ||
+            s.code === "rainfall",
+        )
+      ) {
+        capabilities.add("rainfall");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "soil_humidity" ||
+            s.code === "soil_humidity_value",
+        )
+      ) {
+        capabilities.add("soil_moisture");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "soil_temperature" ||
+            s.code === "soil_temp",
+        )
+      ) {
+        capabilities.add("soil_temperature");
+      }
       break;
     case "outlet":
     case "switch":
@@ -1050,13 +1254,13 @@ function determineCapabilities(device) {
         device.schema &&
         device.schema.some(
           (s) =>
-            s.code === "control" ||
-            s.code === "control_back" ||
-            s.code === "direction" ||
-            s.code === "remote_control",
+            s.code === "motion_sensor" ||
+            s.code === "pir" ||
+            s.code === "motion_detect" ||
+            s.code === "movement_detect_pic",
         )
       ) {
-        capabilities.add("control");
+        capabilities.add("motion");
       }
       if (
         device.schema &&
@@ -1066,6 +1270,39 @@ function determineCapabilities(device) {
         )
       ) {
         capabilities.add("battery");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "night_vision" ||
+            s.code === "infrared_led" ||
+            s.code === "night_mode",
+        )
+      ) {
+        capabilities.add("night_vision");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "floodlight" ||
+            s.code === "floodlight_switch" ||
+            s.code === "floodlight_state",
+        )
+      ) {
+        capabilities.add("floodlight");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "siren_state" ||
+            s.code === "siren_switch" ||
+            s.code === "alarm_state",
+        )
+      ) {
+        capabilities.add("siren");
       }
       break;
     case "camera":
@@ -1111,6 +1348,50 @@ function determineCapabilities(device) {
         )
       ) {
         capabilities.add("battery");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "night_vision" ||
+            s.code === "infrared_led" ||
+            s.code === "night_mode",
+        )
+      ) {
+        capabilities.add("night_vision");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "floodlight" ||
+            s.code === "floodlight_switch" ||
+            s.code === "floodlight_state",
+        )
+      ) {
+        capabilities.add("floodlight");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "siren_state" ||
+            s.code === "siren_switch" ||
+            s.code === "alarm_state",
+        )
+      ) {
+        capabilities.add("siren");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "basic_private" ||
+            s.code === "basics_private" ||
+            s.code === "privacy_mode",
+        )
+      ) {
+        capabilities.add("privacy_mode");
       }
       break;
     case "doorbell":
