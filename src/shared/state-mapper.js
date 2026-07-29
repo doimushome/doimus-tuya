@@ -528,12 +528,17 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       code === "ch2o" ||
       code === "ch2o_value" ||
       code === "hcho" ||
+      code === "hcho_value" ||
       code === "formaldehyde"
     ) {
       state.formaldehyde = Number(value);
     } else if (code === "air_quality" || code === "air_quality_index") {
       state.air_quality = String(value);
-    } else if (code === "uv_index" || code === "uv") {
+    } else if (
+      code === "aqi" || code === "aqi_value"
+    ) {
+      state.aqi = Number(value);
+    } else if (code === "uv_index" || code === "uv" || code === "uv_current") {
       state.uv_index = Number(value);
     } else if (
       code === "lux" ||
@@ -543,6 +548,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       state.illuminance = Number(value);
     } else if (
       code === "noise" ||
+      code === "noise_value" ||
       code === "decibel" ||
       code === "sound_intensity"
     ) {
@@ -569,7 +575,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       code === "floor_temp_current"
     ) {
       state.floor_temp = Number(value);
-    } else if (code === "outdoor_temp" || code === "outdoor_temperature") {
+    } else if (code === "outdoor_temp" || code === "outdoor_temperature" || code === "outer_temp") {
       state.outdoor_temp = Number(value);
     } else if (code === "pm1" || code === "pm1_value") {
       state.pm1 = Number(value);
@@ -585,11 +591,16 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     } else if (
       code === "rain_24h" ||
       code === "rain_rate" ||
-      code === "rainfall"
+      code === "rainfall" ||
+      code === "rain_value"
     ) {
       state.rainfall = Number(value);
     } else if (code === "soil_humidity" || code === "soil_humidity_value") {
       state.soil_moisture = Number(value);
+    } else if (code === "soil_ec" || code === "soil_ec_value") {
+      state.soil_ec = Number(value);
+    } else if (code === "soil_ph" || code === "soil_ph_value") {
+      state.soil_ph = Number(value) / 10;
     } else if (
       code === "soil_temperature" ||
       code === "soil_temp"
@@ -622,7 +633,8 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     } else if (
       code === "record_state" ||
       code === "recording_switch" ||
-      code === "ipc_record"
+      code === "ipc_record" ||
+      code === "record_switch"
     ) {
       state.recording = value === true || value === 1 || value === "true";
     } else if (
@@ -1508,4 +1520,5 @@ module.exports = {
   mapTuyaStatusToDoimusState,
   determineCapabilities,
   getDoimusType,
+  CATEGORY_TO_DOIMUS_TYPE,
 };

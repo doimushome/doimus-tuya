@@ -236,6 +236,20 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
     if (sceneSchema) {
       commands.push(buildCommand(tuyaDevice.schema, sceneSchema.code, value));
     }
+  } else if (key === "frost_protection") {
+    const frostSchema = tuyaDevice.schema.find(
+      (s) => s.code === "frost_protection" || s.code === "anti_freeze",
+    );
+    if (frostSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, frostSchema.code, value));
+    }
+  } else if (key === "recording") {
+    const recordSchema = tuyaDevice.schema.find(
+      (s) => s.code === "record_switch" || s.code === "recording_switch" || s.code === "record_state" || s.code === "ipc_record",
+    );
+    if (recordSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, recordSchema.code, value));
+    }
   } else if (key === "countdown") {
     const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");
     if (countdownSchema) {
@@ -248,5 +262,6 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
 
 module.exports = {
   sendCommandsDebounced,
+  buildCommand,
   buildDeviceCommands,
 };
