@@ -15,7 +15,8 @@ function PrefixLogger(logger, prefix, debug = false) {
     let formatted = `[${prefix}] ${msg}`;
     if (args.length > 0) {
       let argIdx = 0;
-      formatted = formatted.replace(/%[sdfo]/g, () => {
+      formatted = formatted.replace(/%[sdfo%]/g, (match) => {
+        if (match === "%%") return "%";
         const val = args[argIdx++];
         return val !== undefined ? String(val) : "";
       });

@@ -31,6 +31,10 @@ function buildCommand(commandSchemas, code, value) {
     if (type === "Raw") {
       return { code, value: String(value) };
     }
+
+    if (type === "String") {
+      return { code, value: String(value) };
+    }
   }
   return { code, value };
 }
@@ -172,9 +176,9 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
       (s) => s.code === "work_state" || s.code === "status" || s.code === "clean_state" || s.code === "robot_state",
     );
     if (modeSchema) {
-      commands.push({ code: modeSchema.code, value: String(value) });
+      commands.push(buildCommand(tuyaDevice.schema, modeSchema.code, value));
     } else {
-      commands.push({ code: "work_state", value: String(value) });
+      commands.push(buildCommand(tuyaDevice.schema, "work_state", value));
     }
   } else if (key === "swing") {
     const swingSchema = tuyaDevice.schema.find(
@@ -224,6 +228,13 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
     );
     if (privSchema) {
       commands.push(buildCommand(tuyaDevice.schema, privSchema.code, value));
+    }
+  } else if (key === "scene") {
+    const sceneSchema = tuyaDevice.schema.find(
+      (s) => s.code === "scene_data" || s.code === "scene_data_v2" || s.code === "music_data",
+    );
+    if (sceneSchema) {
+      commands.push(buildCommand(tuyaDevice.schema, sceneSchema.code, value));
     }
   } else if (key === "countdown") {
     const countdownSchema = tuyaDevice.schema.find((s) => s.code === "countdown" || s.code === "count_down");

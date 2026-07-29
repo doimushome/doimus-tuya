@@ -1,3 +1,5 @@
+const MOTION_DP_PATTERN = /motion|movement|doorbell|human|person|pir/i;
+
 const CATEGORY_TO_DOIMUS_TYPE = {
   dj: "light",
   dsd: "light",
@@ -128,6 +130,8 @@ const CATEGORY_TO_DOIMUS_TYPE = {
   infrared_waterheater: "switch",
   infrared_airpurifier: "switch",
   infrared_humidifier: "switch",
+  bjz: "sensor",
+  ipc: "camera",
 };
 
 function applySchemaOverride(device, options) {
@@ -282,6 +286,10 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
         }
         state._colourData = value;
       }
+    } else if (code === "scene_data" || code === "scene_data_v2") {
+      state.scene = String(value);
+    } else if (code === "music_data") {
+      state.scene = String(value);
     } else if (code === "fan_speed" || code === "fan_speed_percent") {
       state.rotation_speed = Number(value);
     } else if (code === "wind_speed") {
@@ -383,7 +391,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
         state.motion = true;
       }
     } else if (
-      /motion|movement|doorbell|human|person|pir/i.test(code) &&
+      MOTION_DP_PATTERN.test(code) &&
       (typeof value === "string" ? value.length > 0 : !!value)
     ) {
       // Generic fallback: any DP code matching motion-related patterns.
@@ -545,6 +553,12 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       code === "atm_pressure"
     ) {
       state.pressure = Number(value);
+    } else if (code === "calibration") {
+      state.calibration = value === true || value === 1 || value === "true";
+    } else if (code === "sensitivity" || code === "sensitivity_set") {
+      state.sensitivity = String(value);
+    } else if (code === "keep_time" || code === "keep_time_set") {
+      state.keep_time = Number(value);
     } else if (code === "eco" || code === "eco_mode" || code === "energy_saving") {
       state.eco_mode = value === true || value === 1 || value === "true";
     } else if (code === "frost_protection" || code === "anti_freeze") {
@@ -661,7 +675,7 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     state.motion === undefined
   ) {
     const fullStatus = device.status || [];
-    const motionPattern = /motion|movement|doorbell|human|person|pir/i;
+    const motionPattern = MOTION_DP_PATTERN;
     const hasMotionDP = fullStatus.some(
       (s) =>
         [
@@ -727,6 +741,15 @@ function determineCapabilities(device) {
         capabilities.add("hue");
         capabilities.add("saturation");
         capabilities.add("brightness");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "scene_data" || s.code === "scene_data_v2" || s.code === "music_data",
+        )
+      ) {
+        capabilities.add("scene");
       }
       break;
     case "fan":
@@ -1197,7 +1220,9 @@ function determineCapabilities(device) {
     case "switch":
       if (
         device.schema &&
-        device.schema.some((s) => s.code && s.code.startsWith("cur_"))
+        device.schema.some(
+          (s) => (s.code && s.code.startsWith("cur_")) || s.code === "electricity",
+        )
       ) {
         if (
           device.schema.some(

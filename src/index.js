@@ -30,6 +30,8 @@ const {
   startMotionCoalesce,
 } = require("./camera/motion-pipeline");
 
+const MOTION_DP_PATTERN = /motion|movement|doorbell|human|person|pir/i;
+
 /**
  * Retry an async function with exponential backoff.
  */
@@ -428,9 +430,8 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
     // fallback — this catches both known codes (movement_detect_pic, etc.)
     // and device-specific codes (motion_alert, iot_motion, etc.) that
     // aren't in any hardcoded list.
-    const motionPattern = /motion|movement|doorbell|human|person|pir/i;
     for (const item of device.status) {
-      if (motionPattern.test(item.code)) {
+      if (MOTION_DP_PATTERN.test(item.code)) {
         item.value = "";
       }
     }
@@ -939,8 +940,8 @@ module.exports = {
         "info",
         `Starting energy monitoring polling for ${energyPollDevices.length} device(s): ${energyPollDevices.map((d) => d.name).join(", ")}`,
       );
-      ctx._energyPollTimer = setInterval(async () => {
-        if (!this._ctx) return; // stop() was called
+      const runEnergyPoll = async () => {
+        if (!this._ctx) return;
         for (const device of energyPollDevices) {
           try {
             const res = await dm.getDeviceInfo(device.id);
@@ -958,7 +959,6 @@ module.exports = {
               continue;
             }
 
-            // Update device status so MQTT-only updates stay in sync
             for (const item of device.status) {
               const match = status.find((s) => s.code === item.code);
               if (match) item.value = match.value;
@@ -975,7 +975,6 @@ module.exports = {
             );
             if (Object.keys(state).length > 0) {
               state.online = res.result.online ?? device.online;
-              // Only push update if values actually changed
               const lastKnown = ctx.lastKnownState.get(device.id) || {};
               const changed = Object.keys(state).some(
                 (k) =>
@@ -997,8 +996,9 @@ module.exports = {
             log("warn", `Energy poll error for ${device.name}: ${e.message}`);
           }
         }
-      }, Math.max(5000, options.energyPollInterval || 30000));
-      if (ctx._energyPollTimer.unref) ctx._energyPollTimer.unref();
+        ctx._energyPollTimer = setTimeout(runEnergyPoll, Math.max(5000, options.energyPollInterval || 30000));
+      };
+      ctx._energyPollTimer = setTimeout(runEnergyPoll, Math.max(5000, options.energyPollInterval || 30000));
     }
 
     // Snapshots are captured on-demand when MQTT motion events arrive
