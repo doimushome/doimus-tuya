@@ -49,7 +49,9 @@ npm run lint
 4. Image capture is attempted in priority order:
    - **Inline**: `tryDecodeCameraImage()` — image data directly in the status update
    - **S3 metadata**: `scheduleMotionImageFetch()` — async S3 fetch (10s timeout)
-   - **REST fallback**: `dm.api.getCameraSnapshot()` — Tuya API snapshot (4s timeout)
+   - If neither yields an image, **skip** — no REST snapshot fallback (unreliable for many
+     camera models, and reusing another event's frame is worse than none). The mobile
+     shows a "no image captured" placeholder for such events.
 5. Image stored via `api.updateDeviceImage(deviceId, "motion_N", jpeg)`
 6. Timeline linked via `api.onMotionImageStored(deviceId, "motion_N")`
 

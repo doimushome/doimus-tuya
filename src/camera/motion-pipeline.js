@@ -239,36 +239,17 @@ async function processCoalescedMotion(tuyaID, ctx, dm, api, log) {
     return;
   }
 
-  // 5. No inline, no S3 — fall back to REST snapshot API.
+  // 5. No image available from the payload (inline or S3 metadata).
+  // Skip rather than falling back to the REST snapshot API: the REST
+  // endpoint is unreliable for many camera models (returns no image), and
+  // a timeline entry that silently reuses another event's frame is worse
+  // than one with no image at all. The mobile shows a "no image captured"
+  // placeholder for such events.
   log(
     "info",
-    `Scheduling REST snapshot fallback for "${device.name}" in 8s (eventKey=${eventKey})`,
+    `No image captured for "${device.name}" (eventKey=${eventKey}) — skipping`,
   );
-  entry.asyncTimer = setTimeout(async () => {
-    entry.asyncTimer = null;
-    try {
-      const jpeg = await dm.api.getCameraSnapshot(device.id);
-      if (jpeg) {
-        storeMotionImage(
-          doimusID,
-          eventKey,
-          jpeg,
-          "image/jpeg",
-          api,
-          log,
-          device,
-        );
-      } else {
-        log(
-          "warn",
-          `REST snapshot returned no image for "${device.name}" (eventKey=${eventKey})`,
-        );
-      }
-    } catch (e) {
-      log("warn", `REST snapshot failed for "${device.name}": ${e.message}`);
-    }
-    ctx._motionCoalesce && ctx._motionCoalesce.delete(tuyaID);
-  }, 8000);
+  ctx._motionCoalesce && ctx._motionCoalesce.delete(tuyaID);
 }
 
 /**
