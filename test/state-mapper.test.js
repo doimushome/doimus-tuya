@@ -60,6 +60,38 @@ test("determineCapabilities — switch has on capability", () => {
   assert.ok(caps.includes("on"));
 });
 
+test("determineCapabilities — mobilecam camera capabilities from fallback schema", () => {
+  const device = makeDevice("mobilecam", [
+    makeSchema("basic_private", "Boolean"),
+    makeSchema("basic_nightvision", "Enum"),
+    makeSchema("record_switch", "Boolean"),
+    makeSchema("ptz_control", "Enum"),
+    makeSchema("movement_detect_pic", "String"),
+    makeSchema("battery_percentage", "Integer"),
+  ]);
+  const caps = determineCapabilities(device);
+  assert.ok(caps.includes("camera") === false); // sanity: type is separate
+  assert.ok(caps.includes("on"));
+  assert.ok(caps.includes("p2p_start"));
+  assert.ok(caps.includes("p2p_stop"));
+  assert.ok(caps.includes("control"));
+  assert.ok(caps.includes("recording"));
+  assert.ok(caps.includes("night_vision"));
+  assert.ok(caps.includes("privacy_mode"));
+  assert.ok(caps.includes("doorbell"));
+  assert.ok(caps.includes("battery"));
+});
+
+test("mapTuyaStatusToDoimusState — basic_nightvision enum maps to night_vision", () => {
+  const device = makeDevice("mobilecam", [
+    makeSchema("basic_nightvision", "Enum"),
+  ]);
+  const on = mapTuyaStatusToDoimusState(device, [{ code: "basic_nightvision", value: "1" }], {});
+  assert.equal(on.night_vision, true);
+  const off = mapTuyaStatusToDoimusState(device, [{ code: "basic_nightvision", value: "0" }], {});
+  assert.equal(off.night_vision, false);
+});
+
 test("determineCapabilities — light capabilities", () => {
   const device = makeDevice("dj", [
     makeSchema("switch_led", "Boolean"),

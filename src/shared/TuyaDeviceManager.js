@@ -10,6 +10,77 @@ const Events = {
   DEVICE_DELETE: "DEVICE_DELETE",
 };
 
+// Category fallback DPs used when the Tuya specifications API refuses a device
+// (e.g. code=2009 "not support this device", common on mobilecam cameras such
+// as the Magic S1). These follow the standard Tuya DP conventions so the
+// device still gets meaningful capabilities and command targets without specs.
+const CATEGORY_FALLBACK_SCHEMAS = {
+  mobilecam: [
+    { code: "basic_led", type: "Boolean" },
+    { code: "basic_indicator", type: "Boolean" },
+    { code: "basic_private", type: "Boolean" },
+    { code: "basic_flip", type: "Enum" },
+    { code: "basic_nightvision", type: "Enum" },
+    { code: "basic_osd", type: "Boolean" },
+    { code: "basic_lock", type: "Boolean" },
+    { code: "basic_motion", type: "Boolean" },
+    { code: "motion_tracking", type: "Boolean" },
+    { code: "record_switch", type: "Boolean" },
+    { code: "ptz_control", type: "Enum" },
+    { code: "ipc_work_mode", type: "Enum" },
+    { code: "basic_device_volume", type: "Integer", property: { min: 0, max: 100, scale: 0 } },
+  ],
+  sp: [
+    { code: "basic_indicator", type: "Boolean" },
+    { code: "basic_private", type: "Boolean" },
+    { code: "basic_flip", type: "Enum" },
+    { code: "basic_nightvision", type: "Enum" },
+    { code: "basic_osd", type: "Boolean" },
+    { code: "basic_device_volume", type: "Integer", property: { min: 0, max: 100, scale: 0 } },
+    { code: "pir_switch", type: "Boolean" },
+    { code: "motion_record", type: "Boolean" },
+    { code: "record_switch", type: "Boolean" },
+    { code: "record_mode", type: "Enum" },
+    { code: "record_loop", type: "Enum" },
+    { code: "ipc_work_mode", type: "Enum" },
+    { code: "humanoid_filter", type: "Boolean" },
+  ],
+  doorbell: [
+    { code: "basic_indicator", type: "Boolean" },
+    { code: "basic_private", type: "Boolean" },
+    { code: "basic_flip", type: "Enum" },
+    { code: "basic_nightvision", type: "Enum" },
+    { code: "basic_osd", type: "Boolean" },
+    { code: "basic_device_volume", type: "Integer", property: { min: 0, max: 100, scale: 0 } },
+    { code: "pir_switch", type: "Boolean" },
+    { code: "motion_record", type: "Boolean" },
+    { code: "record_switch", type: "Boolean" },
+    { code: "ipc_work_mode", type: "Enum" },
+  ],
+  wxml: [
+    { code: "basic_indicator", type: "Boolean" },
+    { code: "basic_private", type: "Boolean" },
+    { code: "basic_nightvision", type: "Enum" },
+    { code: "basic_osd", type: "Boolean" },
+    { code: "pir_switch", type: "Boolean" },
+    { code: "record_switch", type: "Boolean" },
+  ],
+  ipc: [
+    { code: "basic_led", type: "Boolean" },
+    { code: "basic_private", type: "Boolean" },
+    { code: "basic_flip", type: "Enum" },
+    { code: "basic_nightvision", type: "Enum" },
+    { code: "basic_osd", type: "Boolean" },
+    { code: "basic_lock", type: "Boolean" },
+    { code: "basic_motion", type: "Boolean" },
+    { code: "motion_tracking", type: "Boolean" },
+    { code: "record_switch", type: "Boolean" },
+    { code: "ptz_control", type: "Enum" },
+    { code: "ipc_work_mode", type: "Enum" },
+    { code: "basic_device_volume", type: "Integer", property: { min: 0, max: 100, scale: 0 } },
+  ],
+};
+
 const TuyaMQTTProtocol = {
   DEVICE_STATUS_UPDATE: 4,
   DEVICE_INFO_UPDATE: 20,
@@ -40,7 +111,7 @@ class TuyaDeviceManager extends EventEmitter {
     const res = await this.getDeviceInfo(deviceID);
     if (!res.success) return null;
     const device = new TuyaDevice(res.result);
-    device.schema = await this.getDeviceSchema(deviceID);
+    device.schema = await this.getDeviceSchema(deviceID, device);
     const oldDevice = this.getDevice(deviceID);
     if (oldDevice) {
       this.devices.splice(this.devices.indexOf(oldDevice), 1);
@@ -57,7 +128,7 @@ class TuyaDeviceManager extends EventEmitter {
     return this.api.get("/v1.0/devices", { device_ids: deviceIDs.join(",") });
   }
 
-  async getDeviceSchema(deviceID) {
+  async getDeviceSchema(deviceID, device = null) {
     const res = await this.api.get(`/v1.0/devices/${deviceID}/specifications`);
     if (res.success === false) {
       this.log.warn(
@@ -66,7 +137,7 @@ class TuyaDeviceManager extends EventEmitter {
         res.code,
         res.msg,
       );
-      return [];
+      return this.buildFallbackSchema(device);
     }
 
     const schemas = new Map();
@@ -89,6 +160,29 @@ class TuyaDeviceManager extends EventEmitter {
         const property = JSON.parse(values);
         schemas[code] = { code, mode, type, property };
       } catch (_) { /* invalid property JSON — skip */ }
+    }
+
+    return Object.values(schemas).sort((a, b) => (a.code > b.code ? 1 : -1));
+  }
+
+  // buildFallbackSchema produces a best-effort schema for devices whose
+  // specifications endpoint is unavailable. Read-only entries are derived from
+  // the DPs the device actually reports; known-writable codes come from the
+  // category table above. Duplicates keep the most useful (rw) mode.
+  buildFallbackSchema(device) {
+    if (!device) return [];
+
+    const schemas = new Map();
+    const categoryDefaults = CATEGORY_FALLBACK_SCHEMAS[device.category] || [];
+
+    for (const dp of categoryDefaults) {
+      schemas[dp.code] = { code: dp.code, mode: "rw", type: dp.type, property: dp.property || {} };
+    }
+
+    for (const s of device.status || []) {
+      if (schemas[s.code]) continue;
+      const type = typeof s.value === "number" ? "Integer" : typeof s.value === "boolean" ? "Boolean" : "String";
+      schemas[s.code] = { code: s.code, mode: "ro", type, property: {} };
     }
 
     return Object.values(schemas).sort((a, b) => (a.code > b.code ? 1 : -1));

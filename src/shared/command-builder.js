@@ -160,7 +160,7 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
         `(schema: [${(tuyaDevice.schema || []).map((s) => s.code).join(", ")}])`);
     }
   } else if (key === "control") {
-    const controlSchema = tuyaDevice.schema.find((s) => s.code === "control" || s.code === "control_back" || s.code === "direction" || s.code === "remote_control");
+    const controlSchema = tuyaDevice.schema.find((s) => s.code === "control" || s.code === "control_back" || s.code === "direction" || s.code === "remote_control" || s.code === "ptz_control");
     if (controlSchema) {
       commands.push({ code: controlSchema.code, value: String(value) });
     }
@@ -203,10 +203,12 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
     }
   } else if (key === "night_vision") {
     const nightSchema = tuyaDevice.schema.find(
-      (s) => s.code === "night_vision" || s.code === "infrared_led" || s.code === "night_mode",
+      (s) => s.code === "night_vision" || s.code === "infrared_led" || s.code === "night_mode" || s.code === "basic_nightvision",
     );
     if (nightSchema) {
-      commands.push(buildCommand(tuyaDevice.schema, nightSchema.code, value));
+      // basic_nightvision is an enum ("0"=off, "1"=IR, "2"=smart/auto).
+      const raw = nightSchema.code === "basic_nightvision" ? (value ? "1" : "0") : value;
+      commands.push(buildCommand(tuyaDevice.schema, nightSchema.code, raw));
     }
   } else if (key === "floodlight") {
     const floodSchema = tuyaDevice.schema.find(

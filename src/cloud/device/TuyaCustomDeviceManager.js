@@ -47,7 +47,7 @@ class TuyaCustomDeviceManager extends TuyaDeviceManager {
     const devices = (res.result.devices || []).map((obj) => new TuyaDevice(obj));
 
     for (const device of devices) {
-      device.schema = await this.getDeviceSchema(device.id);
+      device.schema = await this.getDeviceSchema(device.id, device);
     }
 
     this.devices = devices;

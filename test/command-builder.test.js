@@ -102,6 +102,23 @@ test("night_vision", () => {
   ]);
 });
 
+test("night_vision — basic_nightvision enum via fallback schema", () => {
+  const device = makeDevice("mobilecam", [makeSchema("basic_nightvision", "Enum")]);
+  assert.deepEqual(buildDeviceCommands("night_vision", true, device, "doimus-1", () => {}), [
+    { code: "basic_nightvision", value: "1" },
+  ]);
+  assert.deepEqual(buildDeviceCommands("night_vision", false, device, "doimus-1", () => {}), [
+    { code: "basic_nightvision", value: "0" },
+  ]);
+});
+
+test("control — mobilecam falls back to ptz_control", () => {
+  const device = makeDevice("mobilecam", [makeSchema("ptz_control", "Enum")]);
+  assert.deepEqual(buildDeviceCommands("control", "left", device, "doimus-1", () => {}), [
+    { code: "ptz_control", value: "left" },
+  ]);
+});
+
 test("floodlight", () => {
   const device = makeDevice("doorbell", [makeSchema("floodlight", "Enum")]);
   assert.deepEqual(buildDeviceCommands("floodlight", "on", device, "doimus-1", () => {}), [

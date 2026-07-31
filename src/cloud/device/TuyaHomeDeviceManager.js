@@ -29,7 +29,7 @@ class TuyaHomeDeviceManager extends TuyaDeviceManager {
     if (devices.length === 0) return [];
 
     for (const device of devices) {
-      device.schema = await this.getDeviceSchema(device.id);
+      device.schema = await this.getDeviceSchema(device.id, device);
     }
 
     this.devices = devices;

@@ -681,7 +681,7 @@ module.exports = {
       if (device.isIRControlHub && device.isIRControlHub()) return;
       log("info", `New device added: ${device.name}`);
       const options2 = (cfg && cfg.options) || {};
-      device.schema = await dm.getDeviceSchema(device.id);
+      device.schema = await dm.getDeviceSchema(device.id, device);
       if (
         ["sp", "doorbell", "mobilecam", "wxml"].includes(
           device.category,

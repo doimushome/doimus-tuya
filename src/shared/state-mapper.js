@@ -618,6 +618,9 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
       code === "night_mode"
     ) {
       state.night_vision = value === true || value === 1 || value === "true";
+    } else if (code === "basic_nightvision") {
+      // Tuya camera night-vision enum: "0"=color/off, "1"=IR, "2"=smart.
+      state.night_vision = String(value) !== "0" && value !== false;
     } else if (
       code === "floodlight" ||
       code === "floodlight_switch" ||
@@ -1388,10 +1391,24 @@ function determineCapabilities(device) {
           (s) =>
             s.code === "night_vision" ||
             s.code === "infrared_led" ||
-            s.code === "night_mode",
+            s.code === "night_mode" ||
+            s.code === "basic_nightvision",
         )
       ) {
         capabilities.add("night_vision");
+      }
+      if (
+        device.schema &&
+        device.schema.some(
+          (s) =>
+            s.code === "record_switch" ||
+            s.code === "recording_switch" ||
+            s.code === "record_state" ||
+            s.code === "ipc_record" ||
+            s.code === "motion_record",
+        )
+      ) {
+        capabilities.add("recording");
       }
       if (
         device.schema &&
