@@ -291,10 +291,11 @@ class TuyaOpenAPI {
       this.log.warn(
         "Token rejected by server (code=1010), forcing re-auth and retrying once...",
       );
-      // Force-invalidate the local token so _refreshAccessTokenIfNeed
-      // picks it up and triggers the full refresh → re-login flow.
+      // Force-expire the local token so _refreshAccessTokenIfNeed picks it up
+      // and triggers the full refresh → re-login flow. Keep access_token set:
+      // isLogin() checks access_token.length, so nulling it makes the refresh
+      // short-circuit before it can re-auth.
       this.tokenInfo.expire = 0;
-      this.tokenInfo.access_token = "";
       await this._refreshAccessTokenIfNeed(path);
       if (this.isLogin()) {
         this.log.info("Re-auth successful, retrying original request");
