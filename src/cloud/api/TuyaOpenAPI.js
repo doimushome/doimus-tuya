@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require("uuid");
 const retry = require("async-await-retry");
 const { version: PLUGIN_VERSION } = require("../../../package.json");
 const { PrefixLogger } = require("../../shared/Logger");
+const { redactSecrets, redactUrl } = require("../../shared/plugin-utils");
 
 const Endpoints = {
   AMERICA: "https://openapi.tuyaus.com",
@@ -307,7 +308,7 @@ class TuyaOpenAPI {
     this.log.debug(
       "Response:\npath = %s\ndata = %s",
       path,
-      JSON.stringify(res, null, 2),
+      JSON.stringify(redactSecrets(res), null, 2),
     );
 
     if (res) {
@@ -384,11 +385,11 @@ class TuyaOpenAPI {
     this.log.debug(
       "Request:\nmethod = %s\nendpoint = %s\npath = %s\nquery = %s\nheaders = %s\nbody = %s",
       method,
-      this.endpoint,
+      redactUrl(this.endpoint),
       path,
-      JSON.stringify(params, null, 2),
-      JSON.stringify(headers, null, 2),
-      JSON.stringify(body, null, 2),
+      JSON.stringify(redactSecrets(params), null, 2),
+      JSON.stringify(redactSecrets(headers), null, 2),
+      JSON.stringify(redactSecrets(body), null, 2),
     );
 
     if (params) {
@@ -667,14 +668,31 @@ class TuyaOpenAPI {
   // Downloads the image from a snapshot URL. Extracted as a helper so both
   // the cached and full-probe paths can reuse the same download logic.
   _fetchSnapshotImage(url, timeoutMs = 15000) {
+    const MAX_SNAPSHOT_BYTES = 20 * 1024 * 1024;
     return new Promise((resolve, reject) => {
       let req;
       const timer = setTimeout(() => {
         if (req) req.destroy(new Error(`Snapshot fetch timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       req = https.get(url, (r) => {
+        if (r.statusCode !== 200) {
+          r.resume();
+          clearTimeout(timer);
+          reject(new Error(`Snapshot fetch status ${r.statusCode}`));
+          return;
+        }
         const chunks = [];
-        r.on("data", (c) => chunks.push(c));
+        let total = 0;
+        r.on("data", (c) => {
+          total += c.length;
+          if (total > MAX_SNAPSHOT_BYTES) {
+            r.destroy();
+            clearTimeout(timer);
+            reject(new Error(`Snapshot exceeds ${MAX_SNAPSHOT_BYTES} bytes`));
+            return;
+          }
+          chunks.push(c);
+        });
         r.on("end", () => {
           clearTimeout(timer);
           resolve(Buffer.concat(chunks));

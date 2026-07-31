@@ -2,6 +2,7 @@
 
 const mqtt = require("mqtt");
 const { v4: uuidv4 } = require("uuid");
+const { redactUrl, redactSecrets } = require("../shared/plugin-utils");
 
 /**
  * Tuya WebRTC Signaling Client
@@ -234,7 +235,7 @@ class WebRTCSignaling {
 
     this.log(
       "info",
-      `[WebRTC] Connecting to IPC MQTT: ${url} client_id=${client_id}`,
+      `[WebRTC] Connecting to IPC MQTT: ${redactUrl(url)} client_id=${client_id}`,
     );
 
     this.mqttClient = mqtt.connect(url, {
@@ -543,7 +544,10 @@ class WebRTCSignaling {
     );
     this.log(
       "debug",
-      `[WebRTC] Offer token: ${JSON.stringify(this.webrtcConfig.iceServers).length > 300 ? JSON.stringify(this.webrtcConfig.iceServers).slice(0, 300) + "..." : JSON.stringify(this.webrtcConfig.iceServers)}`,
+      `[WebRTC] Offer token (redacted): ${(function () {
+        const s = JSON.stringify(redactSecrets(this.webrtcConfig.iceServers));
+        return s.length > 300 ? s.slice(0, 300) + "..." : s;
+      }).call(this)}`,
     );
     this._publish(payload);
 
@@ -816,8 +820,10 @@ class WebRTCSignaling {
       this._wakeDelayTimer = null;
     }
     if (this.mqttClient) {
-      this.mqttClient.end(true);
+      const mq = this.mqttClient;
       this.mqttClient = null;
+      const r = mq.end(true);
+      if (r && typeof r.catch === "function") r.catch(() => {});
     }
     this._pendingOffer = null;
     this._pendingCandidates = [];

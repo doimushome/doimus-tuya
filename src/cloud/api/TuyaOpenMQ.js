@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const CryptoJS = require("crypto-js");
 const dns = require("dns");
 const { PrefixLogger } = require("../../shared/Logger");
+const { redactUrl } = require("../../shared/plugin-utils");
 
 const GCM_TAG_LENGTH = 16;
 const INITIAL_RETRY_DELAY = 2000; // 2 seconds
@@ -39,9 +40,11 @@ class TuyaOpenMQ {
     this.running = false;
     this._clearTimers();
     if (this.client) {
-      this.client.removeAllListeners();
-      this.client.end(true);
+      const c = this.client;
       this.client = null;
+      c.removeAllListeners();
+      const r = c.end(true);
+      if (r && typeof r.catch === "function") r.catch(() => {});
     }
     this.config = null;
   }
@@ -90,9 +93,11 @@ class TuyaOpenMQ {
     // Clean up previous connection completely (like reference's this.stop())
     this._clearTimers();
     if (this.client) {
-      this.client.removeAllListeners();
-      this.client.end(true);
+      const c = this.client;
       this.client = null;
+      c.removeAllListeners();
+      const r = c.end(true);
+      if (r && typeof r.catch === "function") r.catch(() => {});
     }
     this.config = null;
 
@@ -158,7 +163,7 @@ class TuyaOpenMQ {
       return;
     }
 
-    this.log.info("Connecting to MQTT: %s", url);
+    this.log.info("Connecting to MQTT: %s", redactUrl(url));
 
     // Store config BEFORE connecting so _onMessage can use it immediately
     this.config = res.result;
@@ -175,7 +180,6 @@ class TuyaOpenMQ {
     };
 
     if (this.forceIPv4) {
-      opts.family = 4;
       opts.lookup = (hostname, options, callback) => {
         dns.lookup(hostname, { family: 4 }, callback);
       };

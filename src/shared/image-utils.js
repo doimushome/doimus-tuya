@@ -1,6 +1,74 @@
 const crypto = require("crypto");
-const http = require("http");
 const https = require("https");
+
+// Hard cap on downloaded image payloads — a misbehaving or malicious
+// endpoint must not be able to exhaust plugin memory. Camera images are
+// typically < 2MB; 20MB is generous headroom.
+const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 15000;
+
+/**
+ * Download a URL with a hard byte cap and timeout. Resolves to a Buffer,
+ * or null on failure/oversize/timeout. Redirects (up to 3) are followed.
+ * HTTPS only — blocks http:// and non-http schemes (SSRF hardening).
+ */
+function downloadUrl(url, { timeoutMs = DOWNLOAD_TIMEOUT_MS, maxBytes = MAX_DOWNLOAD_BYTES } = {}) {
+  return new Promise((resolve) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      resolve(null);
+      return;
+    }
+    if (parsed.protocol !== "https:") {
+      resolve(null);
+      return;
+    }
+
+    const client = https;
+    const req = client.get(url, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume();
+        const redirect = new URL(res.headers.location, url).toString();
+        downloadUrl(redirect, { timeoutMs, maxBytes }).then(resolve);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        resolve(null);
+        return;
+      }
+      const chunks = [];
+      let total = 0;
+      res.on("data", (c) => {
+        total += c.length;
+        if (total > maxBytes) {
+          res.destroy();
+          resolve(null);
+          return;
+        }
+        chunks.push(c);
+      });
+      res.on("end", () => {
+        if (total > maxBytes) {
+          resolve(null);
+          return;
+        }
+        clearTimeout(timer);
+        resolve(Buffer.concat(chunks));
+      });
+    });
+    const timer = setTimeout(() => {
+      req.destroy();
+      resolve(null);
+    }, timeoutMs);
+    req.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
+}
 
 /**
  * Extracts bucket, file_path, and optional encryption key without
@@ -111,14 +179,16 @@ function extractSnapshotUrlFromStatus(status) {
     if (!item || typeof item.value !== "string" || item.value.length < 8)
       continue;
 
+    // HTTPS only: device-controlled URLs must not point the plugin at
+    // plaintext or internal http endpoints (SSRF hardening).
     const raw = item.value.trim();
-    if (/^https?:\/\//i.test(raw)) {
+    if (/^https:\/\//i.test(raw)) {
       return raw;
     }
 
     try {
       const decoded = Buffer.from(raw, "base64").toString("utf8").trim();
-      if (/^https?:\/\//i.test(decoded)) {
+      if (/^https:\/\//i.test(decoded)) {
         return decoded;
       }
     } catch (_) {
@@ -128,59 +198,19 @@ function extractSnapshotUrlFromStatus(status) {
   return null;
 }
 
-async function downloadImageFromUrl(url, log, deviceName, depth = 0) {
-  if (!url || depth > 2) return null;
-  return new Promise((resolve) => {
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch (_) {
-      resolve(null);
-      return;
-    }
-
-    const client = parsed.protocol === "http:" ? http : https;
-    const req = client.get(url, (res) => {
-      if (
-        [301, 302, 303, 307, 308].includes(res.statusCode) &&
-        res.headers.location
-      ) {
-        res.resume();
-        const redirect = new URL(res.headers.location, url).toString();
-        downloadImageFromUrl(redirect, log, deviceName, depth + 1).then(
-          resolve,
-        );
-        return;
-      }
-      if (res.statusCode !== 200) {
-        res.resume();
-        resolve(null);
-        return;
-      }
-
-      const chunks = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => {
-        clearTimeout(timer);
-        const data = Buffer.concat(chunks);
-        const mime = detectImageMime(data);
-        if (!mime.startsWith("image/")) {
-          log(
-            "debug",
-            `Snapshot URL payload is not an image for "${deviceName}": mime=${mime} size=${data.length}`,
-          );
-          resolve(null);
-          return;
-        }
-        resolve({ data, mime });
-      });
-    });
-    const timer = setTimeout(() => {
-      req.destroy();
-      resolve(null);
-    }, 15000);
-    req.on("error", () => { clearTimeout(timer); resolve(null); });
-  });
+async function downloadImageFromUrl(url, log, deviceName) {
+  if (!url) return null;
+  const data = await downloadUrl(url);
+  if (!data) return null;
+  const mime = detectImageMime(data);
+  if (!mime.startsWith("image/")) {
+    log(
+      "debug",
+      `Snapshot URL payload is not an image for "${deviceName}": mime=${mime} size=${data.length}`,
+    );
+    return null;
+  }
+  return { data, mime };
 }
 
 /**
@@ -225,19 +255,14 @@ async function fetchMotionImageFromS3(device, metadata, dm, ctx, log) {
 
   // Step 2: Download from S3 presigned URL
   try {
-    const raw = await new Promise((resolve, reject) => {
-      https
-        .get(s3Url, (res) => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`S3 status ${res.statusCode}`));
-            return;
-          }
-          const chunks = [];
-          res.on("data", (c) => chunks.push(c));
-          res.on("end", () => resolve(Buffer.concat(chunks)));
-        })
-        .on("error", reject);
-    });
+    const raw = await downloadUrl(s3Url, { timeoutMs: 20000 });
+    if (!raw) {
+      log(
+        "warn",
+        `S3 fetch failed for "${device.name}": timeout or oversized payload`,
+      );
+      return null;
+    }
 
     // Plain JPEG (no encryption).
     if (raw[0] === 0xff && raw[1] === 0xd8) {
@@ -486,6 +511,7 @@ module.exports = {
   detectImageMime,
   extractSnapshotUrlFromStatus,
   downloadImageFromUrl,
+  downloadUrl,
   fetchMotionImageFromS3,
   tryDecodeCameraImage,
 };
