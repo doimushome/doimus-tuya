@@ -91,6 +91,13 @@ class TuyaOpenAPI {
     // Set via setReloginHandler(). Called with no arguments, must return
     // { success: true/false }.
     this._reloginHandler = null;
+    // Optional handler for structured health/config warnings (e.g. missing
+    // Service API subscriptions). Set via setWarningHandler(). Called with
+    // (code, message). The plugin forwards this to the Doimus host so the
+    // mobile app can surface an actionable banner.
+    this._warningHandler = null;
+    // Dedupe set so the same warning is reported at most once per session.
+    this._reportedWarnings = new Set();
     // Per-device cache of the snapshot endpoint that last succeeded.
     // Avoids probing all 8 endpoint patterns on every 30s poll cycle.
     this._snapshotEndpointCache = new Map();
@@ -99,6 +106,25 @@ class TuyaOpenAPI {
 
   setReloginHandler(handler) {
     this._reloginHandler = handler;
+  }
+
+  // Report a structured warning to the Doimus host, deduped per code so we
+  // don't spam the host every time an unsubscribed API call is retried.
+  reportWarning(code, message) {
+    if (!this._warningHandler) return;
+    if (this._reportedWarnings.has(code)) return;
+    this._reportedWarnings.add(code);
+    try {
+      this._warningHandler(code, message);
+    } catch (e) {
+      this.log.warn("Warning handler threw: %s", e.message);
+    }
+  }
+
+  // Set the callback invoked by reportWarning. Wire it to the Doimus api
+  // (api.reportWarning) so warnings surface in the mobile app.
+  setWarningHandler(handler) {
+    this._warningHandler = handler;
   }
 
   static getDefaultEndpoint(countryCode) {
@@ -285,7 +311,13 @@ class TuyaOpenAPI {
 
     if (res) {
       if (res.success !== true && API_ERROR_MESSAGES[res.code]) {
-        this.log.error(API_ERROR_MESSAGES[res.code]);
+        // Respect suppressErrorLog: speculative calls (e.g. snapshot endpoint
+        // probing) are expected to fail — don't spam the ERROR log.
+        if (suppressErrorLog) {
+          this.log.debug("API error detail: path=%s code=%s", path, res.code);
+        } else {
+          this.log.error(API_ERROR_MESSAGES[res.code]);
+        }
       }
       if (res.success !== true) {
         if (suppressErrorLog) {
@@ -301,6 +333,18 @@ class TuyaOpenAPI {
             path,
             res.code,
             res.msg,
+          );
+        }
+        // Surface missing Service API subscriptions as a structured warning
+        // so the user gets an actionable banner instead of only log lines.
+        if (res.code === 28841101 || res.code === 28841105) {
+          this.reportWarning(
+            "tuya_api_not_subscribed",
+            `Tuya project is missing required Service API permissions. ` +
+              `Authorize: Authorization Token Management, Device Status ` +
+              `Notification, IoT Core, and Industry Project Client Service ` +
+              `at "Tuya IoT Platform -> Cloud -> Development -> Project -> ` +
+              `Service API".`,
           );
         }
       }

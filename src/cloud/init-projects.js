@@ -17,6 +17,13 @@ async function initCustomProject(api, options, log) {
     "en",
     debugMode,
   );
+  // Forward structured warnings (e.g. missing Service API subscriptions) to
+  // the Doimus host so they surface in the mobile app.
+  openAPI.setWarningHandler((code, message) => {
+    if (api && typeof api.reportWarning === "function") {
+      api.reportWarning(code, message);
+    }
+  });
   const dm = new TuyaCustomDeviceManager(openAPI, debugMode);
 
   log("info", "Get token.");
@@ -147,6 +154,13 @@ async function initHomeProject(api, options, log) {
     "en",
     debugMode,
   );
+  // Forward structured warnings (e.g. missing Service API subscriptions) to
+  // the Doimus host so they surface in the mobile app.
+  openAPI.setWarningHandler((code, message) => {
+    if (api && typeof api.reportWarning === "function") {
+      api.reportWarning(code, message);
+    }
+  });
   const dm = new TuyaHomeDeviceManager(openAPI, debugMode);
 
   log("info", "Logging in to Tuya Cloud.");
