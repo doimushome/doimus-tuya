@@ -8,8 +8,7 @@
     "type": "native"
   },
   "scripts": {
-    "test:webrtc": "node --test test/webrtc-signaling.test.js",
-    "webrtc:self-test": "node test/webrtc-self-test.js"
+    "test:webrtc": "node --test test/webrtc-signaling.test.js"
   },
   "dependencies": {
     "@roamhq/wrtc": "^0.10.0",

@@ -17,14 +17,14 @@ device categories as Doimus devices.
 - `src/local/protocol/` — Protocol implementation: frame encode/decode, key exchange, AES/GCM encryption
 - `src/shared/` — Shared utilities: `TuyaDevice`, `TuyaDeviceManager`, `TuyaHybridDeviceManager`, `Logger`, `state-mapper`, `command-builder`, `image-utils`
 - `src/camera/` — Camera handling: WebRTC signaling, P2P streaming, motion pipeline
-- `test/` — Tests (WebRTC signaling)
+- `test/` — Unit tests (WebRTC signaling, state-mapper, command-builder, device manager)
 - `config.schema.json` — Plugin configuration schema (rendered in app wizard; supports `cloud`/`local`/`both` mode)
 
 ## Key Commands
 
 ```bash
-# Run WebRTC tests
-npm run test:webrtc
+# Run unit tests
+node --test test/*.test.js
 
 # Lint (if configured)
 npm run lint

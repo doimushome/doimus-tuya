@@ -59,12 +59,7 @@ allocation immediately in parallel with WebRTC.**
 - ffmpeg exits with code 1 after 30s — likely because camera isn't awake
 - **To test**: After enabling parallel start, wait 60s before spawning ffmpeg (camera needs time to boot)
 
-### 3. Self-test script needs validation
-
-- `test/webrtc-self-test.js` updated to handle both hub message formats but never validated end-to-end
-- Run: `HUB=localhost:8765 JWT="..." DEVICE_ID="..." node test/webrtc-self-test.js`
-
-### 4. Runner command buffering (doimus-embed)
+### 3. Runner command buffering (doimus-embed)
 
 - `backend/internal/plugin/shim/runner-native.js` updated to buffer `webrtc_command` until handler registered
 - Requires backend rebuild (`docker compose build backend && docker compose restart backend`)
@@ -84,9 +79,6 @@ allocation immediately in parallel with WebRTC.**
 # 1. Get JWT from hub logs
 make pin  # or extract from docker logs
 
-# 2. Run self-test
-HUB=localhost:8765 JWT="eyJ..." node test/webrtc-self-test.js
-
-# 3. Check docker logs for parallel start
+# 2. Check docker logs for parallel start
 docker compose logs --no-color | grep -E "WebRTC|wake|StreamAlloc|P2P|parallel" | grep -v "Energy poll" | tail -50
 ```
