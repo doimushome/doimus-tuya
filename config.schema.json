@@ -41,14 +41,6 @@
               "functionBody": "return model.options.mode !== 'local';"
             }
           },
-          "endpoint": {
-            "title": "Endpoint URL",
-            "type": "string",
-            "format": "url",
-            "condition": {
-              "functionBody": "return model.options.mode !== 'local';"
-            }
-          },
           "accessId": {
             "title": "Access ID",
             "type": "string",
@@ -96,15 +88,6 @@
               { "title": "Tuya Smart", "enum": ["tuyaSmart"] },
               { "title": "Smart Life", "enum": ["smartlife"] }
             ],
-            "condition": {
-              "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
-            }
-          },
-          "homeWhitelist": {
-            "title": "Whitelisted Home IDs",
-            "description": "Optional list of Home IDs. If blank, all homes are matched.",
-            "type": "array",
-            "items": { "title": "Home ID", "type": "integer" },
             "condition": {
               "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
             }
@@ -237,32 +220,6 @@
             "title": "Enable Debug Logging",
             "type": "boolean",
             "default": true
-          },
-          "debugLevel": {
-            "title": "Debug Level",
-            "description": "Set to `api` to enable verbose API/MQTT request logging. Set to `local` for local LAN protocol debug. Leave empty for device-level debug only.",
-            "type": "string",
-            "default": "api",
-            "condition": {
-              "functionBody": "return model.options && model.options.debug;"
-            }
-          },
-          "energyPollInterval": {
-            "title": "Energy Poll Interval (ms)",
-            "description": "How often to poll energy monitoring devices (cur_current, cur_power, etc.). Default 30000 (30s). Minimum 5000.",
-            "type": "integer",
-            "default": 30000,
-            "minimum": 5000,
-            "condition": {
-              "functionBody": "return model.options.mode !== 'local';"
-            }
-          },
-          "streamAllocBootDelay": {
-            "title": "Stream Allocation Boot Delay (ms)",
-            "description": "How long to wait after stream allocation before spawning ffmpeg for battery cameras. Default 30000 (30s). Minimum 5000.",
-            "type": "integer",
-            "default": 30000,
-            "minimum": 5000
           }
         }
       }
