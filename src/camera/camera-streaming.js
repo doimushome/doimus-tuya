@@ -85,11 +85,13 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       port,
       localKey,
       version,
+      // TuyaP2P's messages already carry the [P2P] prefix — don't add it again
+      // here or every line becomes "[P2P] [P2P] ...".
       log: {
-        info: (m, ...a) => log("info", `[P2P] ${util.format(m, ...a)}`),
-        debug: (m, ...a) => log("debug", `[P2P] ${util.format(m, ...a)}`),
-        warn: (m, ...a) => log("warn", `[P2P] ${util.format(m, ...a)}`),
-        error: (m, ...a) => log("error", `[P2P] ${util.format(m, ...a)}`),
+        info: (m, ...a) => log("info", util.format(m, ...a)),
+        debug: (m, ...a) => log("debug", util.format(m, ...a)),
+        warn: (m, ...a) => log("warn", util.format(m, ...a)),
+        error: (m, ...a) => log("error", util.format(m, ...a)),
       },
     });
 

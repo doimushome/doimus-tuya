@@ -231,6 +231,16 @@ module.exports = {
       );
       const runEnergyPoll = async () => {
         if (!this._ctx) return;
+        // If the API token is dead (e.g. account used elsewhere and re-auth
+        // failed), don't hammer the API every poll cycle. Back off until a
+        // fresh login restores auth.
+        if (dm.api && dm.api.isAuthHealthy && !dm.api.isAuthHealthy()) {
+          ctx._energyPollTimer = setTimeout(
+            runEnergyPoll,
+            Math.max(5000, options.energyPollInterval || 30000),
+          );
+          return;
+        }
         for (const device of energyPollDevices) {
           try {
             const res = await dm.getDeviceInfo(device.id);
