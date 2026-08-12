@@ -103,6 +103,12 @@ class TuyaOpenAPI {
     // Avoids probing all 8 endpoint patterns on every 30s poll cycle.
     this._snapshotEndpointCache = new Map();
     this._snapshotEndpointCache.maxSize = 50;
+    // Auth circuit breaker: once the server rejects our token (code 1010) AND
+    // re-auth + re-login fail, the token is effectively dead (e.g. the same
+    // Tuya account is logged in elsewhere). Flag it so callers stop hammering
+    // the API until a fresh login succeeds.
+    this._authHealthy = true;
+    this._authBrokenReported = false;
   }
 
   setReloginHandler(handler) {
@@ -145,6 +151,34 @@ class TuyaOpenAPI {
     return this.tokenInfo.expire - 60 * 1000 <= new Date().getTime();
   }
 
+  // Whether the token is known-good. When the server has rejected the token and
+  // re-auth/re-login failed (e.g. account used by another instance), this is
+  // false and callers should avoid issuing more requests until a fresh login.
+  isAuthHealthy() {
+    return this._authHealthy;
+  }
+
+  _setAuthHealthy() {
+    if (!this._authHealthy) {
+      this.log.info("Auth restored after re-login.");
+    }
+    this._authHealthy = true;
+    this._authBrokenReported = false;
+  }
+
+  _setAuthBroken() {
+    this._authHealthy = false;
+    if (!this._authBrokenReported) {
+      this._authBrokenReported = true;
+      this.reportWarning(
+        "tuya_account_conflict",
+        "Your Tuya account is signed in on another device or app, which " +
+          "invalidates this connection. Sign out of Tuya/Smart Life on other " +
+          "devices so the Doimus hub can keep control.",
+      );
+    }
+  }
+
   isTokenManagementAPI(path) {
     return path != null && path.startsWith("/v1.0/token");
   }
@@ -183,6 +217,7 @@ class TuyaOpenAPI {
       uid,
       expire: expire_time * 1000 + new Date().getTime(),
     };
+    this._setAuthHealthy();
   }
 
   async getToken() {
@@ -231,6 +266,7 @@ class TuyaOpenAPI {
         uid,
         expire: expire_time * 1000 + new Date().getTime(),
       };
+      this._setAuthHealthy();
     }
     return res;
   }
@@ -300,9 +336,11 @@ class TuyaOpenAPI {
       await this._refreshAccessTokenIfNeed(path);
       if (this.isLogin()) {
         this.log.info("Re-auth successful, retrying original request");
+        this._setAuthHealthy();
         return this._doRequest(method, path, params, body, opts);
       }
       this.log.error("Re-auth failed after server token rejection");
+      this._setAuthBroken();
     }
 
     this.log.debug(

@@ -129,9 +129,15 @@ class TuyaDeviceManager extends EventEmitter {
   }
 
   async getDeviceSchema(deviceID, device = null) {
-    const res = await this.api.get(`/v1.0/devices/${deviceID}/specifications`);
+    // suppressErrorLog: failure is expected for devices that refuse the specs
+    // API — getDeviceSchema logs at debug and builds a fallback schema itself.
+    const res = await this.api.get(`/v1.0/devices/${deviceID}/specifications`, null, {
+      suppressErrorLog: true,
+    });
     if (res.success === false) {
-      this.log.warn(
+      // Expected for devices that refuse the specifications API (e.g. Magic S1).
+      // The fallback schema is the designed path — log at debug to avoid noise.
+      this.log.debug(
         "Get device specification failed. devId = %s, code = %s, msg = %s",
         deviceID,
         res.code,

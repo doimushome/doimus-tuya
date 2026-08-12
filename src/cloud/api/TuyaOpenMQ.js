@@ -399,10 +399,41 @@ class TuyaOpenMQ {
   }
 
   _decodeMQMessage(data, password, t) {
-    if (this.version === "2.0") {
-      return this._decodeMQMessage_2_0(data, password, t);
+    // The server does not reliably honor the msg_encrypted_version we request:
+    // it may interleave v1.0 (AES-ECB) and v2.0 (AES-GCM) messages on the same
+    // topic. Try the configured version first, then fall back to the other,
+    // accepting whichever produces valid JSON.
+    const attempts =
+      this.version === "2.0"
+        ? [
+            () => this._decodeMQMessage_2_0(data, password, t),
+            () => this._decodeMQMessage_1_0(data, password),
+          ]
+        : [
+            () => this._decodeMQMessage_1_0(data, password),
+            () => this._decodeMQMessage_2_0(data, password, t),
+          ];
+
+    for (const attempt of attempts) {
+      try {
+        const decoded = attempt();
+        if (decoded && this._isValidJson(decoded)) {
+          return decoded;
+        }
+      } catch (err) {
+        this.log.debug("MQTT decode attempt failed: %s", err.message);
+      }
     }
-    return this._decodeMQMessage_1_0(data, password);
+    return null;
+  }
+
+  _isValidJson(str) {
+    try {
+      JSON.parse(str);
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
 
   addMessageListener(listener) {
