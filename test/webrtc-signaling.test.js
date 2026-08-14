@@ -25,10 +25,13 @@ class FakeMqttClient extends EventEmitter {
 
   publish(topic, payload, opts, cb) {
     let actualCb = cb;
+    let qos = 0;
     if (typeof opts === "function") {
       actualCb = opts;
+    } else if (opts && typeof opts === "object") {
+      qos = opts.qos || 0;
     }
-    this.publications.push({ topic, payload: String(payload) });
+    this.publications.push({ topic, payload: String(payload), qos });
     if (actualCb) actualCb(null);
   }
 
@@ -221,6 +224,10 @@ test("sendOffer publishes to resolved sink topic with correct shape", async (t) 
 
       // ── topic ──
       assert.equal(offerPub.topic, "/av/moto/moto-123/u/dev-123");
+
+      // ── QoS: offers must be QoS 1 (go2rtc-compatible) so the IPC broker
+      // queues them for a sleeping battery camera's persistent session. ──
+      assert.equal(offerPub.qos, 1, "offer must be published with QoS 1");
 
       const pl = JSON.parse(offerPub.payload);
       // ── envelope ──
@@ -445,6 +452,85 @@ test("wildcard subscription catches camera reply on unexpected topic", async (t)
       console.log(
         `  [debug] caught on unexpected topic – answer.sdp length: ${answerReceived.sdp.length}`,
       );
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 6: battery camera — offer re-sent with QoS 1 after wake confirmation
+//   The first offer goes out while the camera is asleep and is dropped by the
+//   IPC broker (QoS 0 → no offline queueing). Once the camera confirms wake
+//   (wireless_awake=true), setWoken() must re-publish the offer after a boot
+//   delay, reusing the same sessionid, and candidates must be re-sent too.
+// ---------------------------------------------------------------------------
+
+test("setWoken re-sends offer + candidates (QoS 1, same sessionid) after wake boot delay", async (t) => {
+  const fakeClient = new FakeMqttClient();
+  await withMockedDeps(
+    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.offer },
+    async (WebRTCSignaling) => {
+      const { wr } = setup(WebRTCSignaling);
+      t.after(() => wr.disconnect());
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      await wr.getConfigs("dev-123");
+      wr.connect(
+        "dev-123",
+        "00112233445566778899aabbccddeeff",
+        wr.webrtcConfig,
+        true, // needsWake → battery camera
+      );
+      fakeClient.emit("connect");
+
+      const offerPubs = () =>
+        fakeClient.publications.filter((p) => {
+          try {
+            return JSON.parse(p.payload)?.data?.header?.type === "offer";
+          } catch {
+            return false;
+          }
+        });
+      const candidatePubs = () =>
+        fakeClient.publications.filter((p) => {
+          try {
+            return JSON.parse(p.payload)?.data?.header?.type === "candidate";
+          } catch {
+            return false;
+          }
+        });
+
+      wr.sendOffer("v=0\r\n", 1);
+      wr.sendCandidate(
+        "0 0 candidate:1 1 udp 2122194687 192.168.1.55 59929 typ host",
+      );
+
+      assert.equal(offerPubs().length, 1, "one offer initially");
+      assert.equal(offerPubs()[0].qos, 1, "initial offer must be QoS 1");
+      assert.equal(candidatePubs().length, 1);
+      assert.equal(candidatePubs()[0].qos, 1, "candidate must be QoS 1");
+      const firstSession = JSON.parse(offerPubs()[0].payload).data.header
+        .sessionid;
+
+      // Camera confirms wake → setWoken() schedules a QoS 1 re-send.
+      wr.setWoken();
+      assert.equal(offerPubs().length, 1, "no immediate re-send");
+
+      // After the boot delay elapses, offer + candidates are re-published with
+      // the SAME sessionid so the camera treats it as the same session.
+      t.mock.timers.tick(5000);
+      assert.equal(offerPubs().length, 2, "offer re-sent after boot delay");
+      assert.equal(offerPubs()[1].qos, 1, "re-sent offer must be QoS 1");
+      assert.equal(
+        JSON.parse(offerPubs()[1].payload).data.header.sessionid,
+        firstSession,
+        "re-sent offer must reuse the same sessionid",
+      );
+      assert.equal(
+        candidatePubs().length,
+        2,
+        "candidates re-sent after wake",
+      );
+      assert.equal(candidatePubs()[1].qos, 1, "re-sent candidate must be QoS 1");
     },
   );
 });

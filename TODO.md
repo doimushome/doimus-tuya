@@ -2,6 +2,46 @@
 
 Pending work for battery camera (`sp` / peephole / doorbell) live streaming.
 
+## v0.11.1 — WebRTC offer QoS 1 + re-send after wake (deployed 2026-08-14)
+
+### Root cause found in logs
+
+The peephole camera (`bfc467f1cee0e05ea12z5s`) never answered the WebRTC offer in ANY session
+(zero `[WebRTC] MQTT rx` messages ever). The offer was being published with **QoS 0** (mqtt.js
+default) while the battery camera was still asleep — QoS 0 messages are dropped for offline
+subscribers, so the camera never received the offer after it woke ~1s later. There was no retry.
+
+go2rtc (reference implementation) publishes all signaling with **QoS 1**, relying on the IPC
+broker's persistent session to deliver the offer once the camera reconnects.
+
+### Fixes
+
+1. **`src/camera/WebRTCSignaling.js`**
+   - `_publish()` now sends **QoS 1** (offer, candidates, answer, disconnect all route through it).
+   - Track last offer + candidates; `setWoken()` (camera confirmed `wireless_awake=true`)
+     schedules a **QoS 1 re-send after 5s boot delay**, reusing the same sessionid. Cancelled
+     on answer/disconnect.
+   - `_doSendOffer()` also schedules the re-send if the camera already confirmed wake before
+     the mobile app produced the offer.
+2. **`src/shared/handlers.js`** — wake watcher `resolve()` now calls `wr.setWoken()`.
+3. **`src/camera/camera-streaming.js`**
+   - `startP2P()` reconnects instead of skipping when the existing P2P session is stale
+     (socket closed — battery camera went back to sleep).
+   - `tryAllocate()` rejects allocations with an empty `stream_id` (they produce dead URLs;
+     ffmpeg exits code 1 immediately) instead of spawning ffmpeg.
+
+### Verify
+
+```bash
+docker compose logs --no-color | grep -E "re-sending offer|Publishing offer|MQTT rx|type=answer"
+```
+
+Expected when opening live view on the peephole:
+1. `Publishing offer ... (QoS 1)` on the first offer
+2. `Wake confirmed ... re-sending offer (QoS 1) after 5s boot delay`
+3. `[WebRTC] MQTT rx ... type=answer` ← the camera now actually replies
+4. Mobile app renders the live feed.
+
 ## v0.8.54 — Parallel streaming paths + updated status
 
 ### Changes in v0.8.54

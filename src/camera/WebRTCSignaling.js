@@ -29,6 +29,11 @@ const { redactUrl, redactSecrets } = require("../shared/plugin-utils");
 
 const WEBRTC_PROTOCOL = 302;
 
+// Delay between the camera confirming wake (wireless_awake=true) and us
+// re-publishing the offer. Battery cameras report awake before their WebRTC
+// subsystem has connected to the IPC MQTT broker.
+const OFFER_RESEND_DELAY_MS = 5000;
+
 /**
  * CRC32 (IEEE 802.3 / zlib) of a string or Buffer.
  * Used for the IPC MQTT low-power wake-up message (go2rtc-compatible).
@@ -68,6 +73,14 @@ class WebRTCSignaling {
     this._wakePendingOffer = null;
     this._wakePendingCandidates = [];
     this._wakeFlushTimer = null;
+    // Track the last sent offer/candidates so we can re-publish them (QoS 1)
+    // once a battery camera confirms wake and has had time to boot its
+    // WebRTC subsystem. A sleeping camera is not subscribed to the IPC broker
+    // when the offer first goes out, so it is lost and never answered.
+    this._lastOffer = null;
+    this._lastCandidates = [];
+    this._answered = false;
+    this._offerResendTimer = null;
   }
 
   on(event, handler) {
@@ -478,13 +491,25 @@ class WebRTCSignaling {
     this._doSendOffer(sdp, streamType);
   }
 
-  _doSendOffer(sdp, streamType) {
+  _doSendOffer(sdp, streamType, reuseSessionId) {
     if (this._offerBufferTimer) {
       clearTimeout(this._offerBufferTimer);
       this._offerBufferTimer = null;
     }
 
-    this.sessionId = uuidv4().replace(/-/g, "");
+    // Keep the same sessionid when re-sending an offer after the camera wakes
+    // (the camera treats it as the same session); otherwise mint a fresh one.
+    if (!reuseSessionId || !this.sessionId) {
+      this.sessionId = uuidv4().replace(/-/g, "");
+    }
+    this._answered = false;
+    this._lastOffer = { sdp, streamType };
+    // If the camera already confirmed wake (setWoken() fired before the mobile
+    // app produced this offer), still schedule the QoS 1 re-send after the
+    // boot delay. Otherwise the first offer is the only one and can be lost.
+    if (this._woken && this._needsWake) {
+      this._scheduleOfferResend();
+    }
 
     // Strip a=extmap lines to stay under Tuya's ~8KB MQTT payload limit.
     // These are optional header extensions the camera doesn't need.
@@ -614,26 +639,8 @@ class WebRTCSignaling {
       return;
     }
 
-    const msg = {
-      protocol: WEBRTC_PROTOCOL,
-      pv: "2.2",
-      t: Math.floor(Date.now() / 1000),
-      data: {
-        header: {
-          from: this._getFrom(),
-          to: this.webrtcConfig.deviceId,
-          sessionid: this.sessionId,
-          moto_id: this.webrtcConfig.motoId,
-          type: "candidate",
-        },
-        msg: {
-          mode: "webrtc",
-          candidate,
-        },
-      },
-    };
-
-    this._publish(JSON.stringify(msg));
+    this._recordCandidate(candidate);
+    this._publish(JSON.stringify(this._buildCandidateMessage(candidate)));
   }
 
   /**
@@ -733,27 +740,40 @@ class WebRTCSignaling {
     for (const c of this._pendingCandidates) {
       // Re-invoke sendCandidate without the early-return guard.
       // We know configs and sessionId are set at this point.
-      const msg = {
-        protocol: WEBRTC_PROTOCOL,
-        pv: "2.2",
-        t: Math.floor(Date.now() / 1000),
-        data: {
-          header: {
-            from: this._getFrom(),
-            to: this.webrtcConfig.deviceId,
-            sessionid: this.sessionId,
-            moto_id: this.webrtcConfig.motoId,
-            type: "candidate",
-          },
-          msg: {
-            mode: "webrtc",
-            candidate: c,
-          },
-        },
-      };
-      this._publish(JSON.stringify(msg));
+      this._recordCandidate(c);
+      this._publish(JSON.stringify(this._buildCandidateMessage(c)));
     }
     this._pendingCandidates = [];
+  }
+
+  _recordCandidate(candidate) {
+    if (
+      candidate &&
+      !this._lastCandidates.includes(candidate)
+    ) {
+      this._lastCandidates.push(candidate);
+    }
+  }
+
+  _buildCandidateMessage(candidate) {
+    return {
+      protocol: WEBRTC_PROTOCOL,
+      pv: "2.2",
+      t: Math.floor(Date.now() / 1000),
+      data: {
+        header: {
+          from: this._getFrom(),
+          to: this.webrtcConfig.deviceId,
+          sessionid: this.sessionId,
+          moto_id: this.webrtcConfig.motoId,
+          type: "candidate",
+        },
+        msg: {
+          mode: "webrtc",
+          candidate,
+        },
+      },
+    };
   }
 
   /**
@@ -795,6 +815,37 @@ class WebRTCSignaling {
       }
       this._wakePendingCandidates = [];
     }
+
+    // The camera just confirmed it is awake. Re-publish the original offer
+    // (QoS 1) after a short boot delay so it lands on the IPC broker once the
+    // camera's WebRTC subsystem is up — the first offer went out while the
+    // camera was still asleep and was dropped.
+    this._scheduleOfferResend();
+  }
+
+  _scheduleOfferResend() {
+    if (!this._lastOffer || !this.mqttClient || !this._needsWake) return;
+    if (this._offerResendTimer) clearTimeout(this._offerResendTimer);
+    this._offerResendTimer = setTimeout(() => {
+      this._offerResendTimer = null;
+      if (this._answered) return;
+      if (!this.mqttClient || !this.sessionId) return;
+      this.log(
+        "info",
+        `[WebRTC] Wake confirmed — re-sending offer (QoS 1) after ${OFFER_RESEND_DELAY_MS / 1000}s boot delay`,
+      );
+      this._doSendOffer(this._lastOffer.sdp, this._lastOffer.streamType, true);
+      if (this._lastCandidates.length > 0) {
+        this.log(
+          "info",
+          `[WebRTC] Re-sending ${this._lastCandidates.length} candidates with re-sent offer`,
+        );
+        for (const c of this._lastCandidates) {
+          this._publish(JSON.stringify(this._buildCandidateMessage(c)));
+        }
+      }
+    }, OFFER_RESEND_DELAY_MS);
+    if (this._offerResendTimer.unref) this._offerResendTimer.unref();
   }
 
   disconnect() {
@@ -819,6 +870,10 @@ class WebRTCSignaling {
       clearTimeout(this._wakeDelayTimer);
       this._wakeDelayTimer = null;
     }
+    if (this._offerResendTimer) {
+      clearTimeout(this._offerResendTimer);
+      this._offerResendTimer = null;
+    }
     if (this.mqttClient) {
       const mq = this.mqttClient;
       this.mqttClient = null;
@@ -830,6 +885,9 @@ class WebRTCSignaling {
     this._wakePendingOffer = null;
     this._wakePendingCandidates = [];
     this._woken = false;
+    this._lastOffer = null;
+    this._lastCandidates = [];
+    this._answered = false;
   }
 
   // ── Private ──────────────────────────────────────────────────────────
@@ -861,7 +919,11 @@ class WebRTCSignaling {
       this.log("error", "[WebRTC] Cannot publish: MQTT client not connected");
       return;
     }
-    this.mqttClient.publish(topic, payload, (err) => {
+    // QoS 1 (go2rtc-compatible): the broker queues the message for a sleeping
+    // battery camera's persistent session and delivers it once the camera
+    // reconnects to the IPC MQTT broker. QoS 0 is dropped for offline
+    // subscribers, which is why the camera never answered the offer.
+    this.mqttClient.publish(topic, payload, { qos: 1 }, (err) => {
       if (err) {
         this.log("error", `[WebRTC] Publish failed: ${err.message || err}`);
       }
@@ -971,6 +1033,11 @@ class WebRTCSignaling {
             clearTimeout(this._fallbackTimer);
             this._fallbackTimer = null;
           }
+          if (this._offerResendTimer) {
+            clearTimeout(this._offerResendTimer);
+            this._offerResendTimer = null;
+          }
+          this._answered = true;
           this.log("info", `[WebRTC] Answer received session=${sessionid}`);
           this._emit("answer", {
             sdp: data.msg?.sdp,

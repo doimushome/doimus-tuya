@@ -4,9 +4,23 @@ const TuyaP2P = require("./TuyaP2P");
 
 async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
   if (!ctx.p2pClients) ctx.p2pClients = new Map();
-  if (ctx.p2pClients.has(doimusID)) {
-    log("info", `P2P already active for device "${tuyaDevice.name}"`);
-    return;
+  const existing = ctx.p2pClients.get(doimusID);
+  if (existing) {
+    const alive = existing.socket && !existing.socket.destroyed;
+    if (alive) {
+      log("info", `P2P already active for device "${tuyaDevice.name}"`);
+      return;
+    }
+    // Auto-started sessions go stale when the battery camera goes back to
+    // sleep. Reconnect fresh instead of skipping a live-view attempt.
+    log(
+      "info",
+      `P2P session for "${tuyaDevice.name}" is stale (socket closed) — reconnecting`,
+    );
+    try {
+      existing.close();
+    } catch (_) { /* already closed */ }
+    ctx.p2pClients.delete(doimusID);
   }
 
   if (!tuyaDevice.local_key) {
@@ -398,9 +412,20 @@ async function tryAllocate(ctx, deviceId, type, log, deviceName) {
       params,
     );
     if (result && result.success && result.result && result.result.url) {
+      // An allocation with an empty stream_id produces a dead URL (ffmpeg
+      // exits code 1 immediately). Battery cameras only return a usable
+      // stream_id once they are actually awake — treat it as a failed
+      // allocation rather than spawning ffmpeg against a placeholder URL.
+      if (!result.result.stream_id) {
+        log(
+          "warn",
+          `[StreamAlloc] type="${type}" URL missing stream_id for "${deviceName}" — allocation rejected (code=${result.code} msg=${result.msg})`,
+        );
+        return null;
+      }
       return {
         url: result.result.url,
-        streamId: result.result.stream_id || "",
+        streamId: result.result.stream_id,
       };
     }
     log(

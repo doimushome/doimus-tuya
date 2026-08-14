@@ -437,6 +437,12 @@ async function handleWebRTCCommand(deviceID, value, tuyaDevice, ctx, dm, api, lo
               "info",
               `[WebRTC] Camera "${tuyaDevice.name}" wake confirmed — offer already sent via IPC MQTT`,
             );
+            // Battery cameras report awake before their WebRTC subsystem has
+            // connected to the IPC broker. setWoken() re-publishes the offer
+            // (QoS 1) after a boot delay so it is not lost.
+            if (typeof wr.setWoken === "function") {
+              wr.setWoken();
+            }
           },
           timer: wakeTimer,
           progressInterval,
