@@ -619,8 +619,11 @@ function mapTuyaStatusToDoimusState(device, statusList, options) {
     ) {
       state.night_vision = value === true || value === 1 || value === "true";
     } else if (code === "basic_nightvision") {
-      // Tuya camera night-vision enum: "0"=color/off, "1"=IR, "2"=smart.
-      state.night_vision = String(value) !== "0" && value !== false;
+      // Battery peephole/doorbell cameras (category sp) use a reversed enum
+      // compared to wired IPC cameras: "0"=Auto, "1"=Off, "2"=On. Confirmed on
+      // the video peephole: value "1" shows as Off in the Tuya app.
+      // Auto keeps night vision active, so only "1" maps to off.
+      state.night_vision = String(value) !== "1" && value !== false;
     } else if (
       code === "floodlight" ||
       code === "floodlight_switch" ||
@@ -1345,6 +1348,10 @@ function determineCapabilities(device) {
       capabilities.add("on");
       capabilities.add("p2p_start");
       capabilities.add("p2p_stop");
+      // Cameras always have a video sensor — the mobile app uses this to decide
+      // whether to show the snapshot square / live-view UI for a camera/doorbell
+      // device (camera-less doorbells omit it).
+      capabilities.add("video");
       // mobilecam devices (Magic S1 etc.) have directional control
       if (device.category === "mobilecam") {
         capabilities.add("control");
@@ -1449,6 +1456,41 @@ function determineCapabilities(device) {
       capabilities.add("doorbell");
       capabilities.add("p2p_start");
       capabilities.add("p2p_stop");
+      // A doorbell only has a camera when its schema exposes camera codes
+      // (picture DPs, night vision, floodlight, recording, privacy, IPC…).
+      // Audio-only intercoms omit them — the mobile app then hides the camera
+      // UI, so we must not advertise "video" for those.
+      if (
+        device.schema &&
+        device.schema.some((s) =>
+          [
+            "movement_detect_pic",
+            "doorbell_pic",
+            "floodlight",
+            "floodlight_switch",
+            "floodlight_state",
+            "siren_state",
+            "siren_switch",
+            "alarm_state",
+            "basic_private",
+            "basics_private",
+            "privacy_mode",
+            "night_vision",
+            "infrared_led",
+            "night_mode",
+            "basic_nightvision",
+            "record_switch",
+            "recording_switch",
+            "record_state",
+            "ipc_record",
+            "motion_record",
+            "ipc_human",
+            "ipc_motion",
+          ].includes(s.code),
+        )
+      ) {
+        capabilities.add("video");
+      }
       if (
         device.schema &&
         device.schema.some(

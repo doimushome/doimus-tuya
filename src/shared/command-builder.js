@@ -206,8 +206,10 @@ function buildDeviceCommands(key, value, tuyaDevice, deviceID, log) {
       (s) => s.code === "night_vision" || s.code === "infrared_led" || s.code === "night_mode" || s.code === "basic_nightvision",
     );
     if (nightSchema) {
-      // basic_nightvision is an enum ("0"=off, "1"=IR, "2"=smart/auto).
-      const raw = nightSchema.code === "basic_nightvision" ? (value ? "1" : "0") : value;
+      // basic_nightvision is a reversed enum on battery cameras ("0"=Auto,
+      // "1"=Off, "2"=On) — map the boolean toggle to On="2" / Off="1".
+      const raw =
+        nightSchema.code === "basic_nightvision" ? (value ? "2" : "1") : value;
       commands.push(buildCommand(tuyaDevice.schema, nightSchema.code, raw));
     }
   } else if (key === "floodlight") {

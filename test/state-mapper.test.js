@@ -86,10 +86,15 @@ test("mapTuyaStatusToDoimusState — basic_nightvision enum maps to night_vision
   const device = makeDevice("mobilecam", [
     makeSchema("basic_nightvision", "Enum"),
   ]);
-  const on = mapTuyaStatusToDoimusState(device, [{ code: "basic_nightvision", value: "1" }], {});
-  assert.equal(on.night_vision, true);
-  const off = mapTuyaStatusToDoimusState(device, [{ code: "basic_nightvision", value: "0" }], {});
+  // Battery peephole/doorbell cameras use "0"=Auto, "1"=Off, "2"=On
+  // (confirmed against the Tuya app on the video peephole: current value "1"
+  // shows as Off).
+  const off = mapTuyaStatusToDoimusState(device, [{ code: "basic_nightvision", value: "1" }], {});
   assert.equal(off.night_vision, false);
+  const on = mapTuyaStatusToDoimusState(device, [{ code: "basic_nightvision", value: "2" }], {});
+  assert.equal(on.night_vision, true);
+  const auto = mapTuyaStatusToDoimusState(device, [{ code: "basic_nightvision", value: "0" }], {});
+  assert.equal(auto.night_vision, true, "auto mode keeps night vision active");
 });
 
 test("determineCapabilities — light capabilities", () => {
@@ -191,6 +196,7 @@ test("determineCapabilities — camera capabilities", () => {
   assert.ok(caps.includes("night_vision"));
   assert.ok(caps.includes("floodlight"));
   assert.ok(caps.includes("siren"));
+  assert.ok(caps.includes("video"), "cameras must always advertise video");
 });
 
 test("determineCapabilities — doorbell recording and sd", () => {
@@ -200,6 +206,18 @@ test("determineCapabilities — doorbell recording and sd", () => {
   ]);
   const caps = determineCapabilities(device);
   assert.ok(caps.includes("doorbell"));
+  assert.ok(caps.includes("video"), "doorbell with camera codes must advertise video");
+});
+
+test("determineCapabilities — audio-only doorbell has no video", () => {
+  const device = makeDevice("doorbell", [
+    makeSchema("doorbell", "Boolean"),
+    makeSchema("unlock", "Boolean"),
+    makeSchema("battery_state", "Enum"),
+  ]);
+  const caps = determineCapabilities(device);
+  assert.ok(caps.includes("doorbell"));
+  assert.ok(!caps.includes("video"), "camera-less doorbell must not advertise video");
 });
 
 test("determineCapabilities — air quality sensors", () => {
@@ -629,4 +647,26 @@ test("applySchemaOverride — renames schema code via newCode", () => {
   applySchemaOverride(device, options);
   assert.equal(device.schema[0].code, "switch_override");
   assert.equal(device.status[0].code, "switch_override");
+});
+
+// ── buildUiDescriptor + determineCapabilities integration ──
+// buildUiDescriptor receives the array returned by determineCapabilities and
+// must not assume a Set (regression for "capabilities.has is not a function").
+
+test("buildUiDescriptor accepts the array from determineCapabilities", () => {
+  const { buildUiDescriptor } = require("../src/shared/handlers");
+  const device = makeDevice("sp", [
+    makeSchema("night_vision", "Enum"),
+    makeSchema("record_switch", "Boolean"),
+  ]);
+  const caps = determineCapabilities(device);
+  assert.ok(Array.isArray(caps), "determineCapabilities returns an array");
+  assert.ok(caps.includes("video"));
+  const descriptor = buildUiDescriptor("camera", caps);
+  assert.ok(descriptor, "descriptor should be built without throwing");
+  const rows = descriptor.ui.sections[0].rows;
+  assert.ok(
+    rows.some((r) => r.key === "p2p_start"),
+    "camera descriptor includes the live-view button",
+  );
 });

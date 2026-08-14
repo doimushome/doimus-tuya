@@ -104,11 +104,13 @@ test("night_vision", () => {
 
 test("night_vision — basic_nightvision enum via fallback schema", () => {
   const device = makeDevice("mobilecam", [makeSchema("basic_nightvision", "Enum")]);
+  // Battery cameras use "0"=Auto, "1"=Off, "2"=On — map the boolean toggle to
+  // On="2" / Off="1" (confirmed against the Tuya app on the video peephole).
   assert.deepEqual(buildDeviceCommands("night_vision", true, device, "doimus-1", () => {}), [
-    { code: "basic_nightvision", value: "1" },
+    { code: "basic_nightvision", value: "2" },
   ]);
   assert.deepEqual(buildDeviceCommands("night_vision", false, device, "doimus-1", () => {}), [
-    { code: "basic_nightvision", value: "0" },
+    { code: "basic_nightvision", value: "1" },
   ]);
 });
 

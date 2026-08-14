@@ -14,7 +14,12 @@ const { MOTION_DP_PATTERN, generateUUID, computeNeedsWake } = require("./plugin-
 // it can actually serve. Returns undefined for devices whose built-in UI
 // (lights, plain switches, simple sensors) is already a good fit.
 function buildUiDescriptor(type, capabilities) {
-  const has = (key) => capabilities.has(key);
+  // capabilities arrives as an array (from determineCapabilities); accept a
+  // Set too for robustness.
+  const has = (key) =>
+    capabilities instanceof Set
+      ? capabilities.has(key)
+      : (capabilities || []).includes(key);
   const rows = [];
   let title = "Device";
 
