@@ -293,12 +293,14 @@ module.exports = {
       const runEnergyPoll = async () => {
         if (!this._ctx) return;
         // If the API token is dead (e.g. account used elsewhere and re-auth
-        // failed), don't hammer the API every poll cycle. Back off until a
-        // fresh login restores auth.
+        // failed), don't hammer the API every poll cycle. Back off at a slower
+        // cadence. Recovery is driven by the request() 1010 path: once the
+        // re-login cooldown in TuyaOpenAPI elapses, the next request that
+        // flows (user command, wake snapshot, etc.) triggers refresh → re-login.
         if (dm.api && dm.api.isAuthHealthy && !dm.api.isAuthHealthy()) {
           ctx._energyPollTimer = setTimeout(
             runEnergyPoll,
-            Math.max(5000, options.energyPollInterval || 30000),
+            Math.max(5000, (options.energyPollInterval || 30000) * 2),
           );
           return;
         }

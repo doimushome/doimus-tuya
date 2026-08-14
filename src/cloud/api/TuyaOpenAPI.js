@@ -48,6 +48,14 @@ const LOGIN_ERROR_MESSAGES = {
   2406: "Please make sure you selected the right data center where your app account located, and the app account is linked with cloud project.",
 };
 
+// Tuya Cloud allows a single active token per app account. Every full
+// re-login mints a new token that invalidates any other session on the same
+// account — including the official Tuya/Smart Life app. When the app and this
+// plugin both hold sessions, they can ping-pong: plugin re-logs-in (kills the
+// app's token), the app re-authenticates (kills the plugin's), and so on.
+// Cooldown between full re-logins breaks that loop.
+const RELOGIN_COOLDOWN_MS = 5 * 60 * 1000;
+
 const API_NOT_SUBSCRIBED_ERROR = `
 API not subscribed. Please go to "Tuya IoT Platform -> Cloud -> Development -> Project -> Service API",
 and Authorize the following APIs before using:
@@ -109,6 +117,9 @@ class TuyaOpenAPI {
     // the API until a fresh login succeeds.
     this._authHealthy = true;
     this._authBrokenReported = false;
+    // Timestamp of the last full re-login attempt, used to rate-limit
+    // re-logins during an account conflict (see RELOGIN_COOLDOWN_MS).
+    this._lastReloginAt = 0;
   }
 
   setReloginHandler(handler) {
@@ -183,10 +194,15 @@ class TuyaOpenAPI {
     return path != null && path.startsWith("/v1.0/token");
   }
 
+  // Refresh the access_token if it is expired (or about to be).
+  // Returns true when a working token is in place after the call (still valid,
+  // refreshed, or recovered via full re-login), false when the token is dead
+  // and no re-login recovered it. Callers use this to decide whether retrying
+  // the original request is safe.
   async _refreshAccessTokenIfNeed(path) {
-    if (!this.isLogin()) return;
-    if (!this.isTokenExpired()) return;
-    if (this.isTokenManagementAPI(path)) return;
+    if (!this.isLogin()) return false;
+    if (!this.isTokenExpired()) return true;
+    if (this.isTokenManagementAPI(path)) return true;
     this.log.debug("Refreshing access_token");
     const res = await this.get(`/v1.0/token/${this.tokenInfo.refresh_token}`);
     if (res.success === false) {
@@ -195,20 +211,7 @@ class TuyaOpenAPI {
         res.code,
         res.msg,
       );
-      if (this._reloginHandler) {
-        this.log.info("Attempting full re-login...");
-        try {
-          const loginRes = await this._reloginHandler();
-          if (loginRes && loginRes.success) {
-            this.log.info("Re-login successful");
-            return;
-          }
-          this.log.error("Re-login failed");
-        } catch (loginErr) {
-          this.log.error("Re-login error: %s", loginErr.message);
-        }
-      }
-      return;
+      return this._tryRelogin();
     }
     const { access_token, refresh_token, uid, expire_time } = res.result;
     this.tokenInfo = {
@@ -218,6 +221,48 @@ class TuyaOpenAPI {
       expire: expire_time * 1000 + new Date().getTime(),
     };
     this._setAuthHealthy();
+    return true;
+  }
+
+  // Attempt a full re-login (username/password) after a failed token refresh.
+  // Rate-limited so a competing session (e.g. the official Tuya app) can't
+  // make the plugin mint a new token every few seconds — each re-login
+  // invalidates the other session's token, causing an infinite ping-pong.
+  async _tryRelogin() {
+    if (!this._reloginHandler) {
+      this._setAuthBroken();
+      return false;
+    }
+    const now = Date.now();
+    const sinceLast = now - this._lastReloginAt;
+    if (this._lastReloginAt > 0 && sinceLast < RELOGIN_COOLDOWN_MS) {
+      if (!this._authHealthy) {
+        this.log.debug(
+          `Skipping full re-login — last attempt ${Math.round(sinceLast / 1000)}s ago (cooldown ${Math.round(RELOGIN_COOLDOWN_MS / 1000)}s)`,
+        );
+      } else {
+        this.log.warn(
+          `Skipping full re-login — last attempt ${Math.round(sinceLast / 1000)}s ago (cooldown ${Math.round(RELOGIN_COOLDOWN_MS / 1000)}s); marking auth broken`,
+        );
+      }
+      this._setAuthBroken();
+      return false;
+    }
+    this.log.info("Attempting full re-login...");
+    this._lastReloginAt = Date.now();
+    try {
+      const loginRes = await this._reloginHandler();
+      if (loginRes && loginRes.success) {
+        this.log.info("Re-login successful");
+        this._setAuthHealthy();
+        return true;
+      }
+      this.log.error("Re-login failed");
+    } catch (loginErr) {
+      this.log.error("Re-login error: %s", loginErr.message);
+    }
+    this._setAuthBroken();
+    return false;
   }
 
   async getToken() {
@@ -333,13 +378,19 @@ class TuyaOpenAPI {
       // isLogin() checks access_token.length, so nulling it makes the refresh
       // short-circuit before it can re-auth.
       this.tokenInfo.expire = 0;
-      await this._refreshAccessTokenIfNeed(path);
-      if (this.isLogin()) {
+      const refreshed = await this._refreshAccessTokenIfNeed(path);
+      if (refreshed) {
         this.log.info("Re-auth successful, retrying original request");
         this._setAuthHealthy();
         return this._doRequest(method, path, params, body, opts);
       }
-      this.log.error("Re-auth failed after server token rejection");
+      // Refresh and/or re-login failed (or is in cooldown). Do NOT retry the
+      // original request — the token is still dead and would just 1010 again.
+      if (this._authHealthy) {
+        this.log.error("Re-auth failed after server token rejection");
+      } else {
+        this.log.debug("Re-auth still broken — skipping retry");
+      }
       this._setAuthBroken();
     }
 
