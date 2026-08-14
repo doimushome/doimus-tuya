@@ -433,14 +433,26 @@ class TuyaOpenAPI {
         }
         // Surface missing Service API subscriptions as a structured warning
         // so the user gets an actionable banner instead of only log lines.
-        if (res.code === 28841101 || res.code === 28841105) {
+        // Only for real calls — speculative probes (suppressErrorLog, e.g. the
+        // camera snapshot endpoint probing) are expected to fail and must not
+        // raise a banner: the plugin does not depend on the REST snapshot API
+        // (it uses inline/S3 motion images instead), and the probe is harmless.
+        if (
+          !suppressErrorLog &&
+          (res.code === 28841101 || res.code === 28841105)
+        ) {
+          // Name the API that actually matters for the failing call.
+          const isCamera =
+            /\/cameras\/|\/snapshot|\/stream\/actions\/|\/webrtc/.test(path);
           this.reportWarning(
             "tuya_api_not_subscribed",
             `Tuya project is missing required Service API permissions. ` +
-              `Authorize: Authorization Token Management, Device Status ` +
-              `Notification, IoT Core, and Industry Project Client Service ` +
-              `at "Tuya IoT Platform -> Cloud -> Development -> Project -> ` +
-              `Service API".`,
+              (isCamera
+                ? `Camera / live-view calls need the "Camera Service" and ` +
+                  `"IoT Video Live Stream" APIs. `
+                : `Authorize: Authorization Token Management, Device Status ` +
+                  `Notification, IoT Core, and Industry Project Client Service. `) +
+              `At "Tuya IoT Platform -> Cloud -> Development -> Project -> Service API".`,
           );
         }
       }

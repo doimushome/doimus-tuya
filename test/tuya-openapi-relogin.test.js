@@ -100,3 +100,58 @@ test("_refreshAccessTokenIfNeed returns true and restores auth after successful 
   assert.equal(ok, true, "re-login success must signal the token is usable");
   assert.equal(api.isAuthHealthy(), true, "auth health must be restored");
 });
+
+// ---------------------------------------------------------------------------
+// tuya_api_not_subscribed warning: must NOT fire for speculative (suppressed)
+// calls like the camera snapshot probe, and when it does fire the message must
+// name the right API (Camera Service / IoT Video Live Stream) for camera paths.
+// ---------------------------------------------------------------------------
+
+function makeProbeApi() {
+  const api = makeApi(); // fresh, non-expired token
+  // Stub the actual HTTP so we can return a "not subscribed" response.
+  api._doRequest = async () => ({
+    success: false,
+    code: 28841101,
+    msg: "No permissions. This API is not subscribed.",
+  });
+  const warnings = [];
+  api.setWarningHandler((code, message) => {
+    warnings.push({ code, message });
+  });
+  return { api, warnings };
+}
+
+test("suppressed (speculative) snapshot probe does not raise tuya_api_not_subscribed", async () => {
+  const { api, warnings } = makeProbeApi();
+  await api.request(
+    "post",
+    "/v1.0/cameras/bfc467f1cee0e05ea12z5s/actions/capture",
+    null,
+    {},
+    { suppressErrorLog: true },
+  );
+  assert.equal(warnings.length, 0, "speculative probe must not raise a warning");
+});
+
+test("real camera/stream call names Camera Service in the not-subscribed warning", async () => {
+  const { api, warnings } = makeProbeApi();
+  await api.request(
+    "post",
+    "/v1.0/devices/bfc467f1cee0e05ea12z5s/stream/actions/allocate",
+    null,
+    { type: "rtsp" },
+    {},
+  );
+  assert.equal(warnings.length, 1, "real call must raise the warning");
+  assert.equal(warnings[0].code, "tuya_api_not_subscribed");
+  assert.match(warnings[0].message, /Camera Service/);
+});
+
+test("real non-camera call names the generic required APIs", async () => {
+  const { api, warnings } = makeProbeApi();
+  await api.request("get", "/v1.0/devices/abc123", null, null, {});
+  assert.equal(warnings.length, 1, "real call must raise the warning");
+  assert.match(warnings[0].message, /Authorization Token Management/);
+  assert.doesNotMatch(warnings[0].message, /Camera Service/);
+});
