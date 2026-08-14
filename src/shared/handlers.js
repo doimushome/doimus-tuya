@@ -9,6 +9,147 @@ const { buildDeviceCommands, sendCommandsDebounced } = require("./command-builde
 const { startP2P, stopP2P, startStreamAllocation, stopStreamAllocation } = require("../camera/camera-streaming");
 const { MOTION_DP_PATTERN, generateUUID, computeNeedsWake } = require("./plugin-utils");
 
+// Declarative UI descriptor — rendered generically by the mobile app.
+// Built from the registered capabilities so each device only surfaces rows
+// it can actually serve. Returns undefined for devices whose built-in UI
+// (lights, plain switches, simple sensors) is already a good fit.
+function buildUiDescriptor(type, capabilities) {
+  const has = (key) => capabilities.has(key);
+  const rows = [];
+  let title = "Device";
+
+  switch (type) {
+    case "thermostat":
+      title = "Thermostat";
+      if (has("on")) rows.push({ type: "toggle", key: "on", label: "On/Off" });
+      if (has("target_temp")) {
+        rows.push({
+          type: "stepper",
+          key: "target_temp",
+          label: "Target temperature",
+          min_key: "min_target_temp",
+          max_key: "max_target_temp",
+          step: 0.5,
+          unit: "celsius",
+        });
+      }
+      if (has("temperature")) {
+        rows.push({
+          type: "value",
+          key: "temperature",
+          label: "Current temperature",
+          unit: "celsius",
+        });
+      }
+      if (has("humidity")) {
+        rows.push({
+          type: "value",
+          key: "humidity",
+          label: "Humidity",
+          format: "percent",
+        });
+      }
+      if (has("heating_mode")) {
+        rows.push({
+          type: "segment",
+          key: "heating_mode",
+          label: "Mode",
+          options: [
+            { value: 0, label: "Off" },
+            { value: 1, label: "Heat" },
+            { value: 2, label: "Cool" },
+            { value: 3, label: "Auto" },
+          ],
+        });
+      }
+      if (has("eco_mode")) rows.push({ type: "toggle", key: "eco_mode", label: "Eco" });
+      if (has("frost_protection")) {
+        rows.push({ type: "toggle", key: "frost_protection", label: "Frost protection" });
+      }
+      if (has("child_lock")) rows.push({ type: "toggle", key: "child_lock", label: "Child lock" });
+      break;
+
+    case "fan":
+      title = "Fan";
+      if (has("on")) rows.push({ type: "toggle", key: "on", label: "On/Off" });
+      if (has("rotation_speed")) {
+        rows.push({
+          type: "slider",
+          key: "rotation_speed",
+          label: "Fan speed",
+          min: 0,
+          max: 100,
+          step: 10,
+          unit: "%",
+        });
+      }
+      if (has("swing")) rows.push({ type: "toggle", key: "swing", label: "Swing" });
+      if (has("anion")) rows.push({ type: "toggle", key: "anion", label: "Ionizer" });
+      break;
+
+    case "camera":
+    case "doorbell":
+      title = "Camera";
+      rows.push({ type: "button", key: "p2p_start", label: "Live view" });
+      if (has("privacy_mode")) rows.push({ type: "toggle", key: "privacy_mode", label: "Privacy mode" });
+      if (has("night_vision")) rows.push({ type: "toggle", key: "night_vision", label: "Night vision" });
+      if (has("floodlight")) rows.push({ type: "toggle", key: "floodlight", label: "Floodlight" });
+      if (has("siren")) rows.push({ type: "toggle", key: "siren", label: "Siren" });
+      if (has("recording")) rows.push({ type: "toggle", key: "recording", label: "Recording" });
+      break;
+
+    case "outlet":
+    case "switch":
+      if (has("power") || has("voltage") || has("current") || has("energy")) {
+        title = "Energy";
+        if (has("on")) rows.push({ type: "toggle", key: "on", label: "On/Off" });
+        if (has("power")) rows.push({ type: "value", key: "power", label: "Power", unit: "W" });
+        if (has("voltage")) rows.push({ type: "value", key: "voltage", label: "Voltage", unit: "V" });
+        if (has("current")) rows.push({ type: "value", key: "current", label: "Current", unit: "A" });
+        if (has("energy")) rows.push({ type: "value", key: "energy", label: "Energy", unit: "kWh" });
+      }
+      break;
+
+    case "sensor": {
+      const extras = [
+        ["pm25", "PM2.5", "µg/m³"],
+        ["pm10", "PM10", "µg/m³"],
+        ["pm1", "PM1", "µg/m³"],
+        ["co2", "CO₂", "ppm"],
+        ["tvoc", "TVOC", "ppb"],
+        ["formaldehyde", "Formaldehyde", "mg/m³"],
+        ["air_quality", "Air quality", ""],
+        ["uv_index", "UV index", ""],
+        ["illuminance", "Illuminance", "lux"],
+        ["noise", "Noise", "dB"],
+        ["pressure", "Pressure", "hPa"],
+        ["windspeed", "Wind speed", "m/s"],
+        ["wind_direction", "Wind direction", ""],
+        ["rainfall", "Rainfall", "mm"],
+        ["soil_moisture", "Soil moisture", "%"],
+        ["soil_temperature", "Soil temperature", "°C"],
+      ].filter(([key]) => has(key));
+
+      if (extras.length > 0) {
+        title = "Air quality";
+        if (has("temperature")) {
+          rows.push({ type: "value", key: "temperature", label: "Temperature", unit: "celsius" });
+        }
+        if (has("humidity")) {
+          rows.push({ type: "value", key: "humidity", label: "Humidity", format: "percent" });
+        }
+        for (const [key, label, unit] of extras) {
+          rows.push({ type: "value", key, label, unit });
+        }
+      }
+      break;
+    }
+  }
+
+  if (rows.length === 0) return undefined;
+  return { ui: { sections: [{ title, rows }] } };
+}
+
 async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
   const devices = dm.devices;
   if (!devices || devices.length === 0) {
@@ -62,6 +203,7 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
       type: type,
       capabilities: capabilities,
       state: initialState,
+      metadata: buildUiDescriptor(type, capabilities),
     });
 
     ctx.doimusDeviceMap.set(doimusID, device.id);
@@ -477,6 +619,7 @@ async function handleIRCommand(
 
 module.exports = {
   registerDevicesWithDoimus,
+  buildUiDescriptor,
   handleWebRTCCommand,
   handleIRCommand,
 };

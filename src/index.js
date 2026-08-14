@@ -33,6 +33,7 @@ const {
 const { initCustomProject, initHomeProject } = require("./cloud/init-projects");
 const {
   registerDevicesWithDoimus,
+  buildUiDescriptor,
   handleWebRTCCommand,
   handleIRCommand,
 } = require("./shared/handlers");
@@ -787,6 +788,7 @@ module.exports = {
         type: type,
         capabilities: capabilities,
         state: initialState,
+        metadata: buildUiDescriptor(type, capabilities),
       });
 
       ctx.doimusDeviceMap.set(doimusID, device.id);
