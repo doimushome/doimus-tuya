@@ -355,6 +355,11 @@ class TuyaOpenAPI {
         // probing) are expected to fail — don't spam the ERROR log.
         if (suppressErrorLog) {
           this.log.debug("API error detail: path=%s code=%s", path, res.code);
+        } else if (res.code === 1010) {
+          // Account conflict / token invalidated elsewhere — a known condition
+          // the plugin already reports as a deduped warning. Keep it at warn
+          // instead of error; a restart cannot fix it.
+          this.log.warn(API_ERROR_MESSAGES[res.code]);
         } else {
           this.log.error(API_ERROR_MESSAGES[res.code]);
         }
@@ -573,6 +578,15 @@ class TuyaOpenAPI {
   }
 
   async getCameraSnapshot(deviceId) {
+    // Don't probe the API while auth is broken (e.g. account conflict 1010);
+    // the request would just fail and add to the token churn.
+    if (!this.isAuthHealthy()) {
+      this.log.debug(
+        "Skipping snapshot probe for %s — auth unhealthy",
+        deviceId,
+      );
+      return null;
+    }
     // Try cached endpoint first (avoids probing all 8 patterns every 30s).
     const cached = this._snapshotEndpointCache.get(deviceId);
     if (cached) {

@@ -37,6 +37,61 @@ const {
   handleIRCommand,
 } = require("./shared/handlers");
 
+// Exponential backoff for init/login retries. Prevents hammering the Tuya API
+// when the account is in a bad state (1010/1013 token conflicts): each retry
+// doubles the delay up to a cap, and success resets the counter.
+let initRetryAttempts = 0;
+const INIT_RETRY_MIN_MS = 60 * 1000;
+const INIT_RETRY_MAX_MS = 5 * 60 * 1000;
+
+function nextInitRetryDelay() {
+  return Math.min(
+    INIT_RETRY_MIN_MS * Math.pow(2, initRetryAttempts),
+    INIT_RETRY_MAX_MS,
+  );
+}
+
+// Attempts a REST snapshot for a battery camera. The cloud snapshot only
+// succeeds while the camera is awake, so retry it right after a wake
+// confirmation (or online transition) instead of only on initial discovery.
+function scheduleRestSnapshot(device, doimusID, dm, ctx, api, log, delayMs = 4000) {
+  if (!ctx._onlineSnapshotTimers) ctx._onlineSnapshotTimers = new Map();
+  const pending = ctx._onlineSnapshotTimers.get(device.id);
+  if (pending) clearTimeout(pending);
+  ctx._onlineSnapshotTimers.set(
+    device.id,
+    setTimeout(async () => {
+      ctx._onlineSnapshotTimers.delete(device.id);
+      try {
+        const jpeg = await dm.api.getCameraSnapshot(device.id);
+        if (jpeg) {
+          api.sendMjpegFrame(doimusID, "main", jpeg);
+          api.updateDeviceImage(
+            doimusID,
+            "snapshot_latest",
+            jpeg,
+            "image/jpeg",
+          );
+          log(
+            "info",
+            `Online snapshot captured for "${device.name}" size=${jpeg.length}B`,
+          );
+        } else {
+          log(
+            "debug",
+            `Online snapshot returned no image for "${device.name}"`,
+          );
+        }
+      } catch (e) {
+        log(
+          "debug",
+          `Online snapshot failed for "${device.name}": ${e.message || e}`,
+        );
+      }
+    }, delayMs),
+  );
+}
+
 module.exports = {
   async start(cfg, api) {
     const ctx = new PluginContext();
@@ -109,13 +164,15 @@ module.exports = {
           return;
         }
         if (!result || !result.dm) {
+          initRetryAttempts += 1;
+          const delay = nextInitRetryDelay();
           log(
             "error",
-            "Failed to initialize Tuya connection. Will retry in 60s.",
+            `Failed to initialize Tuya connection. Will retry in ${Math.round(delay / 1000)}s.`,
           );
           ctx._initRetryTimer = setTimeout(
             () => module.exports.start(cfg, api),
-            60000,
+            delay,
           );
           return;
         }
@@ -138,17 +195,20 @@ module.exports = {
         }
       }
     } catch (e) {
+      initRetryAttempts += 1;
+      const delay = nextInitRetryDelay();
       log(
         "warn",
-        `Initialization failed: ${e.message}. Will retry in 60s.`,
+        `Initialization failed: ${e.message}. Will retry in ${Math.round(delay / 1000)}s.`,
       );
       ctx._initRetryTimer = setTimeout(
         () => module.exports.start(cfg, api),
-        60000,
+        delay,
       );
       return;
     }
 
+    initRetryAttempts = 0;
     ctx.deviceManager = dm;
 
     if (mode !== "local") {
@@ -456,10 +516,28 @@ module.exports = {
               watcher.resolve();
             }
           } else {
+            // Late wake confirmation — the camera just came awake, so the
+            // cloud REST snapshot now has a real chance of succeeding. Retry
+            // it instead of dropping the event.
             log(
-              "warn",
-              `Wake confirmed but no watcher found for "${device.name}" — wireless_awake arrived too late or stale`,
+              "debug",
+              `Wake confirmed but no watcher found for "${device.name}" — retrying REST snapshot after late wake`,
             );
+            if (
+              ["sp", "doorbell", "mobilecam", "wxml"].includes(
+                device.category,
+              )
+            ) {
+              scheduleRestSnapshot(
+                device,
+                doimusID,
+                dm,
+                ctx,
+                api,
+                log,
+                1500,
+              );
+            }
           }
         }
 
@@ -640,44 +718,7 @@ module.exports = {
           "info",
           `Camera "${device.name}" came online — scheduling REST snapshot fallback in 4s`,
         );
-        if (!ctx._onlineSnapshotTimers)
-          ctx._onlineSnapshotTimers = new Map();
-        const pending = ctx._onlineSnapshotTimers.get(device.id);
-        if (pending) clearTimeout(pending);
-        ctx._onlineSnapshotTimers.set(
-          device.id,
-          setTimeout(async () => {
-            ctx._onlineSnapshotTimers.delete(device.id);
-            try {
-              const jpeg = await dm.api.getCameraSnapshot(
-                device.id,
-              );
-              if (jpeg) {
-                api.sendMjpegFrame(doimusID, "main", jpeg);
-                api.updateDeviceImage(
-                  doimusID,
-                  "snapshot_latest",
-                  jpeg,
-                  "image/jpeg",
-                );
-                log(
-                  "info",
-                  `Online snapshot captured for "${device.name}" size=${jpeg.length}B`,
-                );
-              } else {
-                log(
-                  "warn",
-                  `Online snapshot returned no image for "${device.name}"`,
-                );
-              }
-            } catch (e) {
-              log(
-                "warn",
-                `Online snapshot failed for "${device.name}": ${e.message || e}`,
-              );
-            }
-          }, 4000),
-        );
+        scheduleRestSnapshot(device, doimusID, dm, ctx, api, log, 4000);
       }
 
       api.updateDeviceState(doimusID, state);
