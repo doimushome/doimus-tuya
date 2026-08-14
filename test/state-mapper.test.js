@@ -670,3 +670,43 @@ test("buildUiDescriptor accepts the array from determineCapabilities", () => {
     "camera descriptor includes the live-view button",
   );
 });
+
+test("buildUiDescriptor — blind emits position slider + control segment", () => {
+  const { buildUiDescriptor } = require("../src/shared/handlers");
+  const device = makeDevice("clkg", [
+    makeSchema("control", "Enum", { property: { range: ["open", "stop", "close"] } }),
+    makeSchema("percent_control", "Integer", { property: { min: 0, max: 100, scale: 0 } }),
+  ]);
+  const caps = determineCapabilities(device);
+  assert.ok(caps.includes("position"), "blind exposes position capability");
+  assert.ok(caps.includes("control"), "blind exposes control capability");
+  const descriptor = buildUiDescriptor("blind", caps);
+  assert.ok(descriptor, "blind descriptor should be built");
+  const rows = descriptor.ui.sections[0].rows;
+  assert.ok(
+    rows.some((r) => r.type === "slider" && r.key === "position"),
+    "blind descriptor includes a position slider",
+  );
+  const control = rows.find((r) => r.type === "segment" && r.key === "control");
+  assert.ok(control, "blind descriptor includes a control segment");
+  assert.deepEqual(
+    control.options.map((o) => o.value),
+    ["open", "stop", "close"],
+    "control segment offers open/stop/close",
+  );
+});
+
+test("buildUiDescriptor — position-only blind drives open/close via position DP", () => {
+  const { buildUiDescriptor } = require("../src/shared/handlers");
+  const device = makeDevice("clkg", [
+    makeSchema("percent_control", "Integer", { property: { min: 0, max: 100, scale: 0 } }),
+  ]);
+  const caps = determineCapabilities(device);
+  const descriptor = buildUiDescriptor("blind", caps);
+  assert.ok(descriptor, "blind descriptor should be built");
+  const rows = descriptor.ui.sections[0].rows;
+  assert.ok(
+    rows.some((r) => r.type === "segment" && r.key === "position"),
+    "position-only blind gets open/close segment on position",
+  );
+});

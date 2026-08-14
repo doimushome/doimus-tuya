@@ -92,6 +92,44 @@ function buildUiDescriptor(type, capabilities) {
       if (has("anion")) rows.push({ type: "toggle", key: "anion", label: "Ionizer" });
       break;
 
+    case "blind":
+      title = "Blind";
+      if (has("position")) {
+        rows.push({
+          type: "slider",
+          key: "position",
+          label: "Position",
+          min: 0,
+          max: 100,
+          step: 1,
+          unit: "%",
+        });
+      }
+      if (has("control")) {
+        rows.push({
+          type: "segment",
+          key: "control",
+          label: "Control",
+          options: [
+            { value: "open", label: "Open" },
+            { value: "stop", label: "Stop" },
+            { value: "close", label: "Close" },
+          ],
+        });
+      } else if (has("position")) {
+        // Position-only blinds: drive open/close through the position DP.
+        rows.push({
+          type: "segment",
+          key: "position",
+          label: "Control",
+          options: [
+            { value: 100, label: "Open" },
+            { value: 0, label: "Close" },
+          ],
+        });
+      }
+      break;
+
     case "camera":
     case "doorbell":
       title = "Camera";
