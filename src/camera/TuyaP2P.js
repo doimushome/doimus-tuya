@@ -334,14 +334,14 @@ class TuyaP2P extends EventEmitter {
 
   async connect() {
     return new Promise((resolve, reject) => {
-      this.log.info(`[P2P] Connecting to ${this.ip}:${this.port}...`);
+      this.log.info(`[P2P] Connecting to ${this.port}...`);
 
       this.socket = new net.Socket();
       this.socket.setNoDelay(true);
       this.socket.setTimeout(10000);
 
       this.socket.connect(this.port, this.ip, () => {
-        this.log.info(`[P2P] TCP connected to ${this.ip}:${this.port}`);
+        this.log.info(`[P2P] TCP connected`);
         this.socket.setTimeout(0); // disable timeout after connect
         this._negotiateSession()
           .then(() => resolve(true))

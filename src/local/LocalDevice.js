@@ -50,7 +50,7 @@ class LocalDevice extends EventEmitter {
     this._explicitDisconnect = false;
     this.connecting = true;
 
-    this.log.info('Connecting to %s:%d (v%s)', this.ip, this.port, this.version);
+    this.log.info('Connecting to local device (v%s)', this.version);
     this.socket = net.createConnection({ host: this.ip, port: this.port }, () => {
       this.connecting = false;
       this.reconnectAttempts = 0;

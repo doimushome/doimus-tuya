@@ -154,7 +154,7 @@ class TuyaDiscovery extends EventEmitter {
     if (data.productKey) result.productKey = data.productKey;
     if (data.gwType) result.gwType = data.gwType;
 
-    this.log.info('Discovered device: id=%s ip=%s version=%s', result.id, result.ip, result.version);
+    this.log.info('Discovered device: id=%s version=%s', result.id, result.version);
     this.emit('discover', result);
   }
 

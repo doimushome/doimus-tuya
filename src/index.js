@@ -553,7 +553,7 @@ module.exports = {
         );
         log(
           "debug",
-          `DEVICE_STATUS_UPDATE full: ${device.name} → ${JSON.stringify(state)}`,
+          `DEVICE_STATUS_UPDATE full: ${device.name} → ${JSON.stringify(state).slice(0, 500)}`,
         );
         let motionActivated = false;
         if (Object.keys(state).length > 0) {

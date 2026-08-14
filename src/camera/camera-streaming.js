@@ -38,7 +38,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
   }
   log(
     "info",
-    `[P2P] Device "${tuyaDevice.name}" IP=${ip} localKeyLen=${(tuyaDevice.local_key || "").length} category=${tuyaDevice.category}`,
+    `[P2P] Device "${tuyaDevice.name}" localKeyLen=${(tuyaDevice.local_key || "").length} category=${tuyaDevice.category}`,
   );
 
   // mobilecam / sp / doorbell devices (Magic S1, video peephole, wireless
@@ -90,7 +90,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
     }
     log(
       "info",
-      `Trying P2P for "${tuyaDevice.name}" (${ip}:${port} v${version} key=${keyType})`,
+      `Trying P2P for "${tuyaDevice.name}" (port ${port} v${version} key=${keyType})`,
     );
 
     const p2p = new TuyaP2P({
@@ -308,11 +308,11 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
       ctx.p2pClients.set(doimusID, p2p);
       log(
         "info",
-        `P2P connected successfully to "${tuyaDevice.name}" (${ip}:${port} v${version})`,
+        `P2P connected successfully to "${tuyaDevice.name}" (v${version})`,
       );
       return; // success — stop trying other configs
     } catch (e) {
-      log("warn", `P2P ${ip}:${port} v${version} failed: ${e.message || e}`);
+      log("warn", `P2P config v${version} failed: ${e.message || e}`);
       try {
         p2p.close();
       } catch (_) { /* P2P may already be closed */ }
