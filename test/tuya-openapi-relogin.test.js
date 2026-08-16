@@ -86,6 +86,44 @@ test("_refreshAccessTokenIfNeed returns false when refresh and re-login both fai
 });
 
 // ---------------------------------------------------------------------------
+// A failed full login (homeLogin/customLogin) must NOT wipe the existing token.
+// homeLogin() clears tokenInfo before POSTing so the login request is signed
+// without an access_token; if that login fails and the token stays empty,
+// isLogin() returns false and _refreshAccessTokenIfNeed() short-circuits —
+// permanently blocking re-auth until a plugin restart.
+// ---------------------------------------------------------------------------
+
+test("homeLogin failure preserves the previous token so re-login can retry", async () => {
+  const api = makeApi(); // access_token "at", refresh_token "rt"
+  api.post = async () => ({
+    success: false,
+    code: 1013,
+    msg: "request time is invalid",
+  });
+
+  const res = await api.homeLogin(44, "user", "pass", "tuyaSmart");
+  assert.equal(res.success, false);
+  assert.equal(api.isLogin(), true, "token must be preserved after failed login");
+  assert.equal(api.tokenInfo.access_token, "at");
+  assert.equal(api.tokenInfo.refresh_token, "rt");
+});
+
+test("customLogin failure preserves the previous token so re-login can retry", async () => {
+  const api = makeApi();
+  api.post = async () => ({
+    success: false,
+    code: 1013,
+    msg: "request time is invalid",
+  });
+
+  const res = await api.customLogin("doimus", "doimus");
+  assert.equal(res.success, false);
+  assert.equal(api.isLogin(), true, "token must be preserved after failed login");
+  assert.equal(api.tokenInfo.access_token, "at");
+  assert.equal(api.tokenInfo.refresh_token, "rt");
+});
+
+// ---------------------------------------------------------------------------
 // Successful re-login restores auth health (was previously left false, which
 // permanently degraded energy polling and snapshot capture after a conflict).
 // ---------------------------------------------------------------------------

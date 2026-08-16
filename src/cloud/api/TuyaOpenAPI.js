@@ -286,6 +286,7 @@ class TuyaOpenAPI {
       password = crypto.createHash("md5").update(password).digest("hex");
     }
     this.log.info("Login to: %s", this.endpoint);
+    const previousTokenInfo = this.tokenInfo;
     this.tokenInfo = {
       access_token: "",
       refresh_token: "",
@@ -312,6 +313,12 @@ class TuyaOpenAPI {
         expire: expire_time * 1000 + new Date().getTime(),
       };
       this._setAuthHealthy();
+    } else {
+      // Restore the previous token on failure. A failed login must not leave
+      // tokenInfo.access_token empty: isLogin() checks its length, and
+      // _refreshAccessTokenIfNeed() returns false immediately when isLogin() is
+      // false, which would permanently block future re-auth/re-login attempts.
+      this.tokenInfo = previousTokenInfo;
     }
     return res;
   }
@@ -329,6 +336,7 @@ class TuyaOpenAPI {
   }
 
   async customLogin(username, password) {
+    const previousTokenInfo = this.tokenInfo;
     this.tokenInfo = {
       access_token: "",
       refresh_token: "",
@@ -347,6 +355,10 @@ class TuyaOpenAPI {
         uid,
         expire: expire * 1000 + new Date().getTime(),
       };
+    } else {
+      // See homeLogin(): a failed login must not wipe the token, otherwise
+      // isLogin() turns false and _refreshAccessTokenIfNeed() can never retry.
+      this.tokenInfo = previousTokenInfo;
     }
     return res;
   }
