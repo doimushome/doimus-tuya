@@ -1,19 +1,3 @@
-const TuyaDeviceSchemaMode = {
-  UNKNOWN: "",
-  READ_WRITE: "rw",
-  READ_ONLY: "ro",
-  WRITE_ONLY: "wo",
-};
-
-const TuyaDeviceSchemaType = {
-  Boolean: "Boolean",
-  Integer: "Integer",
-  Enum: "Enum",
-  String: "String",
-  Json: "Json",
-  Raw: "Raw",
-};
-
 class TuyaDevice {
   constructor(obj) {
     Object.assign(this, obj);
@@ -34,5 +18,3 @@ class TuyaDevice {
 }
 
 module.exports = TuyaDevice;
-module.exports.TuyaDeviceSchemaMode = TuyaDeviceSchemaMode;
-module.exports.TuyaDeviceSchemaType = TuyaDeviceSchemaType;
