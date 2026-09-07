@@ -38,7 +38,7 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
   }
   log(
     "info",
-    `[P2P] Device "${tuyaDevice.name}" localKeyLen=${(tuyaDevice.local_key || "").length} category=${tuyaDevice.category}`,
+    `[P2P] Device "${tuyaDevice.name}" localKeyLen=${(tuyaDevice.local_key || "").length} category=${tuyaDevice.category} ip=${tuyaDevice.ip || tuyaDevice.ip_address || "?"} online=${tuyaDevice.online}`,
   );
 
   // mobilecam / sp / doorbell devices (Magic S1, video peephole, wireless
@@ -49,28 +49,40 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
   );
   // v3.1 first: no session-key negotiation → works even with quirky local_key
   // encoding common on battery cameras.  v3.4+ preferred when key is correct.
+  // Battery peephole/doorbell P2P listens on port 6668 (not 554 — that's the
+  // RTSP listener). Try 6668 first with the standard LAN versions, then 554.
   const configs = isCamera
     ? [
+        [6668, 3.3, "raw"],
+        [6668, 3.3, "md5"],
+        [6668, 3.4, "raw"],
+        [6668, 3.4, "md5"],
+        [6668, 3.1, "raw"],
+        [6668, 3.5, "raw"],
+        [6668, 3.5, "md5"],
         [554, 3.1, "md5"],
         [554, 3.1, "raw"],
-        [554, 3.1, "sha256"],
-        [554, 3.4, "md5"],
         [554, 3.4, "raw"],
-        [554, 3.4, "sha256"],
-        [554, 3.5, "md5"],
-        [554, 3.5, "raw"],
-        [554, 3.5, "sha256"],
-        [554, 3.3, "md5"],
+        [554, 3.4, "md5"],
         [554, 3.3, "raw"],
-        [554, 3.3, "sha256"],
-        [6668, 3.5, "md5"],
-        [6668, 3.5, "raw"],
-        [6668, 3.5, "sha256"],
+        [554, 3.5, "raw"],
       ]
     : [
         [554, 3.1, "raw"],
         [554, 3.4, "raw"],
       ];
+
+  // Battery cameras are asleep until the CRC32 wake loop boots them. Give the
+  // wake a head start so the P2P dial doesn't burn configs against a
+  // still-sleeping camera — the official app wakes the camera before it dials.
+  if (isCamera) {
+    const bootDelay = Math.max(5000, ctx._p2pBootDelay || 5000);
+    log(
+      "info",
+      `[P2P] Battery camera — waiting ${bootDelay}ms for wake before dialing "${tuyaDevice.name}"`,
+    );
+    await new Promise((r) => setTimeout(r, bootDelay));
+  }
 
   for (const [port, version, keyType] of configs) {
     // Tuya local_key is a hex string. Derive binary keys for P2P crypto.
@@ -304,7 +316,17 @@ async function startP2P(doimusID, tuyaDevice, ctx, log, api) {
 
     try {
       await p2p.connect();
-      await p2p.startVideoStream();
+      const streamed = await p2p.startVideoStream();
+      if (!streamed) {
+        log(
+          "warn",
+          `P2P config v${version} on port ${port} produced no stream — trying next`,
+        );
+        try {
+          p2p.close();
+        } catch (_) { /* already closed */ }
+        continue;
+      }
       ctx.p2pClients.set(doimusID, p2p);
       log(
         "info",
@@ -361,6 +383,10 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
   const isBatteryCamera = ["sp", "doorbell", "mobilecam", "wxml"].includes(
     tuyaDevice.category,
   );
+  log(
+    "info",
+    `[StreamAlloc] Start for "${deviceName}" ip=${tuyaDevice.ip || tuyaDevice.ip_address || "?"} online=${tuyaDevice.online} category=${tuyaDevice.category} battery=${isBatteryCamera}`,
+  );
 
   // Try stream types in order: rtsp → flv → hls
   let streamUrl = null;
@@ -396,36 +422,45 @@ async function startStreamAllocation(doimusID, tuyaDevice, ctx, log, api) {
     const bootDelay = Math.max(5000, ctx._streamAllocBootDelay || 30000);
     log(
       "info",
-      `[StreamAlloc] Battery camera "${deviceName}" — waiting ${bootDelay}ms before ffmpeg`,
+      `[StreamAlloc] Battery camera "${deviceName}" — waiting ${bootDelay}ms for wake, then re-allocating`,
     );
     await new Promise((r) => setTimeout(r, bootDelay));
+    // The first allocation (while asleep) returns a placeholder URL that dies
+    // immediately (ffmpeg exits code 1). Re-allocate after the camera has
+    // booted so the relay actually has a live stream to serve.
+    for (const type of STREAM_TYPES) {
+      const result = await tryAllocate(ctx, tuyaDevice.id, type, log, deviceName);
+      if (result && result.url) {
+        streamUrl = result.url;
+        streamType = type;
+        log(
+          "info",
+          `[StreamAlloc] Re-allocated type="${type}" after wake (stream_id=${result.streamId})`,
+        );
+        break;
+      }
+    }
   }
 
-  await spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log, api);
+  await spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log, api, isBatteryCamera);
 }
 
 async function tryAllocate(ctx, deviceId, type, log, deviceName) {
   try {
-    const params = { type, expire: 120, transport: "tcp" };
-    const result = await ctx.deviceManager.api.post(
-      `/v1.0/devices/${deviceId}/stream/actions/allocate`,
-      params,
-    );
+    // The homebridge-tuya-camera plugin calls the user-scoped path
+    // (/v1.0/users/{uid}/devices/{id}/stream/actions/allocate) and uses the
+    // returned URL as-is — it does NOT require a stream_id. The URL points to
+    // the cloud RTSP relay; battery cameras register with it after waking.
+    const uid = ctx.deviceManager?.api?.tokenInfo?.uid;
+    const params = { type };
+    const path = uid
+      ? `/v1.0/users/${uid}/devices/${deviceId}/stream/actions/allocate`
+      : `/v1.0/devices/${deviceId}/stream/actions/allocate`;
+    const result = await ctx.deviceManager.api.post(path, params);
     if (result && result.success && result.result && result.result.url) {
-      // An allocation with an empty stream_id produces a dead URL (ffmpeg
-      // exits code 1 immediately). Battery cameras only return a usable
-      // stream_id once they are actually awake — treat it as a failed
-      // allocation rather than spawning ffmpeg against a placeholder URL.
-      if (!result.result.stream_id) {
-        log(
-          "warn",
-          `[StreamAlloc] type="${type}" URL missing stream_id for "${deviceName}" — allocation rejected (code=${result.code} msg=${result.msg})`,
-        );
-        return null;
-      }
       return {
         url: result.result.url,
-        streamId: result.result.stream_id,
+        streamId: result.result.stream_id || "",
       };
     }
     log(
@@ -438,7 +473,7 @@ async function tryAllocate(ctx, deviceId, type, log, deviceName) {
   return null;
 }
 
-async function spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log, api) {
+async function spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log, api, isBatteryCamera) {
   let buffer = Buffer.alloc(0);
   let frameCount = 0;
   let frameTimer = null;
@@ -472,11 +507,26 @@ async function spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log
             "pipe:1",
           ];
 
+    log("info", `[StreamAlloc] Streaming URL for "${deviceName}": ${String(streamUrl).replace(/[?&](token|sign|password|auth)=\S+/g, "$1=REDACTED")}`);
+
     const proc = spawn("ffmpeg", ffmpegArgs, {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    proc.stderr.on("data", () => {});
+    // Capture the first lines of ffmpeg stderr so failures are diagnosable
+    // (e.g. an RTSP placeholder URL that the camera never made live).
+    let stderrLines = "";
+    proc.stderr.on("data", (d) => {
+      stderrLines += d.toString();
+      if (stderrLines.length > 2000) stderrLines = stderrLines.slice(-2000);
+    });
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        // The real error is the LAST lines of stderr (the banner is first).
+        const tail = stderrLines.split("\n").slice(-12).join("\n");
+        log("warn", `[StreamAlloc] ffmpeg exit ${code} stderr:\n${tail}`);
+      }
+    });
 
     if (!ctx._streamAllocProcs) ctx._streamAllocProcs = new Map();
     ctx._streamAllocProcs.set(doimusID, proc);
@@ -503,6 +553,12 @@ async function spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log
 
         const jpeg = buffer.slice(startIdx, endIdx);
         frameCount++;
+        if (frameCount === 1) {
+          log(
+            "info",
+            `[StreamAlloc] First frame received for "${deviceName}" (${jpeg.length} bytes) — RTSP is live`,
+          );
+        }
 
         api.sendMjpegFrame(doimusID, "main", jpeg);
         api.updateDeviceImage(doimusID, "snapshot_live", jpeg, "image/jpeg");
@@ -518,11 +574,14 @@ async function spawnFfmpeg(doimusID, streamUrl, streamType, deviceName, ctx, log
       }
     });
 
+    // Battery cameras can take 60-90s to boot after the allocation wakes them
+    // and register with the cloud RTSP relay — wait longer before giving up.
+    const noFrameTimeout = isBatteryCamera ? 90000 : 30000;
     frameTimer = setTimeout(() => {
       if (frameCount === 0) {
         log(
           "warn",
-          `[StreamAlloc] No frames within 30s for "${deviceName}" — giving up`,
+          `[StreamAlloc] No frames within ${noFrameTimeout / 1000}s for "${deviceName}" — giving up`,
         );
         stopStreamAllocation(doimusID, ctx, log);
       }

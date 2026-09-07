@@ -1,43 +1,40 @@
 "use strict";
 
 const mqtt = require("mqtt");
+const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
-const { redactUrl, redactSecrets } = require("../shared/plugin-utils");
-
-/**
- * Tuya WebRTC Signaling Client
- *
- * Connects to Tuya's IPC MQTT broker and manages WebRTC SDP exchange between
- * the mobile app (via the Doimus backend) and a Tuya camera/doorbell.
- *
- * Flow:
- *  1. Fetch WebRTC configs (ICE servers, auth token) and IPC MQTT configs
- *  2. Connect to IPC MQTT broker
- *  3. Mobile app sends "start" → plugin creates SDP offer, sends to camera via MQTT
- *  4. Camera responds with SDP answer → plugin relays to mobile app
- *  5. ICE candidates exchanged bidirectionally
- *  6. WebRTC P2P connection established between mobile and camera
- *
- * Events emitted:
- *   "config"        — { iceServers, auth, motoId, deviceId }
- *   "offer"         — { sdp, sessionId }
- *   "answer"        — { sdp, sessionId }
- *   "candidate"     — { candidate, sessionId }
- *   "disconnect"    — { sessionId }
- *   "error"         — Error
- */
+const { redactUrl } = require("../shared/plugin-utils");
 
 const WEBRTC_PROTOCOL = 302;
+const RESOLUTION_PROTOCOL = 312;
 
-// Delay between the camera confirming wake (wireless_awake=true) and us
-// re-publishing the offer. Battery cameras report awake before their WebRTC
-// subsystem has connected to the IPC MQTT broker.
-const OFFER_RESEND_DELAY_MS = 5000;
+// Battery cameras boot 30-90s after the wake and connect to the IPC broker
+// long after the first offer was published. Re-publish the offer until the
+// camera answers (go2rtc sends once; we retry because the camera wakes late).
+const OFFER_RETRY_MS = 5000;
+const OFFER_RETRY_TRIES = 20;
+
+// Don't hammer the Smart Life app login after a failure — repeated rejects can
+// trip Tuya's security lock (which surfaces as the same "wrong password").
+let lastAppLoginFailAt = 0;
+const APP_LOGIN_COOLDOWN_MS = 5 * 60 * 1000;
 
 /**
- * CRC32 (IEEE 802.3 / zlib) of a string or Buffer.
- * Used for the IPC MQTT low-power wake-up message (go2rtc-compatible).
+ * Tuya WebRTC signaling client — KISS port of go2rtc's pkg/tuya/mqtt.go.
+ *
+ * Flow (reverse-engineered from the Smart Life app + go2rtc):
+ *  1. start(deviceId, localKey):
+ *     - GET  /v1.0/users/{uid}/devices/{id}/webrtc-configs  → auth, moto_id,
+ *       ICE servers, skill, optional local_key
+ *     - POST /v2.0/open-iot-hub/access/config               → IPC MQTT broker
+ *     - connect MQTT, subscribe to source_topic.ipc, send CRC32 wake
+ *  2. mobile app sends `offer` → publish offer (QoS 1) to sink_topic.ipc
+ *  3. camera answers on source topic → emit "answer" to the mobile app
+ *
+ * Events emitted: "config", "answer", "candidate", "disconnect", "error".
  */
+
+// CRC-32 (IEEE 802.3) — same payload the Smart Life app publishes to m/w/{devId}.
 function crc32(data) {
   if (typeof data === "string") data = Buffer.from(data, "utf8");
   let crc = 0xffffffff;
@@ -50,37 +47,32 @@ function crc32(data) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+// tuya-ipc-terminal (the tool that streams these battery/doorbell cameras)
+// uses a 32-char hex session id — revert from go2rtc's 6-char.
+function newSessionId() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
 class WebRTCSignaling {
   constructor(api, log) {
     this.api = api;
     this.log = log;
-    this.linkId = uuidv4();
-    this.mqttClient = null;
-    this.mqttConfig = null;
-    this.webrtcConfig = null;
-    this.sessionId = null;
-    this.running = false;
     this._listeners = {};
-    this._expireTimer = null;
-    // Buffers for offer/candidates that arrive before the MQTT connection
-    // is ready (i.e. while getConfigs() is still fetching from Tuya API).
-    this._pendingOffer = null;
-    this._pendingCandidates = [];
-    this._offerBufferTimer = null;
-    // Battery camera wake tracking: when true, the offer is buffered until
-    // setWoken() is called (after the camera reports wireless_awake=true).
-    this._woken = false;
-    this._wakePendingOffer = null;
-    this._wakePendingCandidates = [];
-    this._wakeFlushTimer = null;
-    // Track the last sent offer/candidates so we can re-publish them (QoS 1)
-    // once a battery camera confirms wake and has had time to boot its
-    // WebRTC subsystem. A sleeping camera is not subscribed to the IPC broker
-    // when the offer first goes out, so it is lost and never answered.
-    this._lastOffer = null;
-    this._lastCandidates = [];
+    this.deviceId = "";
+    this.localKey = "";
+    this.uid = "";
+    this.motoId = "";
+    this.auth = "";
+    this.iceServers = [];
+    this.sinkTopic = "";
+    this.sourceTopic = "";
+    this.from = "";
+    this.sessionId = "";
+    this.mqtt = null;
     this._answered = false;
-    this._offerResendTimer = null;
+    this._offerTimer = null;
+    this._pendingOffer = null;
+    this._lastOffer = null;
   }
 
   on(event, handler) {
@@ -93,1037 +85,364 @@ class WebRTCSignaling {
       try {
         h(data);
       } catch (e) {
-        this.log(
-          "error",
-          `[WebRTC] Event handler error (${event}): ${e.message || e}`,
-        );
+        this.log("error", `[WebRTC] handler error (${event}): ${e.message || e}`);
       }
     });
   }
 
   /**
-   * Fetch WebRTC and IPC MQTT configs from Tuya API.
-   * Returns { iceServers, auth, motoId } or null if WebRTC not supported.
+   * Fetch configs, connect the IPC MQTT broker, send the CRC32 wake, and
+   * emit "config" so the mobile app can create its offer.
+   *
+   * Prefers the Smart Life app flow (app login → /api/jarvis/mqtt broker) —
+   * the camera's WebRTC/IPC subsystem listens on the app's broker, not the
+   * OpenAPI open-iot-hub one. Falls back to the OpenAPI flow when the plugin
+   * has no app credentials (accessId/accessKey-only projects).
    */
-  async getConfigs(deviceId) {
-    const uid = this.api.tokenInfo.uid;
-    if (!uid) {
-      this.log("warn", "[WebRTC] No UID available — cannot fetch configs");
-      return null;
+  async start(deviceId, localKey, options) {
+    this.deviceId = deviceId;
+    this.localKey = localKey || "";
+    this.uid = this.api.tokenInfo && this.api.tokenInfo.uid;
+    this.options = options || {};
+    if (!this.uid && !this.options.username) {
+      throw new Error("No UID available");
     }
 
-    // 1. Get WebRTC configs (ICE servers, auth token)
-    const wrRes = await this.api.get(
-      `/v1.0/users/${uid}/devices/${deviceId}/webrtc-configs`,
-    );
-    if (!wrRes.success || !wrRes.result || !wrRes.result.supports_webrtc) {
-      this.log("debug", `[WebRTC] Device ${deviceId} does not support WebRTC`);
-      return null;
+    const hasAppCreds =
+      (this.options.appUsername || this.options.username) &&
+      (this.options.appPassword || this.options.password);
+    if (hasAppCreds && Date.now() - lastAppLoginFailAt > APP_LOGIN_COOLDOWN_MS) {
+      const ok = await this._startAppFlow(deviceId);
+      if (ok) return;
+      lastAppLoginFailAt = Date.now();
+      this.log("warn", "[WebRTC] App flow unavailable — falling back to OpenAPI flow");
     }
 
-    const wr = wrRes.result;
-    this.log(
-      "info",
-      `[WebRTC] Config: moto_id=${wr.moto_id || ""} auth_len=${(wr.auth || "").length} p2p_config=${JSON.stringify(wr.p2p_config || {}).slice(0, 200)}`,
-    );
-    // Build ICE server list from Tuya config. If empty, provide a default
-    // STUN server so the camera has at least one ICE server config — Tuya
-    // firmware JSON.parses(msg.token) to get ICE servers, and a non-JSON
-    // value causes a silent parse error that drops the offer.
-    const iceServers = [];
-    if (wr.p2p_config && wr.p2p_config.ices && wr.p2p_config.ices.length > 0) {
-      for (let i = 0; i < wr.p2p_config.ices.length; i++) {
-        const ice = wr.p2p_config.ices[i];
-        // Skip credential-only entries without urls — they produce
-        // malformed {"credential":"..."} objects that crash the
-        // camera's ICE server JSON parser. Credential data for TURN
-        // servers is typically embedded in the TURN entry itself.
-        if (!ice.urls) {
-          this.log("debug", `[WebRTC] Skipping ICE entry ${i} (no urls)`);
-          continue;
-        }
-        // go2rtc serializes the ICE token using pion's ICEServer struct,
-        // which marshals `urls` as a JSON array: ["stun:..."].  Tuya camera
-        // firmware JSON.parses(msg.token) and expects `urls` to be an array
-        // (not a bare string).  String urls cause the camera to reject the
-        // offer with a WebRTC disconnect ~10s after publication.
-        const urls = Array.isArray(ice.urls) ? ice.urls : [ice.urls];
-        const server = { urls };
-        if (ice.username) server.username = ice.username;
-        if (ice.credential) server.credential = ice.credential;
-        iceServers.push(server);
-      }
-    } else {
-      // Tuya returned empty ICE servers — add a default STUN so the
-      // camera's WebRTC stack can still attempt NAT traversal and the
-      // token field is valid JSON.
-      iceServers.push({ urls: ["stun:stun.l.google.com:19302"] });
-      this.log(
-        "info",
-        "[WebRTC] Tuya returned empty ICE servers — using default Google STUN",
-      );
+    if (!this.uid) {
+      throw new Error("No UID — Tuya token expired or account in use elsewhere");
     }
 
-    this.webrtcConfig = {
-      auth: wr.auth,
-      // Tuya signaling token used in the offer payload. Some devices use
-      // dedicated token fields, others accept auth.
-      token: wr.token || wr.webrtc_token || wr.p2p_config?.token || wr.auth,
-      motoId: wr.moto_id || "",
-      iceServers,
-      deviceId,
-      supportsWebrtc: true,
-      // go2rtc uses the local_key from the WebRTC config response for
-      // the CRC32 IPC MQTT wake.  This may differ from the device
-      // schema's local_key — some Tuya firmware versions return a
-      // different key or encoding here.
-      localKey: wr.local_key || null,
-      // Preserve the raw skill string and parsed skill object so that
-      // connect() can read skill.lowPower (go2rtc uses this to decide
-      // whether to send the CRC32 IPC MQTT wake).
-      skill: wr.skill || null,
-    };
-
-    this.log(
-      "info",
-      `[WebRTC] WebRTC config parsed: motoId=${this.webrtcConfig.motoId} hasAuth=${!!this.webrtcConfig.auth} hasLocalKey=${!!this.webrtcConfig.localKey} iceCount=${this.webrtcConfig.iceServers.length}`,
+    // 1. WebRTC config (auth token, moto_id, ICE servers, skill).
+    const wr = await this.api.get(
+      `/v1.0/users/${this.uid}/devices/${deviceId}/webrtc-configs`,
     );
+    if (!wr.success || !wr.result || !wr.result.supports_webrtc) {
+      throw new Error("WebRTC not supported by this device");
+    }
+    const r = wr.result;
+    this.motoId = r.moto_id || "";
+    this.auth = r.auth || "";
+    // The device's canonical local_key is preferred for the CRC32 wake; the
+    // WebRTC config may also carry one (often absent on battery cameras).
+    this.localKey = r.local_key || this.localKey;
+    this.iceServers = this._normalizeIces(r.p2p_config && r.p2p_config.ices);
 
-    // 2. Get IPC MQTT configs
-    // go2rtc uses /v2.0/open-iot-hub/access/config with a fresh UUID
-    // per connection. Using a stale link_id from a previous session
-    // can cause the broker to reject the subscription.
-    this.linkId = uuidv4();
-    const mqRes = await this.api.post("/v2.0/open-iot-hub/access/config", {
-      uid,
-      unique_id: this.linkId,
+    // 2. IPC MQTT config (fresh link_id per connection).
+    const mq = await this.api.post("/v2.0/open-iot-hub/access/config", {
+      uid: this.uid,
+      unique_id: uuidv4(),
       link_type: "mqtt",
       topics: "ipc",
     });
-
-    if (!mqRes.success || !mqRes.result) {
-      this.log(
-        "warn",
-        `[WebRTC] Failed to get IPC MQTT configs: code=${mqRes.code} msg=${mqRes.msg}`,
-      );
-      return null;
+    if (!mq.success || !mq.result) {
+      throw new Error(`IPC MQTT config failed (code=${mq.code} msg=${mq.msg})`);
     }
+    const c = mq.result;
+    this.sinkTopic = this._resolve(c.sink_topic && c.sink_topic.ipc);
+    this.sourceTopic = this._resolve(c.source_topic && c.source_topic.ipc);
+    // `from` = the string after /av/u/ (parts[3]) — Tuya docs + go2rtc.
+    this.from =
+      this.sourceTopic.split("/")[3] || this.sourceTopic.split("/").pop();
 
-    this.mqttConfig = mqRes.result;
-
-    this._emit("config", {
-      iceServers: this.webrtcConfig.iceServers,
-      auth: this.webrtcConfig.auth,
-      motoId: this.webrtcConfig.motoId,
-      deviceId,
-    });
-
-    return this.webrtcConfig;
-  }
-
-  /**
-   * Connect to the IPC MQTT broker for WebRTC signaling.
-   */
-  connect(deviceId, localKey, webrtcConfig, needsWake) {
-    // Store these for the wake-up message and offer Token field.
-    // When called from reconnect (no args), use the stored values.
-    this._deviceId = deviceId || this._deviceId;
-    this._localKey = localKey || this._localKey;
-    this._webrtcConfigFull = webrtcConfig || this._webrtcConfigFull;
-    if (needsWake !== undefined) this._needsWake = !!needsWake;
-
-    if (!this.mqttConfig) {
-      this.log("warn", "[WebRTC] No MQTT config — call getConfigs() first");
-      return;
-    }
-
-    if (this.mqttClient) {
-      this.disconnect();
-    }
-
-    this.running = true;
-
-    const { url, client_id, username, password, source_topic, expire_time } =
-      this.mqttConfig;
-
-    this.log(
-      "info",
-      `[WebRTC] Connecting to IPC MQTT: ${redactUrl(url)} client_id=${client_id}`,
-    );
-
-    this.mqttClient = mqtt.connect(url, {
-      clientId: client_id,
-      username,
-      password,
+    // 3. Connect IPC MQTT.
+    this.mqtt = mqtt.connect(c.url, {
+      clientId: c.client_id,
+      username: c.username,
+      password: c.password,
       keepalive: 30,
       reconnectPeriod: 5000,
       connectTimeout: 10000,
     });
+    this.mqtt.on("connect", () => this._onMqttConnect());
+    this.mqtt.on("message", (topic, payload) => this._onMessage(payload));
+    this.mqtt.on("error", (err) => this._emit("error", err));
 
-    this.mqttClient.on("connect", () => {
-      this.log("info", "[WebRTC] IPC MQTT connected");
-
-      // Subscribe to source topic(s) (camera → client messages).
-      // Tuya may return templates like .../{device_id}; resolve placeholders.
-      const sourceTopicRaw = source_topic?.ipc;
-      const sourceTopicResolved = this._resolveSourceTopic(sourceTopicRaw);
-      const subscribeTopics = Array.from(
-        new Set([sourceTopicRaw, sourceTopicResolved].filter(Boolean)),
-      );
-      if (subscribeTopics.length === 0) {
-        this.log(
-          "warn",
-          "[WebRTC] source_topic.ipc is missing from MQTT config",
-        );
-      }
-      for (const topic of subscribeTopics) {
-        this.mqttClient.subscribe(topic, (err) => {
-          if (err) {
-            this.log(
-              "error",
-              `[WebRTC] Subscribe error (${topic}): ${err.message}`,
-            );
-          } else {
-            this.log("info", `[WebRTC] Subscribed to: ${topic}`);
-          }
-        });
-      }
-
-      // Also subscribe to a wildcard so we catch any camera reply that
-      // lands on an unexpected topic. This is debug-only and helps us
-      // discover the real reply topic if the camera uses a non-standard path.
-      this.mqttClient.subscribe("#", (err) => {
-        if (err) {
-          this.log(
-            "debug",
-            `[WebRTC] Wildcard subscribe error: ${err.message}`,
-          );
-        } else {
-          this.log(
-            "debug",
-            "[WebRTC] Wildcard (#) subscribed for reply discovery",
-          );
-        }
-      });
-
-      // Low-power battery camera wake-up via IPC MQTT (go2rtc-compatible).
-      // The cloud DP (wireless_awake) wakes the cloud link; this CRC32
-      // message on the IPC broker activates the WebRTC subsystem.
-      // Always send for battery cameras — the skill.lowPower field may be
-      // 0 even on battery devices that need IPC-level wake-up.
-    // Use the local_key from the WebRTC config (API response) for CRC32
-    // wake if available — it may differ from the device schema's local_key.
-    const wakeKey = this.webrtcConfig?.localKey || this._localKey;
     this.log(
       "info",
-      `[WebRTC] Wake key source: ${this.webrtcConfig?.localKey ? "WebRTC config API" : "device schema"} (len=${wakeKey?.length || 0})`,
+      `[WebRTC] OpenAPI IPC MQTT ${redactUrl(c.url)} moto=${this.motoId || "<empty>"} authLen=${(this.auth || "").length} localKey=${this.localKey ? "yes" : "no"} ice=${this.iceServers.length}`,
     );
-    if (this._deviceId && wakeKey) {
-      try {
-        const skill =
-          typeof this._webrtcConfigFull?.skill === "string"
-            ? JSON.parse(this._webrtcConfigFull.skill)
-            : this._webrtcConfigFull?.skill || {};
-        const lowPower = skill.lowPower || skill.LowPower || 0;
-        this.log(
-          "info",
-          `[WebRTC] Skill: lowPower=${lowPower} videos=${JSON.stringify(skill.videos || skill.Videos || [])} full=${JSON.stringify(skill).slice(0, 300)}`,
-        );
-        if (this._needsWake) {
-          const crc = crc32(wakeKey);
-          const wakePayload = Buffer.alloc(4);
-          wakePayload.writeUInt32BE(crc, 0);
-
-            // Some camera firmwares listen on m/w/{deviceId}, others on
-            // {deviceId}/w. Send all three common topics to cover more
-            // battery camera models (peephole, doorbell, etc.).
-            // Also send to m/s/{deviceId} — some cameras listen here
-            // even in low-power mode and waking via the send topic can
-            // be more reliable than the dedicated wake topic.
-            const wakeTopics = [
-              `m/w/${this._deviceId}`,
-              `${this._deviceId}/w`,
-              `m/s/${this._deviceId}`,
-            ];
-            for (const wt of wakeTopics) {
-              this.mqttClient.publish(wt, wakePayload, { qos: 1 }, (err) => {
-                if (err) {
-                  this.log(
-                    "warn",
-                    `[WebRTC] Wake-up publish failed to ${wt}: ${err.message}`,
-                  );
-                } else {
-                  this.log(
-                    "info",
-                    `[WebRTC] Wake-up sent to ${wt} crc=${crc.toString(16)}`,
-                  );
-                }
-              });
-            }
-
-            const decryptTopic = `smart/decrypt/in/${this._deviceId}`;
-            this.mqttClient.subscribe(decryptTopic, (err) => {
-              if (!err)
-                this.log("debug", `[WebRTC] Subscribed to: ${decryptTopic}`);
-            });
-
-            // go2rtc sends wake and offer back-to-back with no delay.
-            // Battery cameras start processing the offer immediately
-            // after receiving the CRC32 wake — there is no need to wait.
-            // A delay here causes the camera's internal session timeout
-            // to fire before the offer arrives.
-            if (this._pendingOffer) {
-              const { sdp, streamType } = this._pendingOffer;
-              this._pendingOffer = null;
-              this.log(
-                "info",
-                "[WebRTC] Battery camera — sending offer immediately after CRC32 wake",
-              );
-              this._doSendOffer(sdp, streamType);
-            } else {
-              this.log(
-                "info",
-                "[WebRTC] CRC32 wake sent, offer will be sent when it arrives",
-              );
-            }
-
-            // If no offer arrives after 12s, warn via error event.
-            // This is faster than the 30s safety net and gives the
-            // mobile app a chance to retry.
-            if (!this._offerBufferTimer) {
-              this._offerBufferTimer = setTimeout(() => {
-                this._offerBufferTimer = null;
-                if (this._pendingOffer || this._wakePendingOffer) {
-                  this.log(
-                    "warn",
-                    "[WebRTC] No offer received within 12s of wake — mobile app may be slow",
-                  );
-                  // Flush anyway as a last resort
-                  if (!this._woken) this.setWoken();
-                }
-              }, 12000);
-            }
-            return;
-          }
-        } catch (e) {
-          this.log(
-            "debug",
-            `[WebRTC] Skill parse / wake-up skipped: ${e.message}`,
-          );
-        }
-      }
-
-      // Flush any offer/candidates that arrived before the MQTT connection
-      // was established (the mobile app sends them as soon as the peer
-      // connection creates them, which races with getConfigs()).
-      if (this._pendingOffer) {
-        const { sdp, streamType } = this._pendingOffer;
-        this._pendingOffer = null;
-        this.log("info", "[WebRTC] Flushing buffered offer");
-        this._doSendOffer(sdp, streamType);
-      }
-    });
-
-    this.mqttClient.on("message", (topic, payload) => {
-      this._handleMessage(topic, payload);
-    });
-
-    this.mqttClient.on("error", (err) => {
-      this.log("error", `[WebRTC] MQTT error: ${err.message}`);
-      this._emit("error", err);
-    });
-
-    this.mqttClient.on("close", () => {
-      this.log("info", "[WebRTC] IPC MQTT disconnected");
-      if (this.running) {
-        // mqtt.js auto-reconnects; just emit for UI awareness
-      }
-    });
-
-    // Reconnect before token expires
-    const ttl = ((expire_time || 7200) - 120) * 1000;
-    this._expireTimer = setTimeout(() => {
-      this.log("debug", "[WebRTC] Token expiry — reconnecting");
-      this.disconnect();
-      this.connect();
-    }, ttl);
-  }
-
-  /**
-   * Send a WebRTC offer to the camera via MQTT.
-   * Buffers the offer if the MQTT connection is not yet ready.
-   */
-  sendOffer(sdp, streamType = 1) {
-    // Send the offer as soon as it arrives, even for battery cameras.
-    // The CRC32 wake (sent on IPC MQTT connect) is sufficient to wake
-    // the camera's WebRTC subsystem — go2rtc sends both the wake and
-    // the offer back-to-back with no delay, and battery cameras respond
-    // within 5-10s.  Buffering the offer until a wake confirmation that
-    // never arrives (this camera model never sends wireless_awake=true)
-    // caused the camera's internal 10s session timeout to fire before
-    // the offer was published.
-    //
-    // If MQTT isn't connected yet, buffer in _pendingOffer (flushed
-    // in the MQTT connect handler).
-    if (!this.mqttConfig || !this.webrtcConfig || !this.mqttClient) {
-      const reason = !this.mqttConfig
-        ? "no MQTT config"
-        : !this.webrtcConfig
-          ? "no WebRTC config"
-          : "MQTT client not connected yet";
-      this.log("info", `[WebRTC] Buffering offer (${reason})`);
-      this._pendingOffer = { sdp, streamType };
-
-      // Surface a clear timeout when the offer stays buffered too long.
-      // This makes "no answer" stalls easier to debug in the UI.
-      if (!this._offerBufferTimer) {
-        this._offerBufferTimer = setTimeout(() => {
-          this._offerBufferTimer = null;
-          if (!this._pendingOffer) return;
-          const msg =
-            "WebRTC offer is still buffered after 12s (IPC MQTT not ready).";
-          this.log("warn", `[WebRTC] ${msg}`);
-          this._emit("error", new Error(msg));
-        }, 12000);
-      }
-      return;
-    }
-    this._doSendOffer(sdp, streamType);
-  }
-
-  _doSendOffer(sdp, streamType, reuseSessionId) {
-    if (this._offerBufferTimer) {
-      clearTimeout(this._offerBufferTimer);
-      this._offerBufferTimer = null;
-    }
-
-    // Keep the same sessionid when re-sending an offer after the camera wakes
-    // (the camera treats it as the same session); otherwise mint a fresh one.
-    if (!reuseSessionId || !this.sessionId) {
-      this.sessionId = uuidv4().replace(/-/g, "");
-    }
-    this._answered = false;
-    this._lastOffer = { sdp, streamType };
-    // If the camera already confirmed wake (setWoken() fired before the mobile
-    // app produced this offer), still schedule the QoS 1 re-send after the
-    // boot delay. Otherwise the first offer is the only one and can be lost.
-    if (this._woken && this._needsWake) {
-      this._scheduleOfferResend();
-    }
-
-    // Strip a=extmap lines to stay under Tuya's ~8KB MQTT payload limit.
-    // These are optional header extensions the camera doesn't need.
-    sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
-
-    // Detect codec from SDP for the datachannel_enable field.
-    // HEVC (H.265) requires datachannel_enable=true per Tuya spec.
-    // See go2rtc: DatachannelEnable = isHEVC
-    const isHEVC = /a=rtpmap:\d+\s+(H265|HEVC)\/90000/i.test(sdp);
-
-    // ── Offer message fields ────────────────────────────────────────
-    // Tuya camera WebRTC stacks expect these fields in the offer msg:
-    //   - auth:        Session auth token from Tuya config
-    //   - token:       ICE server list from p2p_config.ices.  Some
-    //     camera firmware parse this to configure their ICE agent.
-    //     go2rtc always includes it and it's required for battery-
-    //     powered sp/doorbell cameras whose stack validates the
-    //     full offer structure.
-    //   - datachannel_enable: true for HEVC, false for H264.
-    //     Must be present per Tuya WebRTC spec.
-    const msg = {
-      protocol: WEBRTC_PROTOCOL,
-      pv: "2.2",
-      t: Math.floor(Date.now() / 1000),
-      data: {
-        header: {
-          from: this._getFrom(),
-          to: this.webrtcConfig.deviceId,
-          sessionid: this.sessionId,
-          moto_id: this.webrtcConfig.motoId,
-          type: "offer",
-        },
-        msg: {
-          mode: "webrtc",
-          sdp,
-          stream_type: streamType,
-          auth: this.webrtcConfig.auth,
-          // ICE server list as raw JSON array — Tuya camera firmware
-          // parses msg.token directly.  go2rtc sends token as a raw
-          // JSON array (json.RawMessage), not a string.  Each entry
-          // must have at minimum a "urls" field.
-          token: this.webrtcConfig.iceServers,
-          datachannel_enable: isHEVC,
-        },
-      },
-    };
-
-    const payload = JSON.stringify(msg);
-    const topic = this._resolveTopic();
-    this.log(
-      "info",
-      `[WebRTC] Publishing offer (session=${this.sessionId}, topic=${topic}, payloadLen=${payload.length}, motoId=${this.webrtcConfig.motoId || "<empty>"}, authLen=${(this.webrtcConfig.auth || "").length})`,
-    );
-    this.log(
-      "debug",
-      `[WebRTC] Offer SDP preview (first 600 chars): ${(sdp || "").slice(0, 600).replace(/\n/g, "\\n")}`,
-    );
-    this.log(
-      "debug",
-      `[WebRTC] Offer token (redacted): ${(function () {
-        const s = JSON.stringify(redactSecrets(this.webrtcConfig.iceServers));
-        return s.length > 300 ? s.slice(0, 300) + "..." : s;
-      }).call(this)}`,
-    );
-    this._publish(payload);
-
-    // Flush any candidates that were buffered before the offer was sent.
-    this._flushCandidates();
-
-    // Battery cameras (peephole, doorbell) can take 30-50s to fully
-    // initialise their video subsystem after the wake commands.
-    // Start a generous fallback timer — if the camera doesn't answer,
-    // emit "fallback" so the plugin can switch to StreamAllocation.
-    if (this._fallbackTimer) clearTimeout(this._fallbackTimer);
-    // Battery cameras (peephole, doorbell) can take 80-90s to fully
-    // initialise their video subsystem. Use a generous timeout.
-    const FALLBACK_TIMEOUT = this._needsWake ? 120000 : 15000;
-    this._fallbackTimer = setTimeout(() => {
-      this.log(
-        "info",
-        `[WebRTC] No answer within ${FALLBACK_TIMEOUT / 1000}s — emitting fallback`,
-      );
-      this._emit("fallback", { sessionId: this.sessionId });
-    }, FALLBACK_TIMEOUT);
-  }
-
-  /**
-   * Send a WebRTC answer to the camera via MQTT.
-   */
-  sendAnswer(sdp) {
-    if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) return;
-
-    const msg = {
-      protocol: WEBRTC_PROTOCOL,
-      pv: "2.2",
-      t: Math.floor(Date.now() / 1000),
-      data: {
-        header: {
-          from: this._getFrom(),
-          to: this.webrtcConfig.deviceId,
-          sessionid: this.sessionId,
-          moto_id: this.webrtcConfig.motoId,
-          type: "answer",
-        },
-        msg: {
-          mode: "webrtc",
-          sdp,
-        },
-      },
-    };
-
-    this._publish(JSON.stringify(msg));
-    this.log("info", `[WebRTC] Answer sent session=${this.sessionId}`);
-  }
-
-  /**
-   * Send an ICE candidate to the camera via MQTT.
-   * Buffers candidates if the session is not yet established.
-   */
-  sendCandidate(candidate) {
-    // Candidates that arrive before a sessionId is established are
-    // buffered in _pendingCandidates and flushed after the offer is
-    // sent.  We don't separately buffer for battery camera wake — the
-    // IPC MQTT broker handles delivery once the camera is reachable.
-    if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) {
-      this._pendingCandidates.push(candidate);
-      return;
-    }
-
-    this._recordCandidate(candidate);
-    this._publish(JSON.stringify(this._buildCandidateMessage(candidate)));
-  }
-
-  /**
-   * Send a disconnect message.
-   */
-  sendDisconnect() {
-    if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) return;
-
-    const msg = {
-      protocol: WEBRTC_PROTOCOL,
-      pv: "2.2",
-      t: Math.floor(Date.now() / 1000),
-      data: {
-        header: {
-          from: this._getFrom(),
-          to: this.webrtcConfig.deviceId,
-          sessionid: this.sessionId,
-          moto_id: this.webrtcConfig.motoId,
-          type: "disconnect",
-        },
-        msg: { mode: "webrtc" },
-      },
-    };
-
-    this._publish(JSON.stringify(msg));
-    this.log("info", `[WebRTC] Disconnect sent session=${this.sessionId}`);
-    this.sessionId = null;
-  }
-
-  /**
-   * Send a protocol 312 resolution command to the camera via IPC MQTT.
-   * Tuya camera WebRTC stacks wait for this after answering the offer
-   * to begin encoding video. Without it, the camera sends a disconnect
-   * after ~10s. This is what go2rtc does in its PeerConnectionStateConnected
-   * handler (pkg/tuya/webrtc.go).
-   *
-   * @param {number} resolution - 0 = HD, 1 = SD (default: 0)
-   */
-  sendResolution(resolution = 0) {
-    if (!this.mqttConfig || !this.webrtcConfig || !this.sessionId) {
-      this.log("debug", `[WebRTC] Cannot send resolution -- no active session`);
-      return;
-    }
-
-    // go2rtc only sends resolution if clarity switching is supported.
-    // Bit 5 of skill.webrtc indicates clarity support. Sending it
-    // unconditionally can confuse cameras that don't support it.
-    try {
-      const skillRaw = this.webrtcConfig?.skill;
-      const skill = typeof skillRaw === "string" ? JSON.parse(skillRaw) : skillRaw || {};
-      const webrtcFlags = Number(skill.webrtc || skill.WebRTC || 0);
-      const claritySupported = (webrtcFlags & (1 << 5)) !== 0;
-      if (!claritySupported) {
-        this.log("debug", `[WebRTC] Clarity switching not supported (webrtc=0x${webrtcFlags.toString(16)}), skipping resolution command`);
-        return;
-      }
-    } catch (_) {
-      // If skill parsing fails, proceed with resolution command
-    }
-
-    const RESOLUTION_PROTOCOL = 312;
-
-    const msg = {
-      protocol: RESOLUTION_PROTOCOL,
-      pv: "2.2",
-      t: Math.floor(Date.now() / 1000),
-      data: {
-        header: {
-          from: this._getFrom(),
-          to: this.webrtcConfig.deviceId,
-          sessionid: this.sessionId,
-          moto_id: this.webrtcConfig.motoId,
-          type: "resolution",
-        },
-        msg: {
-          cmdValue: resolution,
-          type: "resolution",
-        },
-      },
-    };
-
-    const payload = JSON.stringify(msg);
-    const topic = this._resolveTopic();
-    this.log(
-      "info",
-      `[WebRTC] Sending resolution command (resolution=${resolution}, HD=${resolution === 0}, session=${this.sessionId})`,
-    );
-    this._publish(payload);
-  }
-
-  _flushCandidates() {
-    if (this._pendingCandidates.length === 0) return;
-    this.log(
-      "debug",
-      `[WebRTC] Flushing ${this._pendingCandidates.length} buffered candidates`,
-    );
-    for (const c of this._pendingCandidates) {
-      // Re-invoke sendCandidate without the early-return guard.
-      // We know configs and sessionId are set at this point.
-      this._recordCandidate(c);
-      this._publish(JSON.stringify(this._buildCandidateMessage(c)));
-    }
-    this._pendingCandidates = [];
-  }
-
-  _recordCandidate(candidate) {
-    if (
-      candidate &&
-      !this._lastCandidates.includes(candidate)
-    ) {
-      this._lastCandidates.push(candidate);
-    }
-  }
-
-  _buildCandidateMessage(candidate) {
-    return {
-      protocol: WEBRTC_PROTOCOL,
-      pv: "2.2",
-      t: Math.floor(Date.now() / 1000),
-      data: {
-        header: {
-          from: this._getFrom(),
-          to: this.webrtcConfig.deviceId,
-          sessionid: this.sessionId,
-          moto_id: this.webrtcConfig.motoId,
-          type: "candidate",
-        },
-        msg: {
-          mode: "webrtc",
-          candidate,
-        },
-      },
-    };
-  }
-
-  /**
-   * Called when the camera confirms wake (wireless_awake=true received
-   * via cloud MQTT). Flushes any buffered offer and candidates.
-   */
-  setWoken() {
-    if (this._woken) return;
-    this._woken = true;
-    // Cancel timers
-    if (this._wakeFlushTimer) {
-      clearTimeout(this._wakeFlushTimer);
-      this._wakeFlushTimer = null;
-    }
-    if (this._offerBufferTimer) {
-      clearTimeout(this._offerBufferTimer);
-      this._offerBufferTimer = null;
-    }
-    this.log(
-      "info",
-      "[WebRTC] Camera wake confirmed — flushing buffered offer",
-    );
-
-    // Flush wake-buffered offer
-    if (this._wakePendingOffer) {
-      const { sdp, streamType } = this._wakePendingOffer;
-      this._wakePendingOffer = null;
-      this._doSendOffer(sdp, streamType);
-    }
-
-    // Flush wake-buffered candidates
-    if (this._wakePendingCandidates.length > 0) {
-      this.log(
-        "info",
-        `[WebRTC] Flushing ${this._wakePendingCandidates.length} wake-buffered candidates`,
-      );
-      for (const c of this._wakePendingCandidates) {
-        this.sendCandidate(c);
-      }
-      this._wakePendingCandidates = [];
-    }
-
-    // The camera just confirmed it is awake. Re-publish the original offer
-    // (QoS 1) after a short boot delay so it lands on the IPC broker once the
-    // camera's WebRTC subsystem is up — the first offer went out while the
-    // camera was still asleep and was dropped.
-    this._scheduleOfferResend();
-  }
-
-  _scheduleOfferResend() {
-    if (!this._lastOffer || !this.mqttClient || !this._needsWake) return;
-    if (this._offerResendTimer) clearTimeout(this._offerResendTimer);
-    this._offerResendTimer = setTimeout(() => {
-      this._offerResendTimer = null;
-      if (this._answered) return;
-      if (!this.mqttClient || !this.sessionId) return;
-      this.log(
-        "info",
-        `[WebRTC] Wake confirmed — re-sending offer (QoS 1) after ${OFFER_RESEND_DELAY_MS / 1000}s boot delay`,
-      );
-      this._doSendOffer(this._lastOffer.sdp, this._lastOffer.streamType, true);
-      if (this._lastCandidates.length > 0) {
-        this.log(
-          "info",
-          `[WebRTC] Re-sending ${this._lastCandidates.length} candidates with re-sent offer`,
-        );
-        for (const c of this._lastCandidates) {
-          this._publish(JSON.stringify(this._buildCandidateMessage(c)));
-        }
-      }
-    }, OFFER_RESEND_DELAY_MS);
-    if (this._offerResendTimer.unref) this._offerResendTimer.unref();
-  }
-
-  disconnect() {
-    this.running = false;
-    if (this._expireTimer) {
-      clearTimeout(this._expireTimer);
-      this._expireTimer = null;
-    }
-    if (this._fallbackTimer) {
-      clearTimeout(this._fallbackTimer);
-      this._fallbackTimer = null;
-    }
-    if (this._wakeFlushTimer) {
-      clearTimeout(this._wakeFlushTimer);
-      this._wakeFlushTimer = null;
-    }
-    if (this._offerBufferTimer) {
-      clearTimeout(this._offerBufferTimer);
-      this._offerBufferTimer = null;
-    }
-    if (this._wakeDelayTimer) {
-      clearTimeout(this._wakeDelayTimer);
-      this._wakeDelayTimer = null;
-    }
-    if (this._offerResendTimer) {
-      clearTimeout(this._offerResendTimer);
-      this._offerResendTimer = null;
-    }
-    if (this.mqttClient) {
-      const mq = this.mqttClient;
-      this.mqttClient = null;
-      const r = mq.end(true);
-      if (r && typeof r.catch === "function") r.catch(() => {});
-    }
-    this._pendingOffer = null;
-    this._pendingCandidates = [];
-    this._wakePendingOffer = null;
-    this._wakePendingCandidates = [];
-    this._woken = false;
-    this._lastOffer = null;
-    this._lastCandidates = [];
-    this._answered = false;
-  }
-
-  // ── Private ──────────────────────────────────────────────────────────
-
-  _getFrom() {
-    // Tuya docs: "use the string after `/av/u/` in the JSON field of
-    // result.source_topic.ipc as the value of `from` in the MQTT Header."
-    // go2rtc does the same: parts[3] after splitting /av/{uid}/... by /.
-    // The camera checks `from` to route its answer — using the full topic
-    // path causes the camera to silently drop the offer.
-    const raw =
-      this.mqttConfig?.source_topic?.ipc || this.mqttConfig?.client_id || "";
-    const resolved = this._resolveTemplateTopic(raw);
-    const parts = resolved.split("/");
-    // go2rtc: from = parts[3] (the UID after /av/u/)
-    return parts[3] || parts[parts.length - 1] || resolved;
-  }
-
-  _publish(payload) {
-    const topic = this._resolveTopic();
-    if (!topic) {
-      this.log(
-        "error",
-        "[WebRTC] Cannot publish: sink_topic.ipc is missing from MQTT config",
-      );
-      return;
-    }
-    if (!this.mqttClient) {
-      this.log("error", "[WebRTC] Cannot publish: MQTT client not connected");
-      return;
-    }
-    // QoS 1 (go2rtc-compatible): the broker queues the message for a sleeping
-    // battery camera's persistent session and delivers it once the camera
-    // reconnects to the IPC MQTT broker. QoS 0 is dropped for offline
-    // subscribers, which is why the camera never answered the offer.
-    this.mqttClient.publish(topic, payload, { qos: 1 }, (err) => {
-      if (err) {
-        this.log("error", `[WebRTC] Publish failed: ${err.message || err}`);
-      }
+    this._emit("config", {
+      iceServers: this.iceServers,
+      auth: this.auth,
+      motoId: this.motoId,
+      deviceId,
     });
   }
 
-  _resolveTemplateTopic(topic) {
-    if (!topic) return "";
-    let out = topic;
-
-    const deviceId = this.webrtcConfig?.deviceId || "";
-    const motoId = this.webrtcConfig?.motoId || "";
-
-    if (deviceId) {
-      if (out.includes("{device_id}")) {
-        out = out.replace(/\{device_id\}/g, deviceId);
-      }
-      if (out.includes("{dev_id}")) {
-        out = out.replace(/\{dev_id\}/g, deviceId);
-      }
-      // Some Tuya templates use bare tokens instead of brace placeholders.
-      if (out.includes("/device_id/")) {
-        out = out.replace(/\/device_id\//g, `/${deviceId}/`);
-      }
-      if (out.endsWith("/device_id")) {
-        out = out.replace(/\/device_id$/, `/${deviceId}`);
-      }
-    }
-
-    if (motoId) {
-      if (out.includes("{moto_id}")) {
-        out = out.replace(/\{moto_id\}/g, motoId);
-      }
-      if (out.includes("/moto_id/")) {
-        out = out.replace(/\/moto_id\//g, `/${motoId}/`);
-      }
-      if (out.endsWith("/moto_id")) {
-        out = out.replace(/\/moto_id$/, `/${motoId}`);
-      }
-    }
-
-    if (out.includes("{uid}")) {
-      // The uid is typically the client_id from the MQTT config
-      const uid = this.mqttConfig?.client_id || deviceId || "";
-      if (uid) {
-        out = out.replace(/\{uid\}/g, uid);
-      }
-    }
-
+  _normalizeIces(ices) {
+    // Normalise urls to arrays — the camera JSON.parses msg.token.
+    const out = (ices || []).map((ice) => ({
+      urls: Array.isArray(ice.urls) ? ice.urls : [ice.urls],
+      ...(ice.username ? { username: ice.username } : {}),
+      ...(ice.credential ? { credential: ice.credential } : {}),
+    }));
+    if (out.length === 0) out.push({ urls: ["stun:stun.l.google.com:19302"] });
     return out;
   }
 
-  // Resolve the publish topic from sink_topic.ipc.
-  _resolveTopic() {
-    return this._resolveTemplateTopic(this.mqttConfig?.sink_topic?.ipc || "");
+  /**
+   * Smart Life app flow (tuya-ipc-terminal): app login → /api/jarvis/mqtt →
+   * wss://{MobileMqttsUrl}/mqtt with web_{msid} → /api/jarvis/config for the
+   * WebRTC config. Returns true on success.
+   */
+  async _startAppFlow(deviceId) {
+    try {
+      const { appLogin, appMqttConfig, appWebrtcConfig } = require("../cloud/appapi");
+      // Separate Smart Life app credentials let the user provide the real app
+      // password when it differs from the OpenAPI project credentials.
+      const username = this.options.appUsername || this.options.username;
+      const password = this.options.appPassword || this.options.password;
+      const countryCode =
+        this.options.appCountryCode != null
+          ? this.options.appCountryCode
+          : this.options.countryCode;
+      const session = await appLogin(
+        username,
+        password,
+        countryCode,
+        this.options.appHost || this.api.endpoint,
+        this.log,
+      );
+      const mq = await appMqttConfig(session);
+      const wr = await appWebrtcConfig(session, deviceId);
+      const r = wr.result;
+
+      this.motoId = r.motoId || r.moto_id || "";
+      this.auth = r.auth || "";
+      this.localKey = r.localKey || r.local_key || this.localKey;
+      this.iceServers = this._normalizeIces(r.p2pConfig && r.p2pConfig.ices);
+
+      const domain = (session.result && session.result.domain) || {};
+      const msid = mq.msid;
+      const url = `wss://${domain.MobileMqttsUrl || mq.host}/mqtt`;
+      this.sinkTopic = `/av/moto/${this.motoId}/u/${deviceId}`;
+      this.sourceTopic = `/av/u/${msid}`;
+      this.from = msid;
+
+      this.mqtt = mqtt.connect(url, {
+        clientId: `web_${msid}`,
+        username: `web_${msid}`,
+        password: mq.password,
+        keepalive: 30,
+        reconnectPeriod: 5000,
+        connectTimeout: 10000,
+      });
+      this.mqtt.on("connect", () => this._onMqttConnect());
+      this.mqtt.on("message", (topic, payload) => this._onMessage(payload));
+      this.mqtt.on("error", (err) => this._emit("error", err));
+
+      this.log(
+        "info",
+        `[WebRTC] App flow: broker=${redactUrl(url)} msid=${msid} moto=${this.motoId || "<empty>"} authLen=${(this.auth || "").length} localKey=${this.localKey ? "yes" : "no"} ice=${this.iceServers.length}`,
+      );
+      this._emit("config", {
+        iceServers: this.iceServers,
+        auth: this.auth,
+        motoId: this.motoId,
+        deviceId,
+      });
+      return true;
+    } catch (e) {
+      this.log("debug", `[WebRTC] App flow failed: ${e.message || e}`);
+      return false;
+    }
   }
 
-  // Resolve the subscribe topic from source_topic.ipc.
-  _resolveSourceTopic(topic) {
-    return this._resolveTemplateTopic(
-      topic || this.mqttConfig?.source_topic?.ipc || "",
+  _resolve(topic) {
+    if (!topic) return "";
+    return topic
+      .replace("{device_id}", this.deviceId)
+      .replace("{dev_id}", this.deviceId)
+      .replace("{moto_id}", this.motoId)
+      .replace("{uid}", this.uid || "")
+      .replace("moto_id", this.motoId);
+  }
+
+  _onMqttConnect() {
+    this.log("info", "[WebRTC] IPC MQTT connected");
+    if (this.sourceTopic) {
+      this.mqtt.subscribe(this.sourceTopic, (err) => {
+        if (err) this.log("warn", `[WebRTC] subscribe ${this.sourceTopic}: ${err.message}`);
+        else this.log("info", `[WebRTC] Subscribed to: ${this.sourceTopic}`);
+      });
+    }
+    // Battery camera wake — CRC32(local_key) → m/w/{devId} (QoS 1, go2rtc).
+    this._sendWake();
+    // Offer that arrived while we were still connecting.
+    if (this._pendingOffer) {
+      const o = this._pendingOffer;
+      this._pendingOffer = null;
+      this.sendOffer(o.sdp, o.streamType);
+    }
+  }
+
+  _sendWake() {
+    if (!this.localKey || !this.mqtt || !this.mqtt.connected) return;
+    const crc = crc32(this.localKey);
+    const p = Buffer.alloc(4);
+    p.writeUInt32BE(crc, 0);
+    const topic = `m/w/${this.deviceId}`;
+    this.mqtt.publish(topic, p, { qos: 1 }, (err) => {
+      if (err) this.log("warn", `[WebRTC] wake publish to ${topic}: ${err.message || err}`);
+    });
+    this.log("info", `[WebRTC] Wake sent to ${topic} crc=${crc.toString(16)}`);
+  }
+
+  sendOffer(sdp, streamType = 1) {
+    // Strip a=extmap lines to stay under Tuya's ~8KB MQTT payload limit.
+    sdp = sdp.replace(/\r\na=extmap[^\r\n]*/g, "");
+    if (!this.mqtt || !this.mqtt.connected || !this.sinkTopic) {
+      this._pendingOffer = { sdp, streamType };
+      return;
+    }
+    this.sessionId = this.sessionId || newSessionId();
+    this._answered = false;
+    this._lastOffer = { sdp, streamType };
+    this._publishOffer(sdp, streamType);
+    this.log(
+      "info",
+      `[WebRTC] Offer published session=${this.sessionId} topic=${this.sinkTopic}`,
+    );
+
+    // Battery cameras connect to the IPC broker 30-90s after waking — keep
+    // re-publishing (with the wake) until the camera answers.
+    clearInterval(this._offerTimer);
+    let tries = 0;
+    this._offerTimer = setInterval(() => {
+      if (this._answered || ++tries >= OFFER_RETRY_TRIES) {
+        clearInterval(this._offerTimer);
+        return;
+      }
+      this._sendWake();
+      this.log("info", "[WebRTC] Re-sending offer (camera still booting)...");
+      this._publishOffer(sdp, streamType);
+    }, OFFER_RETRY_MS);
+  }
+
+  _publishOffer(sdp, streamType) {
+    this._publish(
+      "offer",
+      {
+        mode: "webrtc",
+        sdp,
+        stream_type: streamType,
+        auth: this.auth,
+        token: this.iceServers,
+        // tuya-ipc-terminal always sends replay:{is_replay:0} — the camera
+        // firmware may reject an offer without it.
+        replay: { is_replay: 0 },
+        // HEVC requires the camera to send via the DataChannel.
+        datachannel_enable: /a=rtpmap:\d+\s+(H265|HEVC)\/90000/i.test(sdp),
+      },
+      WEBRTC_PROTOCOL,
     );
   }
 
-  _handleMessage(topic, payload) {
-    try {
-      const raw = payload.toString();
-      // Log every received message so we can see if the camera replies at all.
-      this.log(
-        "info",
-        `[WebRTC] MQTT rx topic=${topic} len=${raw.length} preview=${raw.slice(0, 200)}`,
-      );
-      const parsed = JSON.parse(raw);
-      const protocolNum = Number(parsed.protocol);
-      if (protocolNum !== WEBRTC_PROTOCOL) {
-        this.log(
-          "info",
-          `[WebRTC] Non-WebRTC message protocol=${parsed.protocol} data=${JSON.stringify(parsed.data || parsed).slice(0, 200)}`,
-        );
+  sendCandidate(candidate) {
+    if (!this.sessionId) return;
+    this._publish("candidate", { mode: "webrtc", candidate }, WEBRTC_PROTOCOL);
+  }
 
-        // ── Protocol 4: Tuya DP status update ────────────────────────
-        // Battery cameras (sp, doorbell) may report wireless_awake=true
-        // via the IPC MQTT channel on the smart/decrypt/in/{deviceId}
-        // topic before it arrives on cloud MQTT. If we detect wake
-        // confirmation here, we can speed up the offer flush.
-        if (protocolNum === 4) {
-          this._checkWakeInProtocol4(parsed);
-        }
-        return;
-      }
+  // Protocol 312 resolution command — sent after the answer when the camera
+  // supports clarity switching (go2rtc does the same).
+  sendResolution(resolution = 0) {
+    if (!this.sessionId) return;
+    // tuya-ipc-terminal: protocol 312 with {mode, cmdValue}.
+    this._publish(
+      "resolution",
+      { mode: "webrtc", cmdValue: resolution },
+      RESOLUTION_PROTOCOL,
+    );
+  }
 
-      const data = parsed?.data?.header ? parsed.data : parsed?.data?.data;
-      if (!data || !data.header) {
-        this.log("debug", "[WebRTC] WebRTC payload without header");
-        return;
-      }
-
-      const { type, sessionid } = data.header;
-      this.log(
-        "info",
-        `[WebRTC] Camera message type=${type} session=${sessionid}`,
-      );
-
-      switch (type) {
-        case "answer":
-          if (this._fallbackTimer) {
-            clearTimeout(this._fallbackTimer);
-            this._fallbackTimer = null;
-          }
-          if (this._offerResendTimer) {
-            clearTimeout(this._offerResendTimer);
-            this._offerResendTimer = null;
-          }
-          this._answered = true;
-          this.log("info", `[WebRTC] Answer received session=${sessionid}`);
-          this._emit("answer", {
-            sdp: data.msg?.sdp,
-            sessionId: sessionid,
-          });
-          break;
-
-        case "candidate":
-          this._emit("candidate", {
-            candidate: data.msg?.candidate,
-            sessionId: sessionid,
-          });
-          break;
-
-        case "disconnect":
-          this.log(
-            "info",
-            `[WebRTC] Disconnect received from camera session=${sessionid}`,
-          );
-          this._emit("disconnect", { sessionId: sessionid });
-          break;
-
-        default:
-          this.log("debug", `[WebRTC] Unhandled message type: ${type}`);
-      }
-    } catch (e) {
-      this.log("warn", `[WebRTC] Message parse error: ${e.message}`);
+  sendDisconnect() {
+    if (this.sessionId) {
+      this._publish("disconnect", { mode: "webrtc" }, WEBRTC_PROTOCOL);
     }
   }
 
-  /**
-   * Check a protocol-4 (DP status) message for wireless_awake=true.
-   * Tuya IPC MQTT may deliver this before the cloud MQTT path, allowing
-   * us to resolve the wake watcher and flush the WebRTC offer earlier.
-   *
-   * Handles both Tuya formats:
-   *   - dps object:  { dps: { "149": true, ... } }
-   *   - status array: { status: [{ code: "wireless_awake", value: true }] }
-   */
-  _checkWakeInProtocol4(parsed) {
+  _publish(type, msg, protocol) {
+    if (!this.mqtt || !this.mqtt.connected || !this.sinkTopic) return;
+    const payload = JSON.stringify({
+      protocol,
+      pv: "2.2",
+      // tuya-ipc-terminal uses epoch milliseconds; the camera may compare t.
+      t: Date.now(),
+      data: {
+        header: {
+          type,
+          from: this.from,
+          to: this.deviceId,
+          sessionid: this.sessionId,
+          moto_id: this.motoId,
+          tid: "",
+          seq: 0,
+          rtx: 0,
+        },
+        msg,
+      },
+    });
+    this.mqtt.publish(this.sinkTopic, payload, { qos: 1 }, (err) => {
+      if (err) this.log("error", `[WebRTC] publish ${type} failed: ${err.message || err}`);
+    });
+  }
+
+  _onMessage(payload) {
+    let m;
     try {
-      const data = parsed.data || parsed;
-      let awake = false;
-
-      // Format 1: dps object (Tuya DP IDs as keys)
-      // DP 149 = wireless_awake
-      const dps = data.dps;
-      if (dps && typeof dps === "object") {
-        const val = dps["149"];
-        if (val === true || val === "true" || val === 1 || val === "1") {
-          awake = true;
-        }
-      }
-
-      // Format 2: status array with code/value pairs
-      const status = data.status;
-      if (!awake && Array.isArray(status)) {
-        for (const s of status) {
-          if (
-            s.code === "wireless_awake" &&
-            (s.value === true || s.value === "true")
-          ) {
-            awake = true;
-            break;
-          }
-        }
-      }
-
-      // Format 3: flattened dps in the root object (some Tuya firmware)
-      if (!awake && data["149"] !== undefined) {
-        const val = data["149"];
-        if (val === true || val === "true" || val === 1 || val === "1") {
-          awake = true;
-        }
-      }
-
-      if (awake) {
-        this.log(
-          "info",
-          "[WebRTC] IPC MQTT protocol-4 wake confirmation detected — calling setWoken() early",
-        );
-        this.setWoken();
-      }
-    } catch (e) {
-      this.log("debug", `[WebRTC] Protocol-4 wake check error: ${e.message}`);
+      m = JSON.parse(payload.toString());
+    } catch (_) {
+      return;
     }
+    // Accept both flat (go2rtc) and nested (protocol-as-string) envelopes.
+    const data = (m.data && m.data.data) || m.data || m;
+    const h = data.header;
+    if (!h || !h.type) return;
+    this.log("info", `[WebRTC] MQTT rx type=${h.type} session=${h.sessionid || ""}`);
+    switch (h.type) {
+      case "answer":
+        this._answered = true;
+        clearInterval(this._offerTimer);
+        this._emit("answer", { sdp: data.msg && data.msg.sdp, sessionId: h.sessionid });
+        break;
+      case "candidate":
+        // tuya-ipc-terminal: camera candidates start with "a=" and end with
+        // "\r" — trim them so the browser WebRTC accepts them.
+        this._emit("candidate", {
+          candidate: (data.msg && data.msg.candidate || "")
+            .replace(/^a=/, "")
+            .replace(/\r$/, ""),
+          sessionId: h.sessionid,
+        });
+        break;
+      case "disconnect":
+        this._emit("disconnect", { sessionId: h.sessionid });
+        break;
+    }
+  }
+
+  disconnect() {
+    try {
+      this.sendDisconnect();
+    } catch (_) {}
+    clearInterval(this._offerTimer);
+    if (this.mqtt) {
+      try {
+        this.mqtt.end(true);
+      } catch (_) {}
+      this.mqtt = null;
+    }
+    this.sessionId = null;
   }
 }
 

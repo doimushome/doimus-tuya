@@ -1,7 +1,6 @@
 const TuyaLocalDeviceManager = require("./local/LocalDeviceManager");
 const TuyaHybridDeviceManager = require("./shared/TuyaHybridDeviceManager");
 const TuyaDeviceManager = require("./shared/TuyaDeviceManager");
-const WebRTCSignaling = require("./camera/WebRTCSignaling");
 
 const {
   applySchemaOverride,
@@ -20,6 +19,7 @@ const {
   stopStreamAllocation,
 } = require("./camera/camera-streaming");
 const { startMotionCoalesce } = require("./camera/motion-pipeline");
+const { wakeBatteryCamera, cloudWakeBatteryCamera } = require("./camera/wake");
 
 const { PluginContext } = require("./shared/PluginContext");
 const {
@@ -100,6 +100,7 @@ module.exports = {
     this._ctx = ctx;
     const options = (cfg && cfg.options) || {};
     const log = createLogger(api, "TuyaPlatform");
+    ctx._options = options;
 
     ctx._streamAllocBootDelay = options.streamAllocBootDelay || 30000;
 
@@ -422,6 +423,17 @@ module.exports = {
         if (!tuyaDevice) return;
 
         if (key === "p2p_start") {
+          // Battery cameras are asleep until woken by the CRC32 MQTT wake.
+          // The P2P path has no WebRTC signaling, so kick the wake loop in
+          // parallel — startP2P now waits for the boot delay before dialing.
+          if (computeNeedsWake(tuyaDevice)) {
+            wakeBatteryCamera(tuyaDevice, ctx, log).catch((e) =>
+              log("debug", `[Wake] failed: ${e.message || e}`),
+            );
+            cloudWakeBatteryCamera(tuyaDevice, ctx, log).catch((e) =>
+              log("debug", `[Wake] cloud wake failed: ${e.message || e}`),
+            );
+          }
           return startP2P(deviceID, tuyaDevice, ctx, log, api);
         }
         if (key === "p2p_stop") {
@@ -509,22 +521,13 @@ module.exports = {
             "info",
             `Wake confirmed for "${device.name}" — wireless_awake=true`,
           );
-          const watcher = ctx._wakeWatchers.get(device.id);
-          if (watcher) {
-            log(
-              "info",
-              `Wake watcher resolved for "${device.name}" — calling setWoken()`,
-            );
-            if (typeof watcher.resolve === "function") {
-              watcher.resolve();
-            }
-          } else {
+          {
             // Late wake confirmation — the camera just came awake, so the
             // cloud REST snapshot now has a real chance of succeeding. Retry
             // it instead of dropping the event.
             log(
               "debug",
-              `Wake confirmed but no watcher found for "${device.name}" — retrying REST snapshot after late wake`,
+              `Wake confirmed for "${device.name}" — retrying REST snapshot after late wake`,
             );
             if (
               ["sp", "doorbell", "mobilecam", "wxml"].includes(
@@ -896,27 +899,16 @@ module.exports = {
       if (ctx._webrtcClients) {
         for (const [, wr] of ctx._webrtcClients) {
           try {
-            wr.close();
+            wr.disconnect();
           } catch (_) { /* cleanup */ }
         }
         ctx._webrtcClients.clear();
-      }
-      if (ctx._wakeWatchers) {
-        for (const [, watcher] of ctx._wakeWatchers) {
-          clearTimeout(watcher.timer);
-          clearInterval(watcher.progressInterval);
-          if (watcher.resolve) watcher.resolve();
-        }
-        ctx._wakeWatchers.clear();
       }
       if (ctx._streamFallbackTimers) {
         for (const [, timer] of ctx._streamFallbackTimers) {
           clearTimeout(timer);
         }
         ctx._streamFallbackTimers.clear();
-      }
-      if (ctx._powerModeChanged) {
-        ctx._powerModeChanged.clear();
       }
       if (ctx._firstUpdateSeen) {
         ctx._firstUpdateSeen.clear();

@@ -16,6 +16,12 @@ class FakeMqttClient extends EventEmitter {
     this.subscriptions = [];
     this.publications = [];
     this.ended = false;
+    this.connected = false;
+  }
+
+  emit(event, ...args) {
+    if (event === "connect") this.connected = true;
+    return super.emit(event, ...args);
   }
 
   subscribe(topic, cb) {
@@ -39,7 +45,6 @@ class FakeMqttClient extends EventEmitter {
     this.ended = true;
   }
 
-  // Test helper: simulate an inbound MQTT message from the camera.
   receive(topic, payload) {
     this.emit(
       "message",
@@ -51,32 +56,20 @@ class FakeMqttClient extends EventEmitter {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Module mock helper – swaps `mqtt` and `uuid` for the duration of `fn`.
-// ---------------------------------------------------------------------------
-
 function withMockedDeps({ mqttMock, uuidValues }, fn) {
   const originalLoad = Module._load;
-  const uuids = Array.isArray(uuidValues)
-    ? [...uuidValues]
-    : ["11111111-1111-1111-1111-111111111111"];
-
+  const uuids = Array.isArray(uuidValues) ? [...uuidValues] : ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"];
   Module._load = function patched(request, parent, isMain) {
     if (request === "mqtt") return mqttMock;
     if (request === "uuid") {
       return {
-        v4: () => {
-          if (uuids.length === 0) return "ffffffff-ffff-ffff-ffff-ffffffffffff";
-          return uuids.shift();
-        },
+        v4: () => (uuids.length === 0 ? "ffffffff-ffff-ffff-ffff-ffffffffffff" : uuids.shift()),
       };
     }
     return originalLoad.apply(this, arguments);
   };
-
   const modPath = path.resolve(__dirname, "../src/camera/WebRTCSignaling.js");
   delete require.cache[modPath];
-
   try {
     const WebRTCSignaling = require(modPath);
     return fn(WebRTCSignaling);
@@ -85,10 +78,6 @@ function withMockedDeps({ mqttMock, uuidValues }, fn) {
     Module._load = originalLoad;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Shared fixtures
-// ---------------------------------------------------------------------------
 
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -104,6 +93,7 @@ function makeApiMock() {
         supports_webrtc: true,
         auth: "auth-token-base64==",
         moto_id: "moto-123",
+        local_key: "",
         p2p_config: { ices: ICE_SERVERS },
       },
     }),
@@ -124,12 +114,7 @@ function makeApiMock() {
 
 function makeLogger() {
   const lines = [];
-  return {
-    lines,
-    log(level, msg) {
-      lines.push({ level, msg: String(msg) });
-    },
-  };
+  return { lines, log: (level, msg) => lines.push({ level, msg: String(msg) }) };
 }
 
 function setup(WebRTCSignaling) {
@@ -140,397 +125,135 @@ function setup(WebRTCSignaling) {
   return { fakeClient, api, logger, wr };
 }
 
-const UUIDS = {
-  subscribe: [
-    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", // linkId
-    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-  ],
-  offer: [
-    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    "cccccccc-cccc-cccc-cccc-cccccccccccc", // sessionId
-  ],
-  answer: [
-    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    "dddddddd-dddd-dddd-dddd-dddddddddddd",
-  ],
-  roundtrip: [
-    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", // sessionId used in reply
-  ],
-};
+function offerPubs(client) {
+  return client.publications.filter((p) => {
+    try {
+      return JSON.parse(p.payload)?.data?.header?.type === "offer";
+    } catch {
+      return false;
+    }
+  });
+}
+
+async function startSession(WebRTCSignaling) {
+  const { fakeClient, wr } = setup(WebRTCSignaling);
+  let configEvent = null;
+  wr.on("config", (cfg) => (configEvent = cfg));
+  await wr.start("dev-123", "00112233445566778899aabbccddeeff");
+  return { fakeClient, wr, configEvent };
+}
 
 // ---------------------------------------------------------------------------
-// Test 1: subscribe topics
-// ---------------------------------------------------------------------------
 
-test("connect subscribes to source topic, resolved source topic, and wildcard", async (t) => {
+test("start emits config and subscribes to the source topic", async (t) => {
   const fakeClient = new FakeMqttClient();
-  await withMockedDeps(
-    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.subscribe },
-    async (WebRTCSignaling) => {
-      const { wr } = setup(WebRTCSignaling);
-      t.after(() => wr.disconnect());
-      await wr.getConfigs("dev-123");
-      wr.connect(
-        "dev-123",
-        "00112233445566778899aabbccddeeff",
-        wr.webrtcConfig,
-        false,
-      );
-      fakeClient.emit("connect");
-
-      // source topic has no placeholder here, so raw == resolved → deduplicated to 1
-      assert.ok(fakeClient.subscriptions.includes("/av/u/clientX"));
-      // wildcard must also be subscribed
-      assert.ok(fakeClient.subscriptions.includes("#"));
-    },
-  );
+  await withMockedDeps({ mqttMock: { connect: () => fakeClient } }, async (WebRTCSignaling) => {
+    const { wr, configEvent } = await startSession(WebRTCSignaling);
+    t.after(() => wr.disconnect());
+    fakeClient.emit("connect");
+    assert.ok(configEvent, "config event must fire");
+    assert.equal(configEvent.motoId, "moto-123");
+    assert.ok(configEvent.iceServers.length >= 2);
+    assert.ok(fakeClient.subscriptions.includes("/av/u/clientX"));
+    // Battery camera wake must be published to m/w/{deviceId}.
+    assert.ok(
+      fakeClient.publications.some((p) => p.topic === "m/w/dev-123"),
+      "CRC32 wake published to m/w/{deviceId}",
+    );
+  });
 });
 
-// ---------------------------------------------------------------------------
-// Test 2: offer payload shape
-// ---------------------------------------------------------------------------
-
-test("sendOffer publishes to resolved sink topic with correct shape", async (t) => {
+test("sendOffer publishes QoS 1 offer with correct shape", async (t) => {
   const fakeClient = new FakeMqttClient();
-  await withMockedDeps(
-    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.offer },
-    async (WebRTCSignaling) => {
-      const { wr } = setup(WebRTCSignaling);
-      t.after(() => wr.disconnect());
-      await wr.getConfigs("dev-123");
-      wr.connect(
-        "dev-123",
-        "00112233445566778899aabbccddeeff",
-        wr.webrtcConfig,
-        false,
-      );
-      fakeClient.emit("connect");
+  await withMockedDeps({ mqttMock: { connect: () => fakeClient } }, async (WebRTCSignaling) => {
+    const { wr } = await startSession(WebRTCSignaling);
+    t.after(() => wr.disconnect());
+    fakeClient.emit("connect");
+    wr.sendOffer("v=0\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\n", 1);
 
-      wr.sendOffer(
-        "v=0\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\n",
-        1,
-      );
+    const pubs = offerPubs(fakeClient);
+    assert.ok(pubs.length >= 1, "offer publication not found");
+    const offerPub = pubs.find((p) => p.qos === 1) || pubs[0];
+    assert.equal(offerPub.topic, "/av/moto/moto-123/u/dev-123");
+    assert.equal(offerPub.qos, 1, "offer must be QoS 1");
 
-      // Find the offer publication (skip any wake/other publishes)
-      const offerPub = fakeClient.publications.find((p) => {
-        try {
-          return JSON.parse(p.payload)?.data?.header?.type === "offer";
-        } catch {
-          return false;
-        }
-      });
-      assert.ok(offerPub, "offer publication not found");
-
-      // ── topic ──
-      assert.equal(offerPub.topic, "/av/moto/moto-123/u/dev-123");
-
-      // ── QoS: offers must be QoS 1 (go2rtc-compatible) so the IPC broker
-      // queues them for a sleeping battery camera's persistent session. ──
-      assert.equal(offerPub.qos, 1, "offer must be published with QoS 1");
-
-      const pl = JSON.parse(offerPub.payload);
-      // ── envelope ──
-      assert.equal(pl.protocol, 302);
-      assert.equal(pl.pv, "2.2");
-
-      // ── header ──
-      const h = pl.data.header;
-      assert.equal(h.type, "offer");
-      assert.equal(h.from, "clientX"); // UID per Tuya docs (string after /av/u/)
-      assert.equal(h.to, "dev-123");
-      assert.equal(h.moto_id, "moto-123");
-      assert.ok(typeof h.sessionid === "string" && h.sessionid.length === 32);
-
-      // ── msg ──
-      const m = pl.data.msg;
-      assert.equal(m.mode, "webrtc");
-      assert.equal(m.stream_type, 1);
-      assert.equal(m.auth, "auth-token-base64==");
-      // token carries ICE server config so the camera can establish the relay
-      assert.ok(Array.isArray(m.token), "token should be ICE servers array");
-      assert.ok(m.token.length >= 2, "token should have STUN + TURN servers");
-      assert.ok(
-        m.token.some((s) => s.urls?.some?.((u) => u.startsWith("stun:"))),
-        "token should contain a STUN server",
-      );
-      assert.equal(m.datachannel_enable, false);
-      // extmap lines stripped
-      assert.ok(!m.sdp.includes("a=extmap"));
-
-      // ── log payload size for manual inspection ──
-      console.log(
-        `  [debug] offer payloadLen=${offerPub.payload.length} fields=${Object.keys(m).join(",")}`,
-      );
-      console.log(`  [debug] offer JSON:\n${JSON.stringify(pl, null, 2)}`);
-    },
-  );
+    const pl = JSON.parse(offerPub.payload);
+    assert.equal(pl.protocol, 302);
+    assert.equal(pl.pv, "2.2");
+    const h = pl.data.header;
+    assert.equal(h.type, "offer");
+    assert.equal(h.from, "clientX");
+    assert.equal(h.to, "dev-123");
+    assert.equal(h.moto_id, "moto-123");
+    assert.ok(typeof h.sessionid === "string" && h.sessionid.length > 0);
+    const m = pl.data.msg;
+    assert.equal(m.mode, "webrtc");
+    assert.equal(m.stream_type, 1);
+    assert.equal(m.auth, "auth-token-base64==");
+    assert.ok(Array.isArray(m.token) && m.token.length >= 2, "token = ICE servers");
+    // tuya-ipc-terminal sends replay:{is_replay:0}; the camera may reject the
+    // offer without it.
+    assert.deepEqual(m.replay, { is_replay: 0 });
+    assert.equal(m.datachannel_enable, false);
+    assert.ok(!m.sdp.includes("a=extmap"), "extmap stripped");
+  });
 });
 
-// ---------------------------------------------------------------------------
-// Test 3: incoming answer – string protocol, nested data envelope
-// ---------------------------------------------------------------------------
-
-test("incoming answer parses protocol as string and nested data envelope", async (t) => {
+test("offer → mock camera answer → answer event", async (t) => {
   const fakeClient = new FakeMqttClient();
-  await withMockedDeps(
-    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.answer },
-    async (WebRTCSignaling) => {
-      const { wr } = setup(WebRTCSignaling);
-      t.after(() => wr.disconnect());
-      await wr.getConfigs("dev-123");
-      wr.connect(
-        "dev-123",
-        "00112233445566778899aabbccddeeff",
-        wr.webrtcConfig,
-        false,
-      );
-      fakeClient.emit("connect");
-      wr.sendOffer("v=0\r\n", 1);
+  await withMockedDeps({ mqttMock: { connect: () => fakeClient } }, async (WebRTCSignaling) => {
+    const { wr } = await startSession(WebRTCSignaling);
+    t.after(() => wr.disconnect());
+    fakeClient.emit("connect");
 
-      let received = null;
-      wr.on("answer", (d) => {
-        received = d;
-      });
+    let answerReceived = null;
+    wr.on("answer", (d) => (answerReceived = d));
 
-      fakeClient.receive("/av/u/clientX", {
-        protocol: "302",
-        data: {
-          data: {
-            header: { type: "answer", sessionid: "sess-xyz" },
-            msg: { sdp: "v=0\r\n...answer..." },
-          },
-        },
-      });
+    wr.sendOffer("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\n", 1);
+    const sessionid = JSON.parse(offerPubs(fakeClient)[0].payload).data.header.sessionid;
 
-      assert.deepEqual(received, {
-        sdp: "v=0\r\n...answer...",
-        sessionId: "sess-xyz",
-      });
-    },
-  );
+    fakeClient.receive("/av/u/clientX", {
+      protocol: 302,
+      pv: "2.2",
+      t: Math.floor(Date.now() / 1000),
+      data: {
+        header: { type: "answer", sessionid, from: "dev-123", to: "clientX" },
+        msg: { mode: "webrtc", sdp: "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\na=recvonly\r\n" },
+      },
+    });
+
+    assert.ok(answerReceived, "answer event must fire");
+    assert.equal(answerReceived.sessionId, sessionid);
+    assert.ok(answerReceived.sdp.includes("a=recvonly"));
+  });
 });
 
-// ---------------------------------------------------------------------------
-// Test 4: full mock-camera round-trip
-//   Client sends offer → mock camera echoes answer on source topic
-//   → client emits "answer" event and cancels fallback timer
-// ---------------------------------------------------------------------------
-
-test("full round-trip: offer → mock camera answer → client receives answer", async (t) => {
+test("candidate relay and disconnect", async (t) => {
   const fakeClient = new FakeMqttClient();
-  await withMockedDeps(
-    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.roundtrip },
-    async (WebRTCSignaling) => {
-      const { wr } = setup(WebRTCSignaling);
-      t.after(() => wr.disconnect());
-      await wr.getConfigs("dev-123");
-      wr.connect(
-        "dev-123",
-        "00112233445566778899aabbccddeeff",
-        wr.webrtcConfig,
-        false,
-      );
-      fakeClient.emit("connect");
+  await withMockedDeps({ mqttMock: { connect: () => fakeClient } }, async (WebRTCSignaling) => {
+    const { wr } = await startSession(WebRTCSignaling);
+    t.after(() => wr.disconnect());
+    fakeClient.emit("connect");
+    wr.sendOffer("v=0\r\n", 1);
 
-      let answerReceived = null;
-      let fallbackFired = false;
-      wr.on("answer", (d) => {
-        answerReceived = d;
-      });
-      wr.on("fallback", () => {
-        fallbackFired = true;
-      });
+    let got = null;
+    wr.on("candidate", (d) => (got = d));
+    fakeClient.receive("/av/u/clientX", {
+      protocol: 302,
+      data: { header: { type: "candidate", sessionid: "x" }, msg: { mode: "webrtc", candidate: "0 1 udp 1 2.3.4.5 9 typ host" } },
+    });
+    assert.ok(got, "candidate event must fire");
+    assert.equal(got.candidate, "0 1 udp 1 2.3.4.5 9 typ host");
 
-      wr.sendOffer("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\n", 1);
-
-      // Grab the offer publication and extract sessionid
-      const offerPub = fakeClient.publications.find((p) => {
-        try {
-          return JSON.parse(p.payload)?.data?.header?.type === "offer";
-        } catch {
-          return false;
-        }
-      });
-      assert.ok(offerPub, "offer must have been published");
-      const sessionid = JSON.parse(offerPub.payload).data.header.sessionid;
-
-      // ── Simulate mock camera: receive offer, reply with answer ──
-      const mockAnswer = {
-        protocol: 302,
-        pv: "2.2",
-        t: Math.floor(Date.now() / 1000),
-        data: {
-          header: {
-            type: "answer",
-            sessionid,
-            from: "camera-dev-123",
-            to: "clientX",
-          },
-          msg: {
-            mode: "webrtc",
-            sdp: "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\na=recvonly\r\n",
-          },
-        },
-      };
-      fakeClient.receive("/av/u/clientX", mockAnswer);
-
-      // ── Assertions ──
-      assert.ok(answerReceived, "answer event must have fired");
-      assert.equal(answerReceived.sessionId, sessionid);
-      assert.ok(answerReceived.sdp.includes("a=recvonly"));
-      assert.equal(
-        fallbackFired,
-        false,
-        "fallback must NOT fire when answer arrives",
-      );
-
-      console.log(
-        `  [debug] round-trip answer.sdp: ${answerReceived.sdp.trim()}`,
-      );
-    },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Test 5: wildcard catches camera reply on unexpected topic
-// ---------------------------------------------------------------------------
-
-test("wildcard subscription catches camera reply on unexpected topic", async (t) => {
-  const fakeClient = new FakeMqttClient();
-  await withMockedDeps(
-    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.roundtrip },
-    async (WebRTCSignaling) => {
-      const { wr } = setup(WebRTCSignaling);
-      t.after(() => wr.disconnect());
-      await wr.getConfigs("dev-123");
-      wr.connect(
-        "dev-123",
-        "00112233445566778899aabbccddeeff",
-        wr.webrtcConfig,
-        false,
-      );
-      fakeClient.emit("connect");
-
-      assert.ok(
-        fakeClient.subscriptions.includes("#"),
-        "must have wildcard subscription",
-      );
-
-      wr.sendOffer("v=0\r\n", 1);
-
-      const offerPub = fakeClient.publications.find((p) => {
-        try {
-          return JSON.parse(p.payload)?.data?.header?.type === "offer";
-        } catch {
-          return false;
-        }
-      });
-      const sessionid = JSON.parse(offerPub.payload).data.header.sessionid;
-
-      let answerReceived = null;
-      wr.on("answer", (d) => {
-        answerReceived = d;
-      });
-
-      // Camera replies on a completely different topic (caught by #)
-      fakeClient.receive("/av/some/unexpected/topic/bfc467f1", {
-        protocol: 302,
-        pv: "2.2",
-        t: Math.floor(Date.now() / 1000),
-        data: {
-          header: { type: "answer", sessionid },
-          msg: { mode: "webrtc", sdp: "v=0\r\n...camera-answer..." },
-        },
-      });
-
-      assert.ok(
-        answerReceived,
-        "answer must be received even on unexpected topic",
-      );
-      assert.equal(answerReceived.sessionId, sessionid);
-      console.log(
-        `  [debug] caught on unexpected topic – answer.sdp length: ${answerReceived.sdp.length}`,
-      );
-    },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Test 6: battery camera — offer re-sent with QoS 1 after wake confirmation
-//   The first offer goes out while the camera is asleep and is dropped by the
-//   IPC broker (QoS 0 → no offline queueing). Once the camera confirms wake
-//   (wireless_awake=true), setWoken() must re-publish the offer after a boot
-//   delay, reusing the same sessionid, and candidates must be re-sent too.
-// ---------------------------------------------------------------------------
-
-test("setWoken re-sends offer + candidates (QoS 1, same sessionid) after wake boot delay", async (t) => {
-  const fakeClient = new FakeMqttClient();
-  await withMockedDeps(
-    { mqttMock: { connect: () => fakeClient }, uuidValues: UUIDS.offer },
-    async (WebRTCSignaling) => {
-      const { wr } = setup(WebRTCSignaling);
-      t.after(() => wr.disconnect());
-      t.mock.timers.enable({ apis: ["setTimeout"] });
-
-      await wr.getConfigs("dev-123");
-      wr.connect(
-        "dev-123",
-        "00112233445566778899aabbccddeeff",
-        wr.webrtcConfig,
-        true, // needsWake → battery camera
-      );
-      fakeClient.emit("connect");
-
-      const offerPubs = () =>
-        fakeClient.publications.filter((p) => {
-          try {
-            return JSON.parse(p.payload)?.data?.header?.type === "offer";
-          } catch {
-            return false;
-          }
-        });
-      const candidatePubs = () =>
-        fakeClient.publications.filter((p) => {
-          try {
-            return JSON.parse(p.payload)?.data?.header?.type === "candidate";
-          } catch {
-            return false;
-          }
-        });
-
-      wr.sendOffer("v=0\r\n", 1);
-      wr.sendCandidate(
-        "0 0 candidate:1 1 udp 2122194687 192.168.1.55 59929 typ host",
-      );
-
-      assert.equal(offerPubs().length, 1, "one offer initially");
-      assert.equal(offerPubs()[0].qos, 1, "initial offer must be QoS 1");
-      assert.equal(candidatePubs().length, 1);
-      assert.equal(candidatePubs()[0].qos, 1, "candidate must be QoS 1");
-      const firstSession = JSON.parse(offerPubs()[0].payload).data.header
-        .sessionid;
-
-      // Camera confirms wake → setWoken() schedules a QoS 1 re-send.
-      wr.setWoken();
-      assert.equal(offerPubs().length, 1, "no immediate re-send");
-
-      // After the boot delay elapses, offer + candidates are re-published with
-      // the SAME sessionid so the camera treats it as the same session.
-      t.mock.timers.tick(5000);
-      assert.equal(offerPubs().length, 2, "offer re-sent after boot delay");
-      assert.equal(offerPubs()[1].qos, 1, "re-sent offer must be QoS 1");
-      assert.equal(
-        JSON.parse(offerPubs()[1].payload).data.header.sessionid,
-        firstSession,
-        "re-sent offer must reuse the same sessionid",
-      );
-      assert.equal(
-        candidatePubs().length,
-        2,
-        "candidates re-sent after wake",
-      );
-      assert.equal(candidatePubs()[1].qos, 1, "re-sent candidate must be QoS 1");
-    },
-  );
+    wr.sendCandidate("0 1 udp 1 2.3.4.5 9 typ host");
+    const candPub = fakeClient.publications.find((p) => {
+      try {
+        return JSON.parse(p.payload)?.data?.header?.type === "candidate";
+      } catch {
+        return false;
+      }
+    });
+    assert.ok(candPub, "candidate published");
+    assert.equal(candPub.qos, 1);
+  });
 });

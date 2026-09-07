@@ -328,6 +328,7 @@ class TuyaP2P extends EventEmitter {
     // Video reassembly buffer
     this.videoBuf = Buffer.alloc(0);
     this._lastNalIdx = -1;
+    this._receivedAnyData = false;
   }
 
   // ─── Connection ──────────────────────────────────────────────────────────
@@ -465,6 +466,7 @@ class TuyaP2P extends EventEmitter {
 
   _onData(chunk) {
     this.recvBuf = Buffer.concat([this.recvBuf, chunk]);
+    this._receivedAnyData = true;
     // Emit raw data for streaming mode
     if (this.streaming) {
       // Log first few bytes of data to help diagnose missing frames.
@@ -555,10 +557,10 @@ class TuyaP2P extends EventEmitter {
     return 16 + this.recvBuf.readUInt32BE(12);
   }
 
-  async sendCommand(cmd, payload) {
+  async sendCommand(cmd, payload, timeout = 5000) {
     const msg = this._buildMessage(cmd, payload);
     this.socket.write(msg);
-    return this._receiveOne(5000);
+    return this._receiveOne(timeout);
   }
 
   // ─── Video Stream ────────────────────────────────────────────────────────
@@ -570,8 +572,21 @@ class TuyaP2P extends EventEmitter {
   async startVideoStream() {
     this.log.info("[P2P] Starting video stream...");
 
-    // Tuya cameras use different LAN_EXT_STREAM payload formats depending on
-    // firmware version and model. Try the most common formats in sequence.
+    // Peephole / doorbell cameras commonly enable streaming via DP 150
+    // (streaming) + 151 (quality) over UPDATEDPS — not the LAN_EXT_STREAM
+    // JSON command. Try that first with a short timeout.
+    const dpEnable = await this.sendCommand(
+      CMD.UPDATEDPS,
+      Buffer.from(JSON.stringify({ dps: { 150: true, 151: "1" } }), "utf8"),
+      3000,
+    );
+    if (dpEnable) {
+      this.log.info("[P2P] DP-based stream enable acknowledged");
+      this._enableStreaming();
+      return true;
+    }
+
+    // Fall back to LAN_EXT_STREAM payload formats.
     const streamPayloads = [
       { reqType: "stream_start", data: {} },
       { reqType: "stream_start" },
@@ -579,7 +594,6 @@ class TuyaP2P extends EventEmitter {
       { reqType: "video_start", data: { quality: "HD" } },
       { reqType: "video_start", data: { quality: "SD" } },
       { reqType: "start_stream", data: { channel: 0 } },
-      // Peephole / doorbell cameras often use simpler payloads
       { reqType: "live" },
       { reqType: "start_live" },
       { reqType: "start_preview" },
@@ -593,24 +607,35 @@ class TuyaP2P extends EventEmitter {
       const response = await this.sendCommand(
         CMD.LAN_EXT_STREAM,
         Buffer.from(payload, "utf8"),
+        3000,
       );
 
       if (response) {
         this.log.info(
           `[P2P] Stream start response: ${response.payload.toString("utf8")}`,
         );
-        this.streaming = true;
-        this.videoBuf = Buffer.alloc(0);
-        this.emit("streaming", true);
-        return;
+        this._enableStreaming();
+        return true;
       }
     }
 
-    // No response to any payload — set streaming anyway (some cameras start
-    // sending video without acknowledging the command).
-    this.log.info(
-      "[P2P] No stream start response received, enabling streaming anyway",
-    );
+    // Some cameras start sending video without acknowledging any command.
+    if (this._receivedAnyData) {
+      this.log.info(
+        "[P2P] Camera sent data without acknowledging — enabling streaming",
+      );
+      this._enableStreaming();
+      return true;
+    }
+
+    // Nothing responded and nothing arrived — this is the wrong port/protocol
+    // (e.g. an RTSP listener ignoring our framing). Report failure so the
+    // caller can try the next config instead of falsely claiming success.
+    this.log.warn("[P2P] No response to any stream command — config failed");
+    return false;
+  }
+
+  _enableStreaming() {
     this.streaming = true;
     this.videoBuf = Buffer.alloc(0);
     this.emit("streaming", true);

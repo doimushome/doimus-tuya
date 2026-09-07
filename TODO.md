@@ -2,6 +2,74 @@
 
 Pending work for battery camera (`sp` / peephole / doorbell) live streaming.
 
+## v0.11.2 — Wake loop reverse-engineered from Smart Life APK
+
+Decompiled Smart Life 7.10.0 (`com.tuya.smart`) with jadx and traced the battery-peephole
+wake + streaming flow. Full analysis in `REVERSE-ENGINEERING.md`. Key finding: the official
+app wakes the camera via a dedicated `lowPowerDeviceAwake` flow — a CRC32 MQTT publish to
+**`m/w/{devId}` only, repeated every 1s for ~10s**, using the device's canonical `local_key`
+— then connects P2P (provider 2, not WebRTC). Implemented:
+
+1. `src/camera/WebRTCSignaling.js` — wake now publishes **only to `m/w/{deviceId}`** (was
+   also `{deviceId}/w` and `m/s/{deviceId}`), **QoS 0**, **repeated every 1s for 10s**
+   (`_startWakeLoop`/`_stopWakeLoop`). Prefers the device `local_key` over `webrtcConfig.localKey`
+   for the CRC32 (the app uses `deviceRespBean.getLocalKey()`).
+2. `src/camera/camera-streaming.js` — `startP2P` now waits a boot delay (default 5s) for
+   battery cameras so the P2P dial doesn't burn configs against a still-sleeping camera.
+3. `src/camera/wake.js` (new) — standalone `wakeBatteryCamera()` for the P2P live-view path.
+4. `src/index.js` — `p2p_start` now kicks `wakeBatteryCamera()` in parallel for battery
+   cameras (the "Live view" button previously started P2P with no wake).
+5. `src/shared/handlers.js` — emits `p2p_fallback` immediately when P2P starts in parallel
+   for a battery camera, so the app shows the P2P feed instead of waiting on WebRTC.
+6. `doimus-mobile` `LiveViewSheet.kt` — P2P-first for `p2p_start`-capable devices (shows the
+   `snapshot_live` P2P feed immediately; WebRTC still tries in the background).
+7. `src/camera/WebRTCSignaling.js` — **periodic offer re-send**: battery cameras boot
+   30-50s after waking and connect to the IPC broker long after the single offer was
+   published (QoS 1 is only queued for an existing persistent session). The offer is now
+   re-published every 5s for 100s (`_startOfferRetry`, also re-sends the wake each tick),
+   stopping on answer.
+8. `src/camera/wake.js` — `cloudWakeBatteryCamera()`: best-effort **cloud-delivered wake**
+   mirroring the app's ATOP `m.thing.device.common.issue` (CRC32 payload base64, topic
+   `m/w/{devId}`, via `{endpoint}/?a=...&v=1.0&sp=1`) plus a diagnostic
+   `m.thing.device.low.power.connect.batch.get` poll. Wired into both the `p2p_start` path
+   (index.js) and the WebRTC wake path (handlers.js). Non-fatal (suppressed errors).
+
+### go2rtc cross-check (Aug 14)
+
+- Skill of this camera: `webrtc=51` (bit5 clarity), `lowPower=0`, videos `[streamType 2
+  1080p codecType 4=HEVC, streamType 4 640p codecType 2=H264]`. go2rtc **only sends the
+  CRC32 wake when `skill.lowPower > 0`** — ours is 0, so the CRC32 wake may not be the
+  trigger for this camera; the official app's cloud `lowPowerDeviceAwake` push likely is.
+- P2P on port 554 is a **dead end** for this camera: TCP connects (something listens) but
+  the tinytuya 55AA framing gets zero response — it's the RTSP/native listener, not the
+  LAN protocol. The camera's real transport is the native P2P SDK (provider 2) or WebRTC.
+- go2rtc maps Skill streamType `2→mqtt 0` (HD), `4→mqtt 1` (SD); app requests `1` (SD,
+  H264) which matches the H264-only offer the iOS app builds. `datachannel_enable=false`
+  for H264 is correct.
+
+Still open: the app's `checkAwakeStatus` (`m.thing.device.low.power.connect.batch.get`) and
+HTTP wake fallback (`m.thing.device.common.issue`) use the app's internal gateway, not the
+OpenAPI — check the Tuya IoT Platform subscription list for OpenAPI equivalents.
+
+## v0.11.3 — KISS rewrite of the live-view flow (deployed 2026-08-14)
+
+Rewrote `WebRTCSignaling.js` (1225 → ~320 lines) and `handleWebRTCCommand` (~350 → ~70 lines)
+to match go2rtc's proven `pkg/tuya` flow exactly:
+
+- `start(deviceId, localKey)` → `webrtc-configs` + `open-iot-hub/access/config` → IPC MQTT
+  connect/subscribe → CRC32 wake → emit `config`.
+- Offer published **QoS 1**, re-published every 5s for 100s (with wake re-send), until answer.
+- **sessionId now 6-char random** (go2rtc) instead of 32-char UUID.
+- **Wake QoS 1** (go2rtc) — queued for a sleeping camera's persistent session.
+- Deleted: speculative wake DPs (`wireless_powermode=2`, `wireless_awake`), the 30s wake
+  watcher + "waking" events, power-save restore on disconnect, P2P/stream-allocation
+  parallel starts from the WebRTC path, `p2p_fallback` emit, `setWoken`/`_wakePending*`.
+- `handlers.js`/`index.js`: removed dead `_wakeWatchers`, `_powerModeChanged`, unused imports.
+- `test/webrtc-signaling.test.js` rewritten for the KISS API (start/offer/round-trip/candidate).
+
+Still open: whether the camera wakes at all (see go2rtc cross-check above). The cloud
+`checkAwakeStatus`/`common.issue` ATOP calls are the diagnostic that will tell us next.
+
 ## v0.11.1 — WebRTC offer QoS 1 + re-send after wake (deployed 2026-08-14)
 
 ### Root cause found in logs

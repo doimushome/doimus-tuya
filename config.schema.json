@@ -92,8 +92,16 @@
               "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
             }
           },
+          "appHost": {
+            "title": "App host (live view)",
+            "description": "Smart Life app host used to log in and stream battery cameras over the app's MQTT broker (e.g. protect-eu.ismartlife.me). Leave empty to auto-detect from your region.",
+            "type": "string",
+            "format": "text",
+            "condition": {
+              "functionBody": "return model.options.mode !== 'local' && model.options.projectType === '2';"
+            }
+          },
           "local": {
-            "title": "Local LAN Settings",
             "type": "object",
             "condition": {
               "functionBody": "return model.options.mode === 'local' || model.options.mode === 'both';"
