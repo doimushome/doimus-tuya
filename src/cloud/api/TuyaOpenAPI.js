@@ -1,7 +1,5 @@
 const https = require("https");
 const crypto = require("crypto");
-const { v4: uuidv4 } = require("uuid");
-const retry = require("async-await-retry");
 const { version: PLUGIN_VERSION } = require("../../../package.json");
 const { PrefixLogger } = require("../../shared/Logger");
 const { redactSecrets, redactUrl } = require("../../shared/plugin-utils");
@@ -475,7 +473,7 @@ class TuyaOpenAPI {
   async _doRequest(method, path, params, body, opts) {
     const suppressErrorLog = !!(opts && opts.suppressErrorLog);
     const now = new Date().getTime();
-    const nonce = uuidv4();
+    const nonce = crypto.randomUUID();
     const accessToken = this.tokenInfo.access_token || "";
     const stringToSign = this._getStringToSign(method, path, params, body);
 
@@ -514,9 +512,10 @@ class TuyaOpenAPI {
       path += "?" + new URLSearchParams(params).toString();
     }
 
-    return await retry(
-      () =>
-        new Promise((resolve, reject) => {
+    let lastErr;
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      try {
+        return await new Promise((resolve, reject) => {
           const req = https.request(
             { host: new URL(this.endpoint).host, method, headers, path },
             (res) => {
@@ -578,16 +577,17 @@ class TuyaOpenAPI {
             reject(e);
           });
           req.end();
-        }),
-      undefined,
-      {
-        retriesMax: 3,
-        interval: 100,
-        exponential: true,
-        factor: 2,
-        jitter: 100,
-      },
-    );
+        });
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 3) {
+          // Exponential backoff with jitter: 100ms * 2^attempt + random jitter
+          const delay = 100 * Math.pow(2, attempt) + Math.random() * 100;
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    throw lastErr;
   }
 
   async get(path, params, opts) {

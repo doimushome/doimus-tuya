@@ -1,7 +1,5 @@
 const mqtt = require("mqtt");
-const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
-const CryptoJS = require("crypto-js");
 const dns = require("dns");
 const { PrefixLogger } = require("../../shared/Logger");
 const { redactUrl } = require("../../shared/plugin-utils");
@@ -17,7 +15,7 @@ class TuyaOpenMQ {
     this.forceIPv4 = forceIPv4;
     this.version = "1.0";
     this.messageListeners = new Set();
-    this.linkId = uuidv4();
+    this.linkId = crypto.randomUUID();
     this.consumedQueue = [];
     this.log = new PrefixLogger(log, "TuyaOpenMQ", debug);
     this.running = false;
@@ -372,11 +370,13 @@ class TuyaOpenMQ {
   }
 
   _decodeMQMessage_1_0(b64msg, password) {
-    password = password.substring(8, 24);
-    return CryptoJS.AES.decrypt(b64msg, CryptoJS.enc.Utf8.parse(password), {
-      mode: CryptoJS.mode.ECB,
-      padding: CryptoJS.pad.Pkcs7,
-    }).toString(CryptoJS.enc.Utf8);
+    const key = password.substring(8, 24);
+    const buf = Buffer.from(b64msg, "base64");
+    const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
+    decipher.setAutoPadding(true);
+    return Buffer.concat([decipher.update(buf), decipher.final()]).toString(
+      "utf8",
+    );
   }
 
   _decodeMQMessage_2_0(data, password, t) {

@@ -1,4 +1,7 @@
-const TuyaDevice = require("../../shared/TuyaDevice");
+const {
+  isIRControlHub,
+  isIRRemoteControl,
+} = require("../../shared/TuyaDevice");
 const TuyaDeviceManager = require("../../shared/TuyaDeviceManager");
 
 class TuyaHomeDeviceManager extends TuyaDeviceManager {
@@ -22,7 +25,11 @@ class TuyaHomeDeviceManager extends TuyaDeviceManager {
     for (const homeID of homeIDList) {
       const res = await this.getHomeDeviceList(homeID);
       devices = devices.concat(
-        (res.result || []).map((obj) => new TuyaDevice(obj)),
+        (res.result || []).map((obj) => {
+          const device = Object.assign({}, obj);
+          device.status.sort((a, b) => (a.code > b.code ? 1 : -1));
+          return device;
+        }),
       );
     }
 
@@ -51,19 +58,19 @@ class TuyaHomeDeviceManager extends TuyaDeviceManager {
     const scenes = [];
     for (const { scene_id, name, enabled, status } of res.result || []) {
       if (enabled !== true || status !== "1") continue;
-      scenes.push(
-        new TuyaDevice({
-          id: scene_id,
-          uuid: scene_id,
-          name,
-          owner_id: homeID.toString(),
-          product_id: "scene",
-          category: "scene",
-          schema: [],
-          status: [],
-          online: true,
-        }),
-      );
+      const scene = {
+        id: scene_id,
+        uuid: scene_id,
+        name,
+        owner_id: homeID.toString(),
+        product_id: "scene",
+        category: "scene",
+        schema: [],
+        status: [],
+        online: true,
+      };
+      scene.status.sort((a, b) => (a.code > b.code ? 1 : -1));
+      scenes.push(scene);
     }
     return scenes;
   }

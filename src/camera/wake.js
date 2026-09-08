@@ -1,25 +1,14 @@
 "use strict";
 
 const mqtt = require("mqtt");
-const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
+const { crc32 } = require("../shared/crc32");
 
 // Smart Life-compatible CRC32 wake loop: publish the CRC32 of the device's
 // local_key to m/w/{devId} once per second for ~10s. Battery cameras keep a
 // low-power MQTT session to the IPC broker and boot when they receive this.
 const WAKE_REPEAT_INTERVAL_MS = 1000;
 const WAKE_REPEAT_DURATION_MS = 10000;
-
-function crc32(data) {
-  if (typeof data === "string") data = Buffer.from(data, "utf8");
-  let crc = 0xffffffff;
-  for (let i = 0; i < data.length; i++) {
-    crc ^= data[i];
-    for (let j = 0; j < 8; j++) {
-      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
 
 /**
  * Wake a battery camera (sp / doorbell / peephole) by connecting to the IPC
@@ -47,7 +36,7 @@ async function wakeBatteryCamera(tuyaDevice, ctx, log) {
   try {
     mqRes = await api.post("/v2.0/open-iot-hub/access/config", {
       uid,
-      unique_id: uuidv4(),
+      unique_id: crypto.randomUUID(),
       link_type: "mqtt",
       topics: "ipc",
     });

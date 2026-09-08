@@ -2,8 +2,8 @@
 
 const mqtt = require("mqtt");
 const crypto = require("crypto");
-const { v4: uuidv4 } = require("uuid");
 const { redactUrl } = require("../shared/plugin-utils");
+const { crc32 } = require("../shared/crc32");
 
 const WEBRTC_PROTOCOL = 302;
 const RESOLUTION_PROTOCOL = 312;
@@ -33,19 +33,6 @@ const APP_LOGIN_COOLDOWN_MS = 5 * 60 * 1000;
  *
  * Events emitted: "config", "answer", "candidate", "disconnect", "error".
  */
-
-// CRC-32 (IEEE 802.3) — same payload the Smart Life app publishes to m/w/{devId}.
-function crc32(data) {
-  if (typeof data === "string") data = Buffer.from(data, "utf8");
-  let crc = 0xffffffff;
-  for (let i = 0; i < data.length; i++) {
-    crc ^= data[i];
-    for (let j = 0; j < 8; j++) {
-      crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
 
 // tuya-ipc-terminal (the tool that streams these battery/doorbell cameras)
 // uses a 32-char hex session id — revert from go2rtc's 6-char.
@@ -140,7 +127,7 @@ class WebRTCSignaling {
     // 2. IPC MQTT config (fresh link_id per connection).
     const mq = await this.api.post("/v2.0/open-iot-hub/access/config", {
       uid: this.uid,
-      unique_id: uuidv4(),
+      unique_id: crypto.randomUUID(),
       link_type: "mqtt",
       topics: "ipc",
     });

@@ -1,4 +1,7 @@
-const TuyaDevice = require("../../shared/TuyaDevice");
+const {
+  isIRControlHub,
+  isIRRemoteControl,
+} = require("../../shared/TuyaDevice");
 const TuyaDeviceManager = require("../../shared/TuyaDeviceManager");
 
 class TuyaCustomDeviceManager extends TuyaDeviceManager {
@@ -43,8 +46,14 @@ class TuyaCustomDeviceManager extends TuyaDeviceManager {
 
     if (deviceIDs.length === 0) return [];
 
-    const res = await this.getDeviceListInfo(deviceIDs);
-    const devices = (res.result.devices || []).map((obj) => new TuyaDevice(obj));
+    const res = await this.api.get("/v1.0/devices", {
+      device_ids: deviceIDs.join(","),
+    });
+    const devices = (res.result.devices || []).map((obj) => {
+      const device = Object.assign({}, obj);
+      device.status.sort((a, b) => (a.code > b.code ? 1 : -1));
+      return device;
+    });
 
     for (const device of devices) {
       device.schema = await this.getDeviceSchema(device.id, device);

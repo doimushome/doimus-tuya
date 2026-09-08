@@ -1,7 +1,7 @@
 const EventEmitter = require("events");
 const TuyaOpenMQ = require("../cloud/api/TuyaOpenMQ");
 const { PrefixLogger } = require("./Logger");
-const TuyaDevice = require("./TuyaDevice");
+const { isIRControlHub, isIRRemoteControl } = require("./TuyaDevice");
 
 const Events = {
   DEVICE_ADD: "DEVICE_ADD",
@@ -103,14 +103,11 @@ class TuyaDeviceManager extends EventEmitter {
     return Array.from(this.devices).find((device) => device.id === deviceID);
   }
 
-  async updateDevices(ownerIDs) {
-    return [];
-  }
-
   async updateDevice(deviceID) {
     const res = await this.getDeviceInfo(deviceID);
     if (!res.success) return null;
-    const device = new TuyaDevice(res.result);
+    const device = Object.assign({}, res.result);
+    device.status.sort((a, b) => (a.code > b.code ? 1 : -1));
     device.schema = await this.getDeviceSchema(deviceID, device);
     const oldDevice = this.getDevice(deviceID);
     if (oldDevice) {
@@ -122,10 +119,6 @@ class TuyaDeviceManager extends EventEmitter {
 
   async getDeviceInfo(deviceID) {
     return this.api.get(`/v1.0/devices/${deviceID}`);
-  }
-
-  async getDeviceListInfo(deviceIDs = []) {
-    return this.api.get("/v1.0/devices", { device_ids: deviceIDs.join(",") });
   }
 
   async getDeviceSchema(deviceID, device = null) {
@@ -217,7 +210,7 @@ class TuyaDeviceManager extends EventEmitter {
   }
 
   async updateInfraredRemotes(allDevices) {
-    const irDevices = allDevices.filter((device) => device.isIRControlHub());
+    const irDevices = allDevices.filter((device) => isIRControlHub(device));
     for (const irDevice of irDevices) {
       const res = await this.getInfraredRemotes(irDevice.id);
       if (!res.success) {

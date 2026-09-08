@@ -9,27 +9,15 @@ const SENSITIVE_KEY = /password|passwd|access_token|refresh_token|token|secret|c
 
 /**
  * Deep-redact sensitive fields from arbitrary log payloads (headers, bodies,
- * API responses). Returns a structure safe to serialize. Primitives are
- * preserved; arrays/objects are walked recursively.
+ * API responses). Returns a structure safe to serialize. Any object key whose
+ * name matches SENSITIVE_KEY is replaced with "[REDACTED]".
  */
-function redactSecrets(value, depth = 0) {
-  if (depth > 10) return "[MAX_DEPTH]";
-  if (value === null || typeof value !== "object") return value;
-  if (Buffer.isBuffer(value)) return `[Buffer ${value.length}B]`;
-
-  if (Array.isArray(value)) {
-    return value.map((v) => redactSecrets(v, depth + 1));
-  }
-
-  const out = {};
-  for (const key of Object.keys(value)) {
-    if (SENSITIVE_KEY.test(key)) {
-      out[key] = "[REDACTED]";
-    } else {
-      out[key] = redactSecrets(value[key], depth + 1);
-    }
-  }
-  return out;
+function redactSecrets(value) {
+  return JSON.parse(
+    JSON.stringify(value, (key, val) =>
+      key && SENSITIVE_KEY.test(key) ? "[REDACTED]" : val,
+    ),
+  );
 }
 
 // Redact credentials embedded in URLs (mqtt://user:pass@host, ?token=..., etc).

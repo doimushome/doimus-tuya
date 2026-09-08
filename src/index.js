@@ -23,6 +23,10 @@ const { wakeBatteryCamera, cloudWakeBatteryCamera } = require("./camera/wake");
 
 const { PluginContext } = require("./shared/PluginContext");
 const {
+  isIRControlHub,
+  isIRRemoteControl,
+} = require("./shared/TuyaDevice");
+const {
   MOTION_DP_PATTERN,
   createLogger,
   generateUUID,
@@ -443,8 +447,8 @@ module.exports = {
         }
 
         if (
-          tuyaDevice.isIRRemoteControl &&
-          tuyaDevice.isIRRemoteControl()
+          tuyaDevice &&
+          isIRRemoteControl(tuyaDevice)
         ) {
           return handleIRCommand(
             deviceID,
@@ -735,7 +739,7 @@ module.exports = {
     });
 
     dm.on(TuyaDeviceManager.Events.DEVICE_ADD, async (device) => {
-      if (device.isIRControlHub && device.isIRControlHub()) return;
+      if (isIRControlHub(device)) return;
       log("info", `New device added: ${device.name}`);
       const options2 = (cfg && cfg.options) || {};
       device.schema = await dm.getDeviceSchema(device.id, device);

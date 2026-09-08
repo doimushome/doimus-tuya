@@ -8,6 +8,7 @@ const {
 const { buildDeviceCommands, sendCommandsDebounced } = require("./command-builder");
 const { startStreamAllocation } = require("../camera/camera-streaming");
 const { cloudWakeBatteryCamera } = require("../camera/wake");
+const { isIRControlHub, isIRRemoteControl } = require("./TuyaDevice");
 const { MOTION_DP_PATTERN, generateUUID } = require("./plugin-utils");
 
 // Declarative UI descriptor — rendered generically by the mobile app.
@@ -204,7 +205,7 @@ async function registerDevicesWithDoimus(api, dm, options, ctx, log) {
   log("info", `Registering ${devices.length} Tuya device(s) with Doimus.`);
 
   for (const device of devices) {
-    if (device.isIRControlHub && device.isIRControlHub()) continue;
+    if (isIRControlHub(device)) continue;
     applySchemaOverride(device, options);
     const type = getDoimusType(device, options);
     if (type === "hidden") continue;

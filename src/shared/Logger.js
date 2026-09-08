@@ -1,16 +1,13 @@
 /**
- * PrefixLogger creates a logger that is BOTH callable as a function
- * (logger(level, msg)) AND usable as an object with named methods
- * (logger.info(msg), logger.warn(msg), etc.).
+ * PrefixLogger — a simple callable logger that prefixes messages before
+ * forwarding to the underlying logger (api.log function or an object with
+ * named methods like console).
  *
- * This dual nature is required because TuyaDeviceManager passes
- * api.log (a PrefixLogger) as the raw `log` argument to another
- * PrefixLogger constructor, and PrefixLogger.info/warn/error call
- * `this.logger(level, msg)` treating the inner logger as a callable.
+ * Supports printf-style %s, %d, %o, %f placeholders with additional arguments.
+ * Usable both as a function (logger(level, msg, ...args)) and with named
+ * methods (logger.info(msg), logger.warn(msg), etc.).
  */
 function PrefixLogger(logger, prefix, debug = false) {
-  // The callable form: logger(level, msg, ...args) — used by inner PrefixLogger instances.
-  // Supports printf-style %s, %d, %o, %f placeholders with additional arguments.
   const call = (level, msg, ...args) => {
     let formatted = `[${prefix}] ${msg}`;
     if (args.length > 0) {
@@ -23,17 +20,14 @@ function PrefixLogger(logger, prefix, debug = false) {
     }
     if (typeof logger === "function") {
       logger(level, formatted);
-    } else if (logger && typeof logger.info === "function") {
-      // Inner logger is itself a PrefixLogger (function-object); call via named methods.
-      if (level === "debug") {
-        logger.debug(formatted);
-      } else if (level === "warn") {
-        logger.warn(formatted);
-      } else if (level === "error") {
-        logger.error(formatted);
-      } else {
-        logger.info(formatted);
-      }
+    } else if (level === "debug") {
+      logger.debug(formatted);
+    } else if (level === "warn") {
+      logger.warn(formatted);
+    } else if (level === "error") {
+      logger.error(formatted);
+    } else {
+      logger.info(formatted);
     }
   };
 
@@ -43,10 +37,6 @@ function PrefixLogger(logger, prefix, debug = false) {
   call.debug = (...args) => {
     if (debug) call("debug", args[0], ...args.slice(1));
   };
-  // Expose internals so nested PrefixLoggers can introspect if needed.
-  call.logger = logger;
-  call.prefix = prefix;
-  call.debug_enabled = debug;
 
   return call;
 }

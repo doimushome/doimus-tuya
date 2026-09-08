@@ -1,4 +1,7 @@
-const TuyaDevice = require('../shared/TuyaDevice');
+const {
+  isIRControlHub,
+  isIRRemoteControl,
+} = require('../shared/TuyaDevice');
 const TuyaDeviceManager = require('../shared/TuyaDeviceManager');
 const TuyaDiscovery = require('./TuyaDiscovery');
 const LocalDevice = require('./LocalDevice');
@@ -103,7 +106,7 @@ class LocalDeviceManager extends TuyaDeviceManager {
     const switchCount = cfg.switchCount || 1;
     const schema = cfg.schema || this._buildSyntheticSchema(cfg, dpMapping, switchCount);
 
-    const device = new TuyaDevice({
+    const device = {
       id: cfg.id,
       name: cfg.name || cfg.id,
       local_key: cfg.key,
@@ -115,9 +118,10 @@ class LocalDeviceManager extends TuyaDeviceManager {
       schema,
       status: schema.map((s) => ({
         code: s.code,
-        value: s.type === 'Boolean' ? false : (s.type === 'Integer' ? 0 : ''),
+        value: s.type === 'Boolean' ? false : s.type === 'Integer' ? 0 : '',
       })),
-    });
+    };
+    device.status.sort((a, b) => (a.code > b.code ? 1 : -1));
 
     return device;
   }
