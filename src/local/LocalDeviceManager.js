@@ -252,7 +252,7 @@ class LocalDeviceManager extends TuyaDeviceManager {
     });
 
     localDevice.on('error', (err) => {
-      this.log.warn('Local device error %s: %s', deviceID, err.message);
+      this.log.warn(`Local device error ${deviceID}: ${err.message}`);
     });
 
     this.localDevices.set(deviceID, localDevice);
@@ -304,13 +304,13 @@ class LocalDeviceManager extends TuyaDeviceManager {
   async sendCommands(deviceID, commands) {
     const device = this.getDevice(deviceID);
     if (!device) {
-      this.log.warn('sendCommands: unknown device %s', deviceID);
+      this.log.warn(`sendCommands: unknown device ${deviceID}`);
       return;
     }
 
     const localDevice = this.localDevices.get(deviceID);
     if (!localDevice || !localDevice.connected) {
-      this.log.warn('sendCommands: %s not connected', deviceID);
+      this.log.warn(`sendCommands: ${deviceID} not connected`);
       return;
     }
 

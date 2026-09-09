@@ -1,41 +1,29 @@
 /**
- * PrefixLogger — a simple callable logger that prefixes messages before
- * forwarding to the underlying logger (api.log function or an object with
- * named methods like console).
- *
- * Supports printf-style %s, %d, %o, %f placeholders with additional arguments.
- * Usable both as a function (logger(level, msg, ...args)) and with named
- * methods (logger.info(msg), logger.warn(msg), etc.).
+ * PrefixLogger — prefixes messages before forwarding to the underlying logger.
+ * Usable both as a function (logger(level, msg)) and with named methods
+ * (logger.info(msg), logger.warn(msg), etc.).
  */
 function PrefixLogger(logger, prefix, debug = false) {
-  const call = (level, msg, ...args) => {
-    let formatted = `[${prefix}] ${msg}`;
-    if (args.length > 0) {
-      let argIdx = 0;
-      formatted = formatted.replace(/%[sdfo%]/g, (match) => {
-        if (match === "%%") return "%";
-        const val = args[argIdx++];
-        return val !== undefined ? String(val) : "";
-      });
-    }
+  const format = (msg) => `[${prefix}] ${msg}`;
+  const call = (level, msg) => {
     if (typeof logger === "function") {
-      logger(level, formatted);
+      logger(level, format(msg));
     } else if (level === "debug") {
-      logger.debug(formatted);
+      logger.debug(format(msg));
     } else if (level === "warn") {
-      logger.warn(formatted);
+      logger.warn(format(msg));
     } else if (level === "error") {
-      logger.error(formatted);
+      logger.error(format(msg));
     } else {
-      logger.info(formatted);
+      logger.info(format(msg));
     }
   };
 
-  call.info = (...args) => call("info", args[0], ...args.slice(1));
-  call.warn = (...args) => call("warn", args[0], ...args.slice(1));
-  call.error = (...args) => call("error", args[0], ...args.slice(1));
-  call.debug = (...args) => {
-    if (debug) call("debug", args[0], ...args.slice(1));
+  call.info = (msg) => call("info", msg);
+  call.warn = (msg) => call("warn", msg);
+  call.error = (msg) => call("error", msg);
+  call.debug = (msg) => {
+    if (debug) call("debug", msg);
   };
 
   return call;

@@ -1,3 +1,5 @@
+// Thin wrapper over Map for bidirectional lookups. Stores each pair twice
+// (a→b and b→a) so get/has/delete work from either direction.
 class BiMap {
   constructor() {
     this._map = new Map();
@@ -21,12 +23,6 @@ class BiMap {
   }
   get size() {
     return this._map.size / 2;
-  }
-  keys() {
-    return this._map.keys();
-  }
-  values() {
-    return this._map.values();
   }
   clear() {
     this._map.clear();

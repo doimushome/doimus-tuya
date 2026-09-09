@@ -103,7 +103,7 @@ class TuyaOpenMQ {
     try {
       res = await this._getMQConfig("mqtt");
     } catch (err) {
-      this.log.error("Get MQTT config error: %s", err.message);
+      this.log.error(`Get MQTT config error: ${err.message}`);
       this._connecting = false;
       this._scheduleReconnect();
       return;
@@ -161,7 +161,7 @@ class TuyaOpenMQ {
       return;
     }
 
-    this.log.info("Connecting to MQTT: %s", redactUrl(url));
+    this.log.info(`Connecting to MQTT: ${redactUrl(url)}`);
 
     // Store config BEFORE connecting so _onMessage can use it immediately
     this.config = res.result;
@@ -190,7 +190,7 @@ class TuyaOpenMQ {
     });
 
     client.on("error", (error) => {
-      this.log.error("MQTT Error: %s", error.message);
+      this.log.error(`MQTT Error: ${error.message}`);
       // mqtt.js auto-reconnect is disabled (reconnectPeriod=0). We handle
       // all reconnection via _scheduleReconnect() which fetches fresh
       // MQTT credentials before retrying.
@@ -227,14 +227,14 @@ class TuyaOpenMQ {
 
     client.subscribe(source_topic.device, (err) => {
       if (err) {
-        this.log.error("MQTT Subscribe error: %s", err.message);
+        this.log.error(`MQTT Subscribe error: ${err.message}`);
         this.log.warn("Subscription failed — will reconnect to retry");
         // Trigger reconnect so we get fresh credentials and retry subscribe
         if (this.running && !this._retryTimer) {
           this._scheduleReconnect();
         }
       } else {
-        this.log.info("MQTT Subscribed to: %s", source_topic.device);
+        this.log.info(`MQTT Subscribed to: ${source_topic.device}`);
       }
     });
 
@@ -273,7 +273,7 @@ class TuyaOpenMQ {
       const { protocol, data, t } = parsed;
 
       if (!data) {
-        this.log.warn("MQTT message has no data field: %s", payload.toString());
+        this.log.warn(`MQTT message has no data field: ${payload.toString()}`);
         return;
       }
 
@@ -309,14 +309,12 @@ class TuyaOpenMQ {
         try {
           listener(topic, protocol, message);
         } catch (listenerErr) {
-          this.log.error("MQTT listener error: %s", listenerErr.message);
+          this.log.error(`MQTT listener error: ${listenerErr.message}`);
         }
       }
     } catch (err) {
       this.log.warn(
-        "MQTT message processing error: %s\npayload: %s",
-        err.message,
-        payload.toString().substring(0, 500),
+        `MQTT message processing error: ${err.message}\npayload: ${payload.toString().substring(0, 500)}`,
       );
     }
   }
@@ -331,11 +329,9 @@ class TuyaOpenMQ {
     if (lastPayload && currentPayload.t < lastPayload.t) {
       this.log.debug("Message received with wrong order.");
       this.log.debug(
-        "LastMessage: dataId = %s, t = %s",
-        lastPayload.message.dataId,
-        lastPayload.t,
+        `LastMessage: dataId = ${lastPayload.message.dataId}, t = ${lastPayload.t}`,
       );
-      this.log.debug("CurrentMessage: dataId = %s, t = %s", message.dataId, t);
+      this.log.debug(`CurrentMessage: dataId = ${message.dataId}, t = ${t}`);
 
       for (const _status of message.status) {
         for (const payload of [...this.consumedQueue].reverse()) {
@@ -344,7 +340,7 @@ class TuyaOpenMQ {
             (item) => item.code === _status.code,
           );
           if (latestStatus && latestStatus.value !== _status.value) {
-            this.log.debug("Override status %o => %o", latestStatus, _status);
+            this.log.debug(`Override status ${JSON.stringify(latestStatus)} => ${JSON.stringify(_status)}`);
             _status.value = latestStatus.value;
             _status.t = latestStatus.t;
           }
@@ -421,7 +417,7 @@ class TuyaOpenMQ {
           return decoded;
         }
       } catch (err) {
-        this.log.debug("MQTT decode attempt failed: %s", err.message);
+        this.log.debug(`MQTT decode attempt failed: ${err.message}`);
       }
     }
     return null;

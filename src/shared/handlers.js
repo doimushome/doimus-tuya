@@ -16,176 +16,94 @@ const { MOTION_DP_PATTERN, generateUUID } = require("./plugin-utils");
 // it can actually serve. Returns undefined for devices whose built-in UI
 // (lights, plain switches, simple sensors) is already a good fit.
 function buildUiDescriptor(type, capabilities) {
-  // capabilities arrives as an array (from determineCapabilities); accept a
-  // Set too for robustness.
   const has = (key) =>
-    capabilities instanceof Set
-      ? capabilities.has(key)
-      : (capabilities || []).includes(key);
+    capabilities instanceof Set ? capabilities.has(key) : (capabilities || []).includes(key);
   const rows = [];
   let title = "Device";
+
+  // Row templates: each is [capabilityKey, rowObjectOrNull]. The rowObject
+  // may use `key` (capability name) or override it. `cond` adds extra gates.
+  const toggle = (key, label) => ({ type: "toggle", key, label });
+  const value = (key, label, extra = {}) => ({ type: "value", key, label, ...extra });
+
+  const SENSOR_EXTRAS = [
+    ["pm25", "PM2.5", "µg/m³"], ["pm10", "PM10", "µg/m³"], ["pm1", "PM1", "µg/m³"],
+    ["co2", "CO₂", "ppm"], ["tvoc", "TVOC", "ppb"], ["formaldehyde", "Formaldehyde", "mg/m³"],
+    ["air_quality", "Air quality", ""], ["uv_index", "UV index", ""],
+    ["illuminance", "Illuminance", "lux"], ["noise", "Noise", "dB"],
+    ["pressure", "Pressure", "hPa"], ["windspeed", "Wind speed", "m/s"],
+    ["wind_direction", "Wind direction", ""], ["rainfall", "Rainfall", "mm"],
+    ["soil_moisture", "Soil moisture", "%"], ["soil_temperature", "Soil temperature", "°C"],
+  ];
+
+  const THERMOSTAT_OPTIONS = [
+    { value: 0, label: "Off" }, { value: 1, label: "Heat" },
+    { value: 2, label: "Cool" }, { value: 3, label: "Auto" },
+  ];
+  const BLIND_CONTROL = [{ value: "open", label: "Open" }, { value: "stop", label: "Stop" }, { value: "close", label: "Close" }];
+  const BLIND_POSITION = [{ value: 100, label: "Open" }, { value: 0, label: "Close" }];
+
+  // Add a row if the capability is present. `rowFn` returns the row object.
+  const add = (key, rowFn) => { if (has(key)) rows.push(rowFn(key)); };
 
   switch (type) {
     case "thermostat":
       title = "Thermostat";
-      if (has("on")) rows.push({ type: "toggle", key: "on", label: "On/Off" });
-      if (has("target_temp")) {
-        rows.push({
-          type: "stepper",
-          key: "target_temp",
-          label: "Target temperature",
-          min_key: "min_target_temp",
-          max_key: "max_target_temp",
-          step: 0.5,
-          unit: "celsius",
-        });
-      }
-      if (has("temperature")) {
-        rows.push({
-          type: "value",
-          key: "temperature",
-          label: "Current temperature",
-          unit: "celsius",
-        });
-      }
-      if (has("humidity")) {
-        rows.push({
-          type: "value",
-          key: "humidity",
-          label: "Humidity",
-          format: "percent",
-        });
-      }
-      if (has("heating_mode")) {
-        rows.push({
-          type: "segment",
-          key: "heating_mode",
-          label: "Mode",
-          options: [
-            { value: 0, label: "Off" },
-            { value: 1, label: "Heat" },
-            { value: 2, label: "Cool" },
-            { value: 3, label: "Auto" },
-          ],
-        });
-      }
-      if (has("eco_mode")) rows.push({ type: "toggle", key: "eco_mode", label: "Eco" });
-      if (has("frost_protection")) {
-        rows.push({ type: "toggle", key: "frost_protection", label: "Frost protection" });
-      }
-      if (has("child_lock")) rows.push({ type: "toggle", key: "child_lock", label: "Child lock" });
+      add("on", (k) => toggle(k, "On/Off"));
+      if (has("target_temp")) rows.push({ type: "stepper", key: "target_temp", label: "Target temperature", min_key: "min_target_temp", max_key: "max_target_temp", step: 0.5, unit: "celsius" });
+      add("temperature", (k) => value(k, "Current temperature", { unit: "celsius" }));
+      add("humidity", (k) => value(k, "Humidity", { format: "percent" }));
+      if (has("heating_mode")) rows.push({ type: "segment", key: "heating_mode", label: "Mode", options: THERMOSTAT_OPTIONS });
+      add("eco_mode", (k) => toggle(k, "Eco"));
+      add("frost_protection", (k) => toggle(k, "Frost protection"));
+      add("child_lock", (k) => toggle(k, "Child lock"));
       break;
 
     case "fan":
       title = "Fan";
-      if (has("on")) rows.push({ type: "toggle", key: "on", label: "On/Off" });
-      if (has("rotation_speed")) {
-        rows.push({
-          type: "slider",
-          key: "rotation_speed",
-          label: "Fan speed",
-          min: 0,
-          max: 100,
-          step: 10,
-          unit: "%",
-        });
-      }
-      if (has("swing")) rows.push({ type: "toggle", key: "swing", label: "Swing" });
-      if (has("anion")) rows.push({ type: "toggle", key: "anion", label: "Ionizer" });
+      add("on", (k) => toggle(k, "On/Off"));
+      if (has("rotation_speed")) rows.push({ type: "slider", key: "rotation_speed", label: "Fan speed", min: 0, max: 100, step: 10, unit: "%" });
+      add("swing", (k) => toggle(k, "Swing"));
+      add("anion", (k) => toggle(k, "Ionizer"));
       break;
 
     case "blind":
       title = "Blind";
-      if (has("position")) {
-        rows.push({
-          type: "slider",
-          key: "position",
-          label: "Position",
-          min: 0,
-          max: 100,
-          step: 1,
-          unit: "%",
-        });
-      }
-      if (has("control")) {
-        rows.push({
-          type: "segment",
-          key: "control",
-          label: "Control",
-          options: [
-            { value: "open", label: "Open" },
-            { value: "stop", label: "Stop" },
-            { value: "close", label: "Close" },
-          ],
-        });
-      } else if (has("position")) {
-        // Position-only blinds: drive open/close through the position DP.
-        rows.push({
-          type: "segment",
-          key: "position",
-          label: "Control",
-          options: [
-            { value: 100, label: "Open" },
-            { value: 0, label: "Close" },
-          ],
-        });
-      }
+      if (has("position")) rows.push({ type: "slider", key: "position", label: "Position", min: 0, max: 100, step: 1, unit: "%" });
+      if (has("control")) rows.push({ type: "segment", key: "control", label: "Control", options: BLIND_CONTROL });
+      else if (has("position")) rows.push({ type: "segment", key: "position", label: "Control", options: BLIND_POSITION });
       break;
 
     case "camera":
     case "doorbell":
       title = "Camera";
       rows.push({ type: "button", key: "p2p_start", label: "Live view" });
-      if (has("privacy_mode")) rows.push({ type: "toggle", key: "privacy_mode", label: "Privacy mode" });
-      if (has("night_vision")) rows.push({ type: "toggle", key: "night_vision", label: "Night vision" });
-      if (has("floodlight")) rows.push({ type: "toggle", key: "floodlight", label: "Floodlight" });
-      if (has("siren")) rows.push({ type: "toggle", key: "siren", label: "Siren" });
-      if (has("recording")) rows.push({ type: "toggle", key: "recording", label: "Recording" });
+      add("privacy_mode", (k) => toggle(k, "Privacy mode"));
+      add("night_vision", (k) => toggle(k, "Night vision"));
+      add("floodlight", (k) => toggle(k, "Floodlight"));
+      add("siren", (k) => toggle(k, "Siren"));
+      add("recording", (k) => toggle(k, "Recording"));
       break;
 
     case "outlet":
     case "switch":
       if (has("power") || has("voltage") || has("current") || has("energy")) {
         title = "Energy";
-        if (has("on")) rows.push({ type: "toggle", key: "on", label: "On/Off" });
-        if (has("power")) rows.push({ type: "value", key: "power", label: "Power", unit: "W" });
-        if (has("voltage")) rows.push({ type: "value", key: "voltage", label: "Voltage", unit: "V" });
-        if (has("current")) rows.push({ type: "value", key: "current", label: "Current", unit: "A" });
-        if (has("energy")) rows.push({ type: "value", key: "energy", label: "Energy", unit: "kWh" });
+        add("on", (k) => toggle(k, "On/Off"));
+        add("power", (k) => value(k, "Power", { unit: "W" }));
+        add("voltage", (k) => value(k, "Voltage", { unit: "V" }));
+        add("current", (k) => value(k, "Current", { unit: "A" }));
+        add("energy", (k) => value(k, "Energy", { unit: "kWh" }));
       }
       break;
 
     case "sensor": {
-      const extras = [
-        ["pm25", "PM2.5", "µg/m³"],
-        ["pm10", "PM10", "µg/m³"],
-        ["pm1", "PM1", "µg/m³"],
-        ["co2", "CO₂", "ppm"],
-        ["tvoc", "TVOC", "ppb"],
-        ["formaldehyde", "Formaldehyde", "mg/m³"],
-        ["air_quality", "Air quality", ""],
-        ["uv_index", "UV index", ""],
-        ["illuminance", "Illuminance", "lux"],
-        ["noise", "Noise", "dB"],
-        ["pressure", "Pressure", "hPa"],
-        ["windspeed", "Wind speed", "m/s"],
-        ["wind_direction", "Wind direction", ""],
-        ["rainfall", "Rainfall", "mm"],
-        ["soil_moisture", "Soil moisture", "%"],
-        ["soil_temperature", "Soil temperature", "°C"],
-      ].filter(([key]) => has(key));
-
+      const extras = SENSOR_EXTRAS.filter(([key]) => has(key));
       if (extras.length > 0) {
         title = "Air quality";
-        if (has("temperature")) {
-          rows.push({ type: "value", key: "temperature", label: "Temperature", unit: "celsius" });
-        }
-        if (has("humidity")) {
-          rows.push({ type: "value", key: "humidity", label: "Humidity", format: "percent" });
-        }
-        for (const [key, label, unit] of extras) {
-          rows.push({ type: "value", key, label, unit });
-        }
+        if (has("temperature")) rows.push({ type: "value", key: "temperature", label: "Temperature", unit: "celsius" });
+        if (has("humidity")) rows.push({ type: "value", key: "humidity", label: "Humidity", format: "percent" });
+        for (const [key, label, unit] of extras) rows.push({ type: "value", key, label, unit });
       }
       break;
     }

@@ -50,7 +50,7 @@ class LocalDevice extends EventEmitter {
     this._explicitDisconnect = false;
     this.connecting = true;
 
-    this.log.info('Connecting to local device (v%s)', this.version);
+    this.log.info(`Connecting to local device (v${this.version})`);
     this.socket = net.createConnection({ host: this.ip, port: this.port }, () => {
       this.connecting = false;
       this.reconnectAttempts = 0;
@@ -58,7 +58,7 @@ class LocalDevice extends EventEmitter {
     });
 
     this.socket.on('data', (data) => {
-      try { this._handleData(data); } catch (e) { this.log.error('Unhandled data error: %s', e.message); }
+      try { this._handleData(data); } catch (e) { this.log.error(`Unhandled data error: ${e.message}`); }
     });
     this.socket.on('error', (err) => this._handleError(err));
     this.socket.on('close', () => this._handleClose());
@@ -71,7 +71,7 @@ class LocalDevice extends EventEmitter {
 
     this.connectTimer = setTimeout(() => {
       if (this.connecting || (!this.connected && this.socket)) {
-        this.log.warn('Connect timeout after %dms', this.connectTimeout);
+        this.log.warn(`Connect timeout after ${this.connectTimeout}ms`);
         this._handleError(new Error('connect timeout'));
       }
     }, this.connectTimeout);
@@ -142,7 +142,7 @@ class LocalDevice extends EventEmitter {
         this._handlePong();
         break;
       default:
-        this.log.debug('Unhandled command: %d', cmd);
+        this.log.debug(`Unhandled command: ${cmd}`);
     }
   }
 
@@ -226,7 +226,7 @@ class LocalDevice extends EventEmitter {
     const seqNo = this._nextSeq();
     const frame = this.protocol.encodeFrame(cmd, payload, seqNo, this.sessionKey, this.key);
     this.socket.write(frame, (err) => {
-      if (err) this.log.warn('Write error: %s', err.message);
+      if (err) this.log.warn(`Write error: ${err.message}`);
     });
   }
 
@@ -264,7 +264,7 @@ class LocalDevice extends EventEmitter {
   }
 
   _handleError(err) {
-    this.log.warn('Error: %s', err.message);
+    this.log.warn(`Error: ${err.message}`);
     this._cleanup();
     this.emit('error', err);
     if (!this._explicitDisconnect) {
@@ -301,7 +301,7 @@ class LocalDevice extends EventEmitter {
     if (this.reconnectTimer) return;
     this.reconnectAttempts++;
     const delay = Math.min(30000, 1000 * Math.min(this.reconnectAttempts, 10));
-    this.log.info('Reconnecting in %dms (attempt %d)', delay, this.reconnectAttempts);
+    this.log.info(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
     this.reconnectTimer = setTimeout(() => {
       if (!this._explicitDisconnect) this.connect();
     }, delay);

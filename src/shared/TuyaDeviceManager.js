@@ -375,7 +375,7 @@ class TuyaDeviceManager extends EventEmitter {
             device.status.push({ code: newItem.code, value: newItem.value });
           }
         }
-        this.log.debug("MQTT status update: devId=%s status=%o", devId, status);
+        this.log.debug(`MQTT status update: devId=${devId} status=${JSON.stringify(status)}`);
         this.emit(Events.DEVICE_STATUS_UPDATE, device, status);
         break;
       }

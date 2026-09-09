@@ -1,6 +1,4 @@
 const crypto = require("crypto");
-const path = require("path");
-const fs = require("fs");
 
 const MOTION_DP_PATTERN = /motion|movement|doorbell|human|person|pir/i;
 
@@ -166,29 +164,6 @@ function computeNeedsWake(tuyaDevice) {
   return isCamera && batteryCodes.length > 0;
 }
 
-async function persistDeviceList(api, dm, uid, log) {
-  try {
-    const persistPath = path.join(process.cwd(), "data", "persist");
-    if (!fs.existsSync(persistPath)) {
-      fs.mkdirSync(persistPath, { recursive: true });
-    }
-    const file = path.join(persistPath, `TuyaDeviceList.${uid}.json`);
-    const devices = dm.devices.map((d) => ({
-      id: d.id,
-      name: d.name,
-      category: d.category,
-      product_id: d.product_id,
-      online: d.online,
-      schema: d.schema,
-      status: d.status,
-    }));
-    fs.writeFileSync(file, JSON.stringify(devices, null, 2));
-    log("info", `Device list saved at ${file}`);
-  } catch (e) {
-    log("debug", `Persist device list failed: ${e.message}`);
-  }
-}
-
 module.exports = {
   MOTION_DP_PATTERN,
   retryWithBackoff,
@@ -196,7 +171,6 @@ module.exports = {
   generateUUID,
   validateConfig,
   computeNeedsWake,
-  persistDeviceList,
   redactSecrets,
   redactUrl,
 };

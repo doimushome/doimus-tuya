@@ -133,7 +133,7 @@ class TuyaOpenAPI {
     try {
       this._warningHandler(code, message);
     } catch (e) {
-      this.log.warn("Warning handler threw: %s", e.message);
+      this.log.warn(`Warning handler threw: ${e.message}`);
     }
   }
 
@@ -257,7 +257,7 @@ class TuyaOpenAPI {
       }
       this.log.error("Re-login failed");
     } catch (loginErr) {
-      this.log.error("Re-login error: %s", loginErr.message);
+      this.log.error(`Re-login error: ${loginErr.message}`);
     }
     this._setAuthBroken();
     return false;
@@ -283,7 +283,7 @@ class TuyaOpenAPI {
     } else {
       password = crypto.createHash("md5").update(password).digest("hex");
     }
-    this.log.info("Login to: %s", this.endpoint);
+    this.log.info(`Login to: ${this.endpoint}`);
     const previousTokenInfo = this.tokenInfo;
     this.tokenInfo = {
       access_token: "",
@@ -415,7 +415,7 @@ class TuyaOpenAPI {
         // Respect suppressErrorLog: speculative calls (e.g. snapshot endpoint
         // probing) are expected to fail — don't spam the ERROR log.
         if (suppressErrorLog) {
-          this.log.debug("API error detail: path=%s code=%s", path, res.code);
+          this.log.debug(`API error detail: path=${path} code=${res.code}`);
         } else if (res.code === 1010) {
           // Account conflict / token invalidated elsewhere — a known condition
           // the plugin already reports as a deduped warning. Keep it at warn
@@ -788,7 +788,7 @@ class TuyaOpenAPI {
       }
     }
 
-    this.log.warn("All snapshot endpoints exhausted for device %s", deviceId);
+    this.log.warn(`All snapshot endpoints exhausted for device ${deviceId}`);
     return null;
   }
 

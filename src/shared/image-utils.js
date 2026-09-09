@@ -386,59 +386,55 @@ function tryDecodeCameraImage(device, status, log) {
   return null;
 }
 
+// Derive the 3 key variants Tuya cameras use for image encryption.
+function deriveKeys(localKey) {
+  return {
+    raw: Buffer.from(localKey, "hex"),
+    md5: crypto.createHash("md5").update(localKey).digest(),
+    sha256: crypto.createHash("sha256").update(localKey).digest(),
+  };
+}
+
+// Try decrypting with each derived key. Returns the JPEG Buffer on success
+// or null. `cipher` is "aes-128-cbc" or "aes-128-ecb"; `iv` is null for ECB.
+// `logPrefix` and `logCtx` customize log messages.
+function decryptWithKeyAttempts(encrypted, cipher, iv, localKey, log, logPrefix, logCtx) {
+  const keys = deriveKeys(localKey);
+  for (const [label, key] of Object.entries(keys)) {
+    try {
+      const decipher = crypto.createDecipheriv(cipher, key, iv);
+      decipher.setAutoPadding(true);
+      const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+      if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
+        if (log) log("info", `${logPrefix} decoded OK: key=${label} ${logCtx} size=${decrypted.length}B`);
+        return decrypted;
+      }
+      if (log) {
+        log("debug", `${logPrefix} decode: key=${label} decrypted but no JPEG magic (first 4 bytes: ${decrypted.slice(0, 4).toString("hex")})`);
+      }
+    } catch (e) {
+      if (log) log("debug", `${logPrefix} decrypt failed: key=${label} error=${e.message}`);
+    }
+  }
+  return null;
+}
+
 function tryDecodeInitiativeMessage(item, localKey, log) {
   if (item.code !== "initiative_message") return null;
   try {
     const msg = JSON.parse(item.value);
     if (!msg.files || msg.files.length === 0) return null;
 
-    // Try raw local_key, MD5(local_key), SHA256(local_key) — Tuya
-    // initiative_message encryption varies by firmware version.
-    const rawKey = Buffer.from(localKey, "hex");
-    const md5Key = crypto.createHash("md5").update(localKey).digest();
-    const sha256Key = crypto.createHash("sha256").update(localKey).digest();
-    const keyLabels = ["raw", "md5", "sha256"];
-
     for (const file of msg.files) {
       if (!file.data || !file.iv) continue;
       try {
         const encrypted = Buffer.from(file.data, "hex");
         const iv = Buffer.from(file.iv, "hex");
-
-        let keyIdx = 0;
-        for (const key of [rawKey, md5Key, sha256Key]) {
-          const label = keyLabels[keyIdx++];
-          try {
-            const decipher = crypto.createDecipheriv("aes-128-cbc", key, iv);
-            decipher.setAutoPadding(true);
-            const decrypted = Buffer.concat([
-              decipher.update(encrypted),
-              decipher.final(),
-            ]);
-            if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
-              if (log) {
-                log(
-                  "info",
-                  `Initiative message decoded OK: key=${label} keyLen=${localKey.length} size=${decrypted.length}B`,
-                );
-              }
-              return decrypted;
-            }
-            if (log) {
-              log(
-                "debug",
-                `Initiative message decode: key=${label} decrypted but no JPEG magic (first 4 bytes: ${decrypted.slice(0, 4).toString("hex")})`,
-              );
-            }
-          } catch (e) {
-            if (log) {
-              log(
-                "debug",
-                `Initiative message decrypt failed: key=${label} error=${e.message}`,
-              );
-            }
-          }
-        }
+        const result = decryptWithKeyAttempts(
+          encrypted, "aes-128-cbc", iv, localKey, log,
+          "Initiative message", `keyLen=${localKey.length}`,
+        );
+        if (result) return result;
       } catch (_) {
         // file.data or file.iv not valid hex
       }
@@ -454,51 +450,13 @@ function tryDecodeDoorbellPic(item, localKey, log) {
     return null;
   try {
     const encrypted = Buffer.from(item.value, "base64");
-    // Try raw local_key, MD5(local_key), SHA256(local_key) — Tuya cameras vary.
-    // Some video peephole / doorbell models use SHA256 key derivation.
-    const rawKey = Buffer.from(localKey, "hex");
-    const md5Key = crypto.createHash("md5").update(localKey).digest();
-    const sha256Key = crypto.createHash("sha256").update(localKey).digest();
-    const keyLabels = ["raw", "md5", "sha256"];
-    let keyIdx = 0;
-    for (const key of [rawKey, md5Key, sha256Key]) {
-      const label = keyLabels[keyIdx++];
-      try {
-        const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
-        decipher.setAutoPadding(true);
-        const decrypted = Buffer.concat([
-          decipher.update(encrypted),
-          decipher.final(),
-        ]);
-        if (decrypted[0] === 0xff && decrypted[1] === 0xd8) {
-          if (log) {
-            log(
-              "info",
-              `Doorbell pic decoded OK: code=${item.code} key=${label} keyLen=${localKey.length} size=${decrypted.length}B`,
-            );
-          }
-          return decrypted;
-        }
-        if (log) {
-          log(
-            "debug",
-            `Doorbell pic decode: code=${item.code} key=${label} decrypted but no JPEG magic (first 4 bytes: ${decrypted.slice(0, 4).toString("hex")})`,
-          );
-        }
-      } catch (e) {
-        if (log) {
-          log(
-            "debug",
-            `Doorbell pic decrypt failed: code=${item.code} key=${label} error=${e.message}`,
-          );
-        }
-      }
-    }
+    const result = decryptWithKeyAttempts(
+      encrypted, "aes-128-ecb", null, localKey, log,
+      "Doorbell pic", `code=${item.code} keyLen=${localKey.length}`,
+    );
+    if (result) return result;
     if (log) {
-      log(
-        "info",
-        `Doorbell pic decode: ALL keys failed for code=${item.code} dataLen=${encrypted.length} localKeyLen=${localKey.length}`,
-      );
+      log("info", `Doorbell pic decode: ALL keys failed for code=${item.code} dataLen=${encrypted.length} localKeyLen=${localKey.length}`);
     }
   } catch (_) {
     // not valid base64

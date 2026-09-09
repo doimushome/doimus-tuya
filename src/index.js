@@ -21,7 +21,7 @@ const {
 const { startMotionCoalesce } = require("./camera/motion-pipeline");
 const { wakeBatteryCamera, cloudWakeBatteryCamera } = require("./camera/wake");
 
-const { PluginContext } = require("./shared/PluginContext");
+const { createPluginContext } = require("./shared/PluginContext");
 const {
   isIRControlHub,
   isIRRemoteControl,
@@ -32,7 +32,6 @@ const {
   generateUUID,
   validateConfig,
   computeNeedsWake,
-  persistDeviceList,
 } = require("./shared/plugin-utils");
 const { initCustomProject, initHomeProject } = require("./cloud/init-projects");
 const {
@@ -99,7 +98,7 @@ function scheduleRestSnapshot(device, doimusID, dm, ctx, api, log, delayMs = 400
 
 module.exports = {
   async start(cfg, api) {
-    const ctx = new PluginContext();
+    const ctx = createPluginContext();
     ctx.apiRef = api;
     this._ctx = ctx;
     const options = (cfg && cfg.options) || {};
@@ -220,8 +219,6 @@ module.exports = {
     if (mode !== "local") {
       await dm.updateInfraredRemotes(dm.devices);
 
-      await persistDeviceList(api, dm, uid, log);
-
       for (const device of dm.devices) {
         if (
           ["sp", "doorbell", "mobilecam", "wxml"].includes(
@@ -280,15 +277,6 @@ module.exports = {
             s.code === "electricity",
         ),
     );
-
-    if (debugMode) {
-      for (const device of dm.devices) {
-        log(
-          "debug",
-          `Device schema: ${device.name} (${device.id}, category=${device.category}) → codes=[${(device.schema || []).map((s) => `${s.code}(${s.type})`).join(", ")}]`,
-        );
-      }
-    }
 
     if (energyPollDevices.length > 0) {
       log(

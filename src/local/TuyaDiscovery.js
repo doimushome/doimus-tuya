@@ -51,24 +51,24 @@ class TuyaDiscovery extends EventEmitter {
 
     socket.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
-        this.log.warn('Port %d in use, retrying in 15s...', port);
+        this.log.warn(`Port ${port} in use, retrying in 15s...`);
         this._retryTimer = setTimeout(() => {
           if (!this._closed) this._createSocket(port);
         }, 15000);
         return;
       }
-      this.log.error('Socket error on port %d: %s', port, err.message);
+      this.log.error(`Socket error on port ${port}: ${err.message}`);
     });
 
     socket.on('listening', () => {
-      this.log.info('Listening on UDP port %d', port);
+      this.log.info(`Listening on UDP port ${port}`);
       socket.setBroadcast(true);
     });
 
     try {
       socket.bind(port, '0.0.0.0');
     } catch (err) {
-      this.log.error('Failed to bind UDP port %d: code=%s msg=%s', port, err.code, err.message);
+      this.log.error(`Failed to bind UDP port ${port}: code=${err.code} msg=${err.message}`);
       if (err.code === 'EADDRINUSE') {
         this._retryTimer = setTimeout(() => {
           if (!this._closed) this._createSocket(port);
@@ -100,7 +100,7 @@ class TuyaDiscovery extends EventEmitter {
     try {
       decrypted = decryptECBNoPad(msg, UDP_KEY);
     } catch (err) {
-      this.log.debug('v3.4 decrypt failed from %s: %s', rinfo.address, err.message);
+      this.log.debug(`v3.4 decrypt failed from ${rinfo.address}: ${err.message}`);
       return;
     }
 
@@ -122,7 +122,7 @@ class TuyaDiscovery extends EventEmitter {
       decipher.setAuthTag(tag);
       decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     } catch (err) {
-      this.log.debug('v3.5 decrypt failed from %s: %s', rinfo.address, err.message);
+      this.log.debug(`v3.5 decrypt failed from ${rinfo.address}: ${err.message}`);
       return;
     }
 
@@ -154,7 +154,7 @@ class TuyaDiscovery extends EventEmitter {
     if (data.productKey) result.productKey = data.productKey;
     if (data.gwType) result.gwType = data.gwType;
 
-    this.log.info('Discovered device: id=%s version=%s', result.id, result.version);
+    this.log.info(`Discovered device: id=${result.id} version=${result.version}`);
     this.emit('discover', result);
   }
 
@@ -182,7 +182,7 @@ class TuyaDiscovery extends EventEmitter {
 
     probeSocket.send(packet, 0, packet.length, 7000, '255.255.255.255', (err) => {
       if (err) {
-        this.log.debug('v3.5 probe send error: %s', err.message);
+        this.log.debug(`v3.5 probe send error: ${err.message}`);
       } else {
         this.log.debug('Sent v3.5 discovery probe on port 7000');
       }

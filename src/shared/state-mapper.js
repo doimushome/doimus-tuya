@@ -205,767 +205,295 @@ function getScale(device, code) {
 const toBool = (v) => v === true || v === 1 || v === "true" || v === "1";
 const toNum = (v) => Number(v);
 
-// Lookup table: status DP code → handler(state, value, device).
-// Keeps the per-code mapping data-driven; the loop below just dispatches.
-// Codes sharing logic (e.g. bright_value / bright_value_v2) are grouped.
-const STATUS_CODE_MAP = {
-  // ── switches & power ──
-  // "switch" / "switch_N" handled separately (relay_status override logic).
-  switch_hvac: (s, v) => {
-    s.on = toBool(v);
-  },
-  switch_go: (s, v) => {
-    s.on = toBool(v);
-  },
-  power: (s, v) => {
-    s.on = v === "1" || toBool(v);
-  },
-
-  // ── brightness & color ──
-  bright_value: (s, v) => {
-    s.brightness = Math.min(100, Math.max(0, Math.round((toNum(v) / 1000) * 100)));
-    s._brightValue = toNum(v);
-  },
-  bright_value_v2: (s, v) => {
-    s.brightness = Math.min(100, Math.max(0, Math.round((toNum(v) / 1000) * 100)));
-    s._brightValue = toNum(v);
-  },
-  bright_value_1: (s, v) => {
-    s.brightness = Math.min(100, Math.max(0, Math.round((toNum(v) / 1000) * 100)));
-    s._brightValue = toNum(v);
-  },
-  temp_value: (s, v, d) => {
-    const ts = d.schema?.find((x) => x.code === "temp_value");
-    s.color_temp = tuyaTempToKelvin(v, ts?.property);
-  },
-  temp_value_v2: (s, v, d) => {
-    const ts = d.schema?.find((x) => x.code === "temp_value_v2");
-    s.color_temp = tuyaTempToKelvin(v, ts?.property);
-  },
-  colour_data: (s, v) => {
-    if (typeof v === "object" && v !== null) {
-      if (v.hue !== undefined) s.hue = toNum(v.hue);
-      if (v.saturation !== undefined) s.saturation = toNum(v.saturation);
-      if (v.value !== undefined) {
-        s.brightness = Math.min(100, Math.max(0, Math.round((toNum(v.value) / 1000) * 100)));
-      }
-      s._colourData = v;
-    }
-  },
-  colour_data_v2: (s, v) => {
-    if (typeof v === "object" && v !== null) {
-      if (v.hue !== undefined) s.hue = toNum(v.hue);
-      if (v.saturation !== undefined) s.saturation = toNum(v.saturation);
-      if (v.value !== undefined) {
-        s.brightness = Math.min(100, Math.max(0, Math.round((toNum(v.value) / 1000) * 100)));
-      }
-      s._colourData = v;
-    }
-  },
-
-  // ── scene & music ──
-  scene_data: (s, v) => {
-    s.scene = String(v);
-  },
-  scene_data_v2: (s, v) => {
-    s.scene = String(v);
-  },
-  music_data: (s, v) => {
-    s.scene = String(v);
-  },
-
-  // ── fan ──
-  fan_speed: (s, v) => {
-    s.rotation_speed = toNum(v);
-  },
-  fan_speed_percent: (s, v) => {
-    s.rotation_speed = toNum(v);
-  },
-  wind_speed: (s, v) => {
-    s.rotation_speed = toNum(v);
-  },
-
-  // ── locks ──
-  lock_state: (s, v) => {
-    s.locked = v === "locked" || toBool(v);
-  },
-  lock_sta: (s, v) => {
-    s.locked = v === "locked" || toBool(v);
-  },
-  lock_motor_state: (s, v) => {
-    s.locked = v === "locked" || toBool(v);
-  },
-
-  // ── doorbell & contact ──
-  doorbell_state: (s, v) => {
-    s.doorbell = toBool(v);
-  },
-  doorcontact: (s, v) => {
-    s.doorbell = toBool(v);
-  },
-  contact_state: (s, v) => {
-    s.contact = v === "open" || toBool(v);
-  },
-  doorcontact_state: (s, v) => {
-    s.contact = v === "open" || toBool(v);
-  },
-
-  // ── temperature ──
-  va_temperature: (s, v) => {
-    s.temperature = toNum(v);
-  },
-  temp_current: (s, v) => {
-    s.temperature = toNum(v);
-  },
-  temperature: (s, v) => {
-    s.temperature = toNum(v);
-  },
-  temp_set: (s, v) => {
-    s.target_temp = toNum(v);
-  },
-  target_temp: (s, v) => {
-    s.target_temp = toNum(v);
-  },
-
-  // ── humidity ──
-  va_humidity: (s, v) => {
-    s.humidity = toNum(v);
-  },
-  humidity: (s, v) => {
-    s.humidity = toNum(v);
-  },
-  humidity_value: (s, v) => {
-    s.humidity = toNum(v);
-  },
-
-  // ── motion ──
-  pir: (s, v) => {
-    s.motion = v === true || v === "pir" || v === 1;
-  },
-  motion_sensor: (s, v) => {
-    s.motion = v === true || v === "pir" || v === 1;
-  },
-  motion_detect: (s, v) => {
-    s.motion = v === true || v === "pir" || v === 1;
-  },
-
-  // ── smoke & gas ──
-  smoke_sensor: (s, v) => {
-    s.smoke = toBool(v) || v === "alarm";
-  },
-  smoke_sensor_status: (s, v) => {
-    s.smoke = toBool(v) || v === "alarm";
-  },
-  gas_sensor: (s, v) => {
-    s.gas = toBool(v) || v === "alarm";
-  },
-  co_gas_sensor: (s, v) => {
-    s.gas = toBool(v) || v === "alarm";
-  },
-
-  // ── battery ──
-  battery_percentage: (s, v) => {
-    s.battery = toNum(v);
-  },
-  battery_state: (s, v) => {
-    s.battery = toNum(v);
-  },
-  va_battery: (s, v) => {
-    s.battery = toNum(v);
-  },
-  wireless_electricity: (s, v) => {
-    s.battery = toNum(v);
-  },
-  battery_value: (s, v) => {
-    s.battery = toNum(v);
-  },
-  battery_low: (s, v) => {
-    s.battery_low = toBool(v) || v === "low" || v === "alarm";
-  },
-  low_battery: (s, v) => {
-    s.battery_low = toBool(v) || v === "low" || v === "alarm";
-  },
-  battery_alarm: (s, v) => {
-    s.battery_low = toBool(v) || v === "low" || v === "alarm";
-  },
-
-  // ── leak ──
-  water_sensor: (s, v) => {
-    s.leak = toBool(v) || v === "alarm" || v === "leak";
-  },
-  water_leak: (s, v) => {
-    s.leak = toBool(v) || v === "alarm" || v === "leak";
-  },
-  flood: (s, v) => {
-    s.leak = toBool(v) || v === "alarm" || v === "leak";
-  },
-  ws: (s, v) => {
-    s.leak = toBool(v) || v === "alarm" || v === "leak";
-  },
-  leak: (s, v) => {
-    s.leak = toBool(v) || v === "alarm" || v === "leak";
-  },
-
-  // ── occupancy ──
-  presence_state: (s, v) => {
-    s.occupancy = toBool(v) || v === "presence" || v === "occupied" || v === "human";
-  },
-  occupancy: (s, v) => {
-    s.occupancy = toBool(v) || v === "presence" || v === "occupied" || v === "human";
-  },
-  human: (s, v) => {
-    s.occupancy = toBool(v) || v === "presence" || v === "occupied" || v === "human";
-  },
-
-  // ── outlet ──
-  load_status: (s, v) => {
-    s.outlet_in_use = toBool(v);
-  },
-  outlet_in_use: (s, v) => {
-    s.outlet_in_use = toBool(v);
-  },
-  usb_state: (s, v) => {
-    s.outlet_in_use = toBool(v);
-  },
-
-  // ── camera / doorbell motion DPs ──
-  movement_detect_pic: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-  ipc_human: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-  doorbell_active: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-  motion_switch: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-  human_detect: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-  person_detect: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-  movement_detect: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-  ipc_motion: (s, v, d) => {
-    if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
-      s.motion = true;
-  },
-
-  // ── doorbell pic ──
-  doorbell_pic: (s, v) => {
-    s.doorbell = typeof v === "string" && v.length > 0;
-  },
-
-  // ── tamper ──
-  tamper: (s, v) => {
-    s.tamper = toBool(v) || v === "alarm" || v === "tamper";
-  },
-  tamper_state: (s, v) => {
-    s.tamper = toBool(v) || v === "alarm" || v === "tamper";
-  },
-  tamper_alarm: (s, v) => {
-    s.tamper = toBool(v) || v === "alarm" || v === "tamper";
-  },
-  sos: (s, v) => {
-    s.tamper = toBool(v) || v === "alarm" || v === "sos";
-  },
-  sos_state: (s, v) => {
-    s.tamper = toBool(v) || v === "alarm" || v === "sos";
-  },
-
-  // ── position ──
-  percent_control: (s, v) => {
-    s.position = toNum(v);
-  },
-  position: (s, v) => {
-    s.position = toNum(v);
-  },
-
-  // ── control ──
-  control_back: (s, v) => {
-    s.control = String(v);
-  },
-  control: (s, v) => {
-    s.control = String(v);
-  },
-
-  // ── hvac mode / heating ──
-  work_state: (s, v) => {
-    s.mode = String(v);
-    if (typeof v === "number" && Number.isFinite(v)) {
-      s.heating_mode = toNum(v);
-    } else if (typeof v === "string") {
-      const n = toNum(v);
-      if (!isNaN(n) && v.trim() !== "") {
-        s.heating_mode = n;
-      } else {
-        const modeMap = { auto: 3, heat: 1, hot: 1, warm: 1, cool: 2, cold: 2, off: 0 };
-        const m = modeMap[v.toLowerCase()];
-        if (m !== undefined) s.heating_mode = m;
-      }
-    }
-  },
-  mode: (s, v) => {
-    s.mode = String(v);
-    if (typeof v === "number" && Number.isFinite(v)) {
-      s.heating_mode = toNum(v);
-    } else if (typeof v === "string") {
-      const n = toNum(v);
-      if (!isNaN(n) && v.trim() !== "") {
-        s.heating_mode = n;
-      } else {
-        const modeMap = { auto: 3, heat: 1, hot: 1, warm: 1, cool: 2, cold: 2, off: 0 };
-        const m = modeMap[v.toLowerCase()];
-        if (m !== undefined) s.heating_mode = m;
-      }
-    }
-  },
-  work_mode: (s, v) => {
-    s.mode = String(v);
-    if (typeof v === "number" && Number.isFinite(v)) s.heating_mode = toNum(v);
-  },
-  hvac_mode: (s, v) => {
-    s.mode = String(v);
-    if (typeof v === "number" && Number.isFinite(v)) s.heating_mode = toNum(v);
-  },
-  heat_state: (s, v) => {
-    s.heating_state = toBool(v) ? 1 : 0;
-    s.heating = toBool(v);
-  },
-  heater: (s, v) => {
-    s.heating_state = toBool(v) ? 1 : 0;
-    s.heating = toBool(v);
-  },
-  cool_state: (s, v) => {
-    s.heating_state = toBool(v) ? 2 : 0;
-    s.cooling = toBool(v);
-  },
-  cooler: (s, v) => {
-    s.heating_state = toBool(v) ? 2 : 0;
-    s.cooling = toBool(v);
-  },
-
-  // ── child lock ──
-  child_lock: (s, v) => {
-    s.child_lock = toBool(v);
-  },
-
-  // ── light (fallback on) ──
-  light: (s, v) => {
-    if (s.on === undefined) s.on = toBool(v);
-  },
-
-  // ── direction ──
-  direction: (s, v) => {
-    s.control = String(v);
-  },
-  remote_control: (s, v) => {
-    s.control = String(v);
-  },
-
-  // ── robot / cleaning state ──
-  status: (s, v) => {
-    s.mode = String(v);
-  },
-  clean_state: (s, v) => {
-    s.mode = String(v);
-  },
-  robot_state: (s, v) => {
-    s.mode = String(v);
-  },
-
-  // ── suction ──
-  suction: (s, v) => {
-    if (s.rotation_speed === undefined) s.rotation_speed = toNum(v);
-  },
-  suction_power: (s, v) => {
-    if (s.rotation_speed === undefined) s.rotation_speed = toNum(v);
-  },
-
-  // ── power monitoring ──
-  cur_current: (s, v, d) => {
-    s.current = toNum(v) / getScale(d, "cur_current");
-  },
-  cur_power: (s, v, d) => {
-    s.power = toNum(v) / getScale(d, "cur_power");
-  },
-  cur_voltage: (s, v, d) => {
-    s.voltage = toNum(v) / getScale(d, "cur_voltage");
-  },
-  meter_power: (s, v) => {
-    s.energy = toNum(v);
-  },
-  total_forward_energy: (s, v) => {
-    s.energy = toNum(v);
-  },
-  electricity: (s, v) => {
-    s.current = toNum(v);
-  },
-
-  // ── swing ──
-  swing: (s, v) => {
-    s.swing = toBool(v) || v === "true";
-  },
-  swing_switch: (s, v) => {
-    s.swing = toBool(v) || v === "true";
-  },
-  oscillate: (s, v) => {
-    s.swing = toBool(v) || v === "true";
-  },
-
-  // ── position (read-only) ──
-  percent_state: (s, v) => {
-    s.position = toNum(v);
-  },
-
-  // ── countdown ──
-  countdown: (s, v) => {
-    s.countdown = toNum(v);
-  },
-  count_down: (s, v) => {
-    s.countdown = toNum(v);
-  },
-
-  // ── air quality ──
-  pm25: (s, v) => {
-    s.pm25 = toNum(v);
-  },
-  pm25_value: (s, v) => {
-    s.pm25 = toNum(v);
-  },
-  co2: (s, v) => {
-    s.co2 = toNum(v);
-  },
-  co2_value: (s, v) => {
-    s.co2 = toNum(v);
-  },
-  tvoc: (s, v) => {
-    s.tvoc = toNum(v);
-  },
-  tvoc_value: (s, v) => {
-    s.tvoc = toNum(v);
-  },
-  voc_value: (s, v) => {
-    s.tvoc = toNum(v);
-  },
-  ch2o: (s, v) => {
-    s.formaldehyde = toNum(v);
-  },
-  ch2o_value: (s, v) => {
-    s.formaldehyde = toNum(v);
-  },
-  hcho: (s, v) => {
-    s.formaldehyde = toNum(v);
-  },
-  hcho_value: (s, v) => {
-    s.formaldehyde = toNum(v);
-  },
-  formaldehyde: (s, v) => {
-    s.formaldehyde = toNum(v);
-  },
-  air_quality: (s, v) => {
-    s.air_quality = String(v);
-  },
-  air_quality_index: (s, v) => {
-    s.air_quality = String(v);
-  },
-  aqi: (s, v) => {
-    s.aqi = toNum(v);
-  },
-  aqi_value: (s, v) => {
-    s.aqi = toNum(v);
-  },
-
-  // ── environment ──
-  uv_index: (s, v) => {
-    s.uv_index = toNum(v);
-  },
-  uv: (s, v) => {
-    s.uv_index = toNum(v);
-  },
-  uv_current: (s, v) => {
-    s.uv_index = toNum(v);
-  },
-  lux: (s, v) => {
-    s.illuminance = toNum(v);
-  },
-  illuminance: (s, v) => {
-    s.illuminance = toNum(v);
-  },
-  illuminance_value: (s, v) => {
-    s.illuminance = toNum(v);
-  },
-  noise: (s, v) => {
-    s.noise = toNum(v);
-  },
-  noise_value: (s, v) => {
-    s.noise = toNum(v);
-  },
-  decibel: (s, v) => {
-    s.noise = toNum(v);
-  },
-  sound_intensity: (s, v) => {
-    s.noise = toNum(v);
-  },
-  pressure: (s, v) => {
-    s.pressure = toNum(v);
-  },
-  barometric_pressure: (s, v) => {
-    s.pressure = toNum(v);
-  },
-  atm_pressure: (s, v) => {
-    s.pressure = toNum(v);
-  },
-
-  // ── calibration & sensitivity ──
-  calibration: (s, v) => {
-    s.calibration = toBool(v) || v === "true";
-  },
-  sensitivity: (s, v) => {
-    s.sensitivity = String(v);
-  },
-  sensitivity_set: (s, v) => {
-    s.sensitivity = String(v);
-  },
-  keep_time: (s, v) => {
-    s.keep_time = toNum(v);
-  },
-  keep_time_set: (s, v) => {
-    s.keep_time = toNum(v);
-  },
-
-  // ── eco & frost ──
-  eco: (s, v) => {
-    s.eco_mode = toBool(v) || v === "true";
-  },
-  eco_mode: (s, v) => {
-    s.eco_mode = toBool(v) || v === "true";
-  },
-  energy_saving: (s, v) => {
-    s.eco_mode = toBool(v) || v === "true";
-  },
-  frost_protection: (s, v) => {
-    s.frost_protection = toBool(v) || v === "true";
-  },
-  anti_freeze: (s, v) => {
-    s.frost_protection = toBool(v) || v === "true";
-  },
-
-  // ── floor & outdoor temp ──
-  floor_temp: (s, v) => {
-    s.floor_temp = toNum(v);
-  },
-  floor_temperature: (s, v) => {
-    s.floor_temp = toNum(v);
-  },
-  floor_temp_current: (s, v) => {
-    s.floor_temp = toNum(v);
-  },
-  outdoor_temp: (s, v) => {
-    s.outdoor_temp = toNum(v);
-  },
-  outdoor_temperature: (s, v) => {
-    s.outdoor_temp = toNum(v);
-  },
-  outer_temp: (s, v) => {
-    s.outdoor_temp = toNum(v);
-  },
-
-  // ── particulate ──
-  pm1: (s, v) => {
-    s.pm1 = toNum(v);
-  },
-  pm1_value: (s, v) => {
-    s.pm1 = toNum(v);
-  },
-  pm10: (s, v) => {
-    s.pm10 = toNum(v);
-  },
-  pm10_value: (s, v) => {
-    s.pm10 = toNum(v);
-  },
-
-  // ── wind ──
-  windspeed: (s, v) => {
-    s.windspeed = toNum(v);
-  },
-  windspeed_avg: (s, v) => {
-    s.windspeed = toNum(v);
-  },
-  wind_direct: (s, v) => {
-    s.wind_direction = String(v);
-  },
-  wind_direction: (s, v) => {
-    s.wind_direction = String(v);
-  },
-
-  // ── rain ──
-  rain_24h: (s, v) => {
-    s.rainfall = toNum(v);
-  },
-  rain_rate: (s, v) => {
-    s.rainfall = toNum(v);
-  },
-  rainfall: (s, v) => {
-    s.rainfall = toNum(v);
-  },
-  rain_value: (s, v) => {
-    s.rainfall = toNum(v);
-  },
-
-  // ── soil ──
-  soil_humidity: (s, v) => {
-    s.soil_moisture = toNum(v);
-  },
-  soil_humidity_value: (s, v) => {
-    s.soil_moisture = toNum(v);
-  },
-  soil_ec: (s, v) => {
-    s.soil_ec = toNum(v);
-  },
-  soil_ec_value: (s, v) => {
-    s.soil_ec = toNum(v);
-  },
-  soil_ph: (s, v) => {
-    s.soil_ph = toNum(v) / 10;
-  },
-  soil_ph_value: (s, v) => {
-    s.soil_ph = toNum(v) / 10;
-  },
-  soil_temperature: (s, v) => {
-    s.soil_temperature = toNum(v);
-  },
-  soil_temp: (s, v) => {
-    s.soil_temperature = toNum(v);
-  },
-
-  // ── anion ──
-  anion: (s, v) => {
-    s.anion = toBool(v) || v === "true";
-  },
-  anion_switch: (s, v) => {
-    s.anion = toBool(v) || v === "true";
-  },
-  ionizer: (s, v) => {
-    s.anion = toBool(v) || v === "true";
-  },
-
-  // ── night vision ──
-  night_vision: (s, v) => {
-    s.night_vision = toBool(v) || v === "true";
-  },
-  infrared_led: (s, v) => {
-    s.night_vision = toBool(v) || v === "true";
-  },
-  night_mode: (s, v) => {
-    s.night_vision = toBool(v) || v === "true";
-  },
-  basic_nightvision: (s, v) => {
-    s.night_vision = String(v) !== "1" && v !== false;
-  },
-
-  // ── floodlight ──
-  floodlight: (s, v) => {
-    s.floodlight = toBool(v) || v === "true";
-  },
-  floodlight_switch: (s, v) => {
-    s.floodlight = toBool(v) || v === "true";
-  },
-  floodlight_state: (s, v) => {
-    s.floodlight = toBool(v) || v === "true";
-  },
-
-  // ── siren ──
-  siren_state: (s, v) => {
-    s.siren = toBool(v) || v === "true";
-  },
-  siren_switch: (s, v) => {
-    s.siren = toBool(v) || v === "true";
-  },
-  alarm_state: (s, v) => {
-    s.siren = toBool(v) || v === "true";
-  },
-
-  // ── recording ──
-  record_state: (s, v) => {
-    s.recording = toBool(v) || v === "true";
-  },
-  recording_switch: (s, v) => {
-    s.recording = toBool(v) || v === "true";
-  },
-  ipc_record: (s, v) => {
-    s.recording = toBool(v) || v === "true";
-  },
-  record_switch: (s, v) => {
-    s.recording = toBool(v) || v === "true";
-  },
-
-  // ── sd card ──
-  sd_status: (s, v) => {
-    s.sd_status = String(v);
-  },
-  sd_card: (s, v) => {
-    s.sd_status = String(v);
-  },
-  storage: (s, v) => {
-    s.sd_status = String(v);
-  },
-  sd_state: (s, v) => {
-    s.sd_status = String(v);
-  },
-
-  // ── privacy ──
-  basic_private: (s, v) => {
-    s.privacy_mode = toBool(v) || v === "true";
-  },
-  basics_private: (s, v) => {
-    s.privacy_mode = toBool(v) || v === "true";
-  },
-  privacy_mode: (s, v) => {
-    s.privacy_mode = toBool(v) || v === "true";
-  },
-
-  // ── ptz ──
-  ptz_control: (s, v) => {
-    s.ptz = String(v);
-  },
-  cruise: (s, v) => {
-    s.ptz = String(v);
-  },
-  pid_cruise: (s, v) => {
-    s.ptz = String(v);
-  },
-
-  // ── talkback ──
-  talk_switch: (s, v) => {
-    s.talkback = toBool(v) || v === "true";
-  },
-  audio_switch: (s, v) => {
-    s.talkback = toBool(v) || v === "true";
-  },
-  audio_talk: (s, v) => {
-    s.talkback = toBool(v) || v === "true";
-  },
-
-  // ── IR AC ──
-  temp: (s, v) => {
-    s.target_temp = toNum(v);
-  },
-  wind: (s, v) => {
-    s.rotation_speed = toNum(v);
-  },
+// ── Named handler functions (defined once, referenced by multiple codes) ──
+const setOn = (s, v) => { s.on = toBool(v); };
+const setOnStr = (s, v) => { s.on = v === "1" || toBool(v); };
+const setBrightness = (s, v) => {
+  s.brightness = Math.min(100, Math.max(0, Math.round((toNum(v) / 1000) * 100)));
+  s._brightValue = toNum(v);
 };
+const setColorTemp = (code) => (s, v, d) => {
+  const ts = d.schema?.find((x) => x.code === code);
+  s.color_temp = tuyaTempToKelvin(v, ts?.property);
+};
+const setColour = (s, v) => {
+  if (typeof v === "object" && v !== null) {
+    if (v.hue !== undefined) s.hue = toNum(v.hue);
+    if (v.saturation !== undefined) s.saturation = toNum(v.saturation);
+    if (v.value !== undefined) s.brightness = Math.min(100, Math.max(0, Math.round((toNum(v.value) / 1000) * 100)));
+    s._colourData = v;
+  }
+};
+const setScene = (s, v) => { s.scene = String(v); };
+const setRotationSpeed = (s, v) => { s.rotation_speed = toNum(v); };
+const setLocked = (s, v) => { s.locked = v === "locked" || toBool(v); };
+const setDoorbell = (s, v) => { s.doorbell = toBool(v); };
+const setContact = (s, v) => { s.contact = v === "open" || toBool(v); };
+const setTemperature = (s, v) => { s.temperature = toNum(v); };
+const setTargetTemp = (s, v) => { s.target_temp = toNum(v); };
+const setHumidity = (s, v) => { s.humidity = toNum(v); };
+const setMotion = (s, v) => { s.motion = v === true || v === "pir" || v === 1; };
+const setSmoke = (s, v) => { s.smoke = toBool(v) || v === "alarm"; };
+const setGas = (s, v) => { s.gas = toBool(v) || v === "alarm"; };
+const setBattery = (s, v) => { s.battery = toNum(v); };
+const setBatteryLow = (s, v) => { s.battery_low = toBool(v) || v === "low" || v === "alarm"; };
+const setLeak = (s, v) => { s.leak = toBool(v) || v === "alarm" || v === "leak"; };
+const setOccupancy = (s, v) => { s.occupancy = toBool(v) || v === "presence" || v === "occupied" || v === "human"; };
+const setOutletInUse = (s, v) => { s.outlet_in_use = toBool(v); };
+const setTamper = (s, v) => { s.tamper = toBool(v) || v === "alarm" || v === "tamper" || v === "sos"; };
+const setPosition = (s, v) => { s.position = toNum(v); };
+const setControl = (s, v) => { s.control = String(v); };
+const setHeatingMode = (s, v) => {
+  s.mode = String(v);
+  if (typeof v === "number" && Number.isFinite(v)) {
+    s.heating_mode = toNum(v);
+  } else if (typeof v === "string") {
+    const n = toNum(v);
+    if (!isNaN(n) && v.trim() !== "") { s.heating_mode = n; }
+    else { const m = { auto: 3, heat: 1, hot: 1, warm: 1, cool: 2, cold: 2, off: 0 }[v.toLowerCase()]; if (m !== undefined) s.heating_mode = m; }
+  }
+};
+const setHeatingModeNum = (s, v) => { s.mode = String(v); if (typeof v === "number" && Number.isFinite(v)) s.heating_mode = toNum(v); };
+const setHeatingState = (s, v) => { s.heating_state = toBool(v) ? 1 : 0; s.heating = toBool(v); };
+const setCoolingState = (s, v) => { s.heating_state = toBool(v) ? 2 : 0; s.cooling = toBool(v); };
+const setChildLock = (s, v) => { s.child_lock = toBool(v); };
+const setLightFallback = (s, v) => { if (s.on === undefined) s.on = toBool(v); };
+const setModeStr = (s, v) => { s.mode = String(v); };
+const setSuction = (s, v) => { if (s.rotation_speed === undefined) s.rotation_speed = toNum(v); };
+const setEnergy = (s, v) => { s.energy = toNum(v); };
+const setCurrent = (s, v) => { s.current = toNum(v); };
+const setSwing = (s, v) => { s.swing = toBool(v) || v === "true"; };
+const setCountdown = (s, v) => { s.countdown = toNum(v); };
+const setPm25 = (s, v) => { s.pm25 = toNum(v); };
+const setCo2 = (s, v) => { s.co2 = toNum(v); };
+const setTvoc = (s, v) => { s.tvoc = toNum(v); };
+const setFormaldehyde = (s, v) => { s.formaldehyde = toNum(v); };
+const setAirQuality = (s, v) => { s.air_quality = String(v); };
+const setAqi = (s, v) => { s.aqi = toNum(v); };
+const setUvIndex = (s, v) => { s.uv_index = toNum(v); };
+const setIlluminance = (s, v) => { s.illuminance = toNum(v); };
+const setNoise = (s, v) => { s.noise = toNum(v); };
+const setPressure = (s, v) => { s.pressure = toNum(v); };
+const setCalibration = (s, v) => { s.calibration = toBool(v) || v === "true"; };
+const setSensitivity = (s, v) => { s.sensitivity = String(v); };
+const setKeepTime = (s, v) => { s.keep_time = toNum(v); };
+const setEcoMode = (s, v) => { s.eco_mode = toBool(v) || v === "true"; };
+const setFrostProtection = (s, v) => { s.frost_protection = toBool(v) || v === "true"; };
+const setFloorTemp = (s, v) => { s.floor_temp = toNum(v); };
+const setOutdoorTemp = (s, v) => { s.outdoor_temp = toNum(v); };
+const setPm1 = (s, v) => { s.pm1 = toNum(v); };
+const setPm10 = (s, v) => { s.pm10 = toNum(v); };
+const setWindspeed = (s, v) => { s.windspeed = toNum(v); };
+const setWindDirection = (s, v) => { s.wind_direction = String(v); };
+const setRainfall = (s, v) => { s.rainfall = toNum(v); };
+const setSoilMoisture = (s, v) => { s.soil_moisture = toNum(v); };
+const setSoilEc = (s, v) => { s.soil_ec = toNum(v); };
+const setSoilPh = (s, v) => { s.soil_ph = toNum(v) / 10; };
+const setSoilTemperature = (s, v) => { s.soil_temperature = toNum(v); };
+const setAnion = (s, v) => { s.anion = toBool(v) || v === "true"; };
+const setNightVision = (s, v) => { s.night_vision = toBool(v) || v === "true"; };
+const setNightVisionBasic = (s, v) => { s.night_vision = String(v) !== "1" && v !== false; };
+const setFloodlight = (s, v) => { s.floodlight = toBool(v) || v === "true"; };
+const setSiren = (s, v) => { s.siren = toBool(v) || v === "true"; };
+const setRecording = (s, v) => { s.recording = toBool(v) || v === "true"; };
+const setSdStatus = (s, v) => { s.sd_status = String(v); };
+const setPrivacyMode = (s, v) => { s.privacy_mode = toBool(v) || v === "true"; };
+const setPtz = (s, v) => { s.ptz = String(v); };
+const setTalkback = (s, v) => { s.talkback = toBool(v) || v === "true"; };
+const setScaledCurrent = (code) => (s, v, d) => { s.current = toNum(v) / getScale(d, code); };
+const setScaledPower = (code) => (s, v, d) => { s.power = toNum(v) / getScale(d, code); };
+const setScaledVoltage = (code) => (s, v, d) => { s.voltage = toNum(v) / getScale(d, code); };
+
+// Camera / doorbell motion DPs — identical handler, 8 codes.
+const setCameraMotion = (s, v, d) => {
+  if (["sp", "mobilecam", "wxml", "doorbell"].includes(d.category) && typeof v === "string" && v.length > 0)
+    s.motion = true;
+};
+
+// Helper: assign one handler to many codes.
+const assign = (map, codes, handler) => { for (const c of codes) map[c] = handler; };
+
+// Lookup table: status DP code → handler(state, value, device).
+const STATUS_CODE_MAP = {};
+
+// ── switches & power ──
+STATUS_CODE_MAP.switch_hvac = setOn;
+STATUS_CODE_MAP.switch_go = setOn;
+STATUS_CODE_MAP.power = setOnStr;
+
+// ── brightness & color ──
+assign(STATUS_CODE_MAP, ["bright_value", "bright_value_v2", "bright_value_1"], setBrightness);
+STATUS_CODE_MAP.temp_value = setColorTemp("temp_value");
+STATUS_CODE_MAP.temp_value_v2 = setColorTemp("temp_value_v2");
+assign(STATUS_CODE_MAP, ["colour_data", "colour_data_v2"], setColour);
+
+// ── scene & music ──
+assign(STATUS_CODE_MAP, ["scene_data", "scene_data_v2", "music_data"], setScene);
+
+// ── fan ──
+assign(STATUS_CODE_MAP, ["fan_speed", "fan_speed_percent", "wind_speed"], setRotationSpeed);
+
+// ── locks ──
+assign(STATUS_CODE_MAP, ["lock_state", "lock_sta", "lock_motor_state"], setLocked);
+
+// ── doorbell & contact ──
+assign(STATUS_CODE_MAP, ["doorbell_state", "doorcontact"], setDoorbell);
+assign(STATUS_CODE_MAP, ["contact_state", "doorcontact_state"], setContact);
+
+// ── temperature ──
+assign(STATUS_CODE_MAP, ["va_temperature", "temp_current", "temperature"], setTemperature);
+assign(STATUS_CODE_MAP, ["temp_set", "target_temp"], setTargetTemp);
+
+// ── humidity ──
+assign(STATUS_CODE_MAP, ["va_humidity", "humidity", "humidity_value"], setHumidity);
+
+// ── motion ──
+assign(STATUS_CODE_MAP, ["pir", "motion_sensor", "motion_detect"], setMotion);
+
+// ── smoke & gas ──
+assign(STATUS_CODE_MAP, ["smoke_sensor", "smoke_sensor_status"], setSmoke);
+assign(STATUS_CODE_MAP, ["gas_sensor", "co_gas_sensor"], setGas);
+
+// ── battery ──
+assign(STATUS_CODE_MAP, ["battery_percentage", "battery_state", "va_battery", "wireless_electricity", "battery_value"], setBattery);
+assign(STATUS_CODE_MAP, ["battery_low", "low_battery", "battery_alarm"], setBatteryLow);
+
+// ── leak ──
+assign(STATUS_CODE_MAP, ["water_sensor", "water_leak", "flood", "ws", "leak"], setLeak);
+
+// ── occupancy ──
+assign(STATUS_CODE_MAP, ["presence_state", "occupancy", "human"], setOccupancy);
+
+// ── outlet ──
+assign(STATUS_CODE_MAP, ["load_status", "outlet_in_use", "usb_state"], setOutletInUse);
+
+// ── camera / doorbell motion DPs ──
+assign(STATUS_CODE_MAP, ["movement_detect_pic", "ipc_human", "doorbell_active", "motion_switch", "human_detect", "person_detect", "movement_detect", "ipc_motion"], setCameraMotion);
+
+// ── doorbell pic ──
+STATUS_CODE_MAP.doorbell_pic = (s, v) => { s.doorbell = typeof v === "string" && v.length > 0; };
+
+// ── tamper & sos ──
+assign(STATUS_CODE_MAP, ["tamper", "tamper_state", "tamper_alarm", "sos", "sos_state"], setTamper);
+
+// ── position ──
+assign(STATUS_CODE_MAP, ["percent_control", "position"], setPosition);
+
+// ── control ──
+assign(STATUS_CODE_MAP, ["control_back", "control"], setControl);
+
+// ── hvac mode / heating ──
+assign(STATUS_CODE_MAP, ["work_state", "mode"], setHeatingMode);
+assign(STATUS_CODE_MAP, ["work_mode", "hvac_mode"], setHeatingModeNum);
+assign(STATUS_CODE_MAP, ["heat_state", "heater"], setHeatingState);
+assign(STATUS_CODE_MAP, ["cool_state", "cooler"], setCoolingState);
+
+// ── child lock ──
+STATUS_CODE_MAP.child_lock = setChildLock;
+
+// ── light (fallback on) ──
+STATUS_CODE_MAP.light = setLightFallback;
+
+// ── direction ──
+assign(STATUS_CODE_MAP, ["direction", "remote_control"], setControl);
+
+// ── robot / cleaning state ──
+assign(STATUS_CODE_MAP, ["status", "clean_state", "robot_state"], setModeStr);
+
+// ── suction ──
+assign(STATUS_CODE_MAP, ["suction", "suction_power"], setSuction);
+
+// ── power monitoring ──
+STATUS_CODE_MAP.cur_current = setScaledCurrent("cur_current");
+STATUS_CODE_MAP.cur_power = setScaledPower("cur_power");
+STATUS_CODE_MAP.cur_voltage = setScaledVoltage("cur_voltage");
+assign(STATUS_CODE_MAP, ["meter_power", "total_forward_energy"], setEnergy);
+STATUS_CODE_MAP.electricity = setCurrent;
+
+// ── swing ──
+assign(STATUS_CODE_MAP, ["swing", "swing_switch", "oscillate"], setSwing);
+
+// ── position (read-only) ──
+STATUS_CODE_MAP.percent_state = setPosition;
+
+// ── countdown ──
+assign(STATUS_CODE_MAP, ["countdown", "count_down"], setCountdown);
+
+// ── air quality ──
+assign(STATUS_CODE_MAP, ["pm25", "pm25_value"], setPm25);
+assign(STATUS_CODE_MAP, ["co2", "co2_value"], setCo2);
+assign(STATUS_CODE_MAP, ["tvoc", "tvoc_value", "voc_value"], setTvoc);
+assign(STATUS_CODE_MAP, ["ch2o", "ch2o_value", "hcho", "hcho_value", "formaldehyde"], setFormaldehyde);
+assign(STATUS_CODE_MAP, ["air_quality", "air_quality_index"], setAirQuality);
+assign(STATUS_CODE_MAP, ["aqi", "aqi_value"], setAqi);
+
+// ── environment ──
+assign(STATUS_CODE_MAP, ["uv_index", "uv", "uv_current"], setUvIndex);
+assign(STATUS_CODE_MAP, ["lux", "illuminance", "illuminance_value"], setIlluminance);
+assign(STATUS_CODE_MAP, ["noise", "noise_value", "decibel", "sound_intensity"], setNoise);
+assign(STATUS_CODE_MAP, ["pressure", "barometric_pressure", "atm_pressure"], setPressure);
+
+// ── calibration & sensitivity ──
+STATUS_CODE_MAP.calibration = setCalibration;
+assign(STATUS_CODE_MAP, ["sensitivity", "sensitivity_set"], setSensitivity);
+assign(STATUS_CODE_MAP, ["keep_time", "keep_time_set"], setKeepTime);
+
+// ── eco & frost ──
+assign(STATUS_CODE_MAP, ["eco", "eco_mode", "energy_saving"], setEcoMode);
+assign(STATUS_CODE_MAP, ["frost_protection", "anti_freeze"], setFrostProtection);
+
+// ── floor & outdoor temp ──
+assign(STATUS_CODE_MAP, ["floor_temp", "floor_temperature", "floor_temp_current"], setFloorTemp);
+assign(STATUS_CODE_MAP, ["outdoor_temp", "outdoor_temperature", "outer_temp"], setOutdoorTemp);
+
+// ── particulate ──
+assign(STATUS_CODE_MAP, ["pm1", "pm1_value"], setPm1);
+assign(STATUS_CODE_MAP, ["pm10", "pm10_value"], setPm10);
+
+// ── wind ──
+assign(STATUS_CODE_MAP, ["windspeed", "windspeed_avg"], setWindspeed);
+assign(STATUS_CODE_MAP, ["wind_direct", "wind_direction"], setWindDirection);
+
+// ── rain ──
+assign(STATUS_CODE_MAP, ["rain_24h", "rain_rate", "rainfall", "rain_value"], setRainfall);
+
+// ── soil ──
+assign(STATUS_CODE_MAP, ["soil_humidity", "soil_humidity_value"], setSoilMoisture);
+assign(STATUS_CODE_MAP, ["soil_ec", "soil_ec_value"], setSoilEc);
+assign(STATUS_CODE_MAP, ["soil_ph", "soil_ph_value"], setSoilPh);
+assign(STATUS_CODE_MAP, ["soil_temperature", "soil_temp"], setSoilTemperature);
+
+// ── anion ──
+assign(STATUS_CODE_MAP, ["anion", "anion_switch", "ionizer"], setAnion);
+
+// ── night vision ──
+assign(STATUS_CODE_MAP, ["night_vision", "infrared_led", "night_mode"], setNightVision);
+STATUS_CODE_MAP.basic_nightvision = setNightVisionBasic;
+
+// ── floodlight ──
+assign(STATUS_CODE_MAP, ["floodlight", "floodlight_switch", "floodlight_state"], setFloodlight);
+
+// ── siren ──
+assign(STATUS_CODE_MAP, ["siren_state", "siren_switch", "alarm_state"], setSiren);
+
+// ── recording ──
+assign(STATUS_CODE_MAP, ["record_state", "recording_switch", "ipc_record", "record_switch"], setRecording);
+
+// ── sd card ──
+assign(STATUS_CODE_MAP, ["sd_status", "sd_card", "storage", "sd_state"], setSdStatus);
+
+// ── privacy ──
+assign(STATUS_CODE_MAP, ["basic_private", "basics_private", "privacy_mode"], setPrivacyMode);
+
+// ── ptz ──
+assign(STATUS_CODE_MAP, ["ptz_control", "cruise", "pid_cruise"], setPtz);
+
+// ── talkback ──
+assign(STATUS_CODE_MAP, ["talk_switch", "audio_switch", "audio_talk"], setTalkback);
+
+// ── IR AC ──
+STATUS_CODE_MAP.temp = setTargetTemp;
+STATUS_CODE_MAP.wind = setRotationSpeed;
 
 function mapTuyaStatusToDoimusState(device, statusList, options) {
   const state = {};

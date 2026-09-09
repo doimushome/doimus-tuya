@@ -461,9 +461,7 @@ class TuyaP2P extends EventEmitter {
           Math.min(16, this.recvBuf.length),
         );
         this.log.debug(
-          `[P2P] Streaming data preview (first %d bytes): %s`,
-          preview.length,
-          preview.toString("hex"),
+          `[P2P] Streaming data preview (first ${preview.length} bytes): ${preview.toString("hex")}`,
         );
       }
       // Try parsing protocol messages first — some cameras send video data
@@ -587,7 +585,7 @@ class TuyaP2P extends EventEmitter {
 
     for (const payloadObj of streamPayloads) {
       const payload = JSON.stringify(payloadObj);
-      this.log.debug(`[P2P] Trying LAN_EXT_STREAM payload: %s`, payload);
+      this.log.debug(`[P2P] Trying LAN_EXT_STREAM payload: ${payload}`);
       const response = await this.sendCommand(
         CMD.LAN_EXT_STREAM,
         Buffer.from(payload, "utf8"),
