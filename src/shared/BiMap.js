@@ -1,31 +1,48 @@
-// Thin wrapper over Map for bidirectional lookups. Stores each pair twice
-// (a→b and b→a) so get/has/delete work from either direction.
+// Bidirectional map: keeps forward (a→b) and reverse (b→a) indexes in sync so
+// get/has/delete work from either direction. Iteration (keys/values/size) is
+// over the forward entries only.
 class BiMap {
   constructor() {
-    this._map = new Map();
+    this._forward = new Map();
+    this._reverse = new Map();
   }
   set(a, b) {
-    this._map.set(a, b);
-    this._map.set(b, a);
+    if (this._forward.has(a)) {
+      this._reverse.delete(this._forward.get(a));
+    }
+    if (this._reverse.has(b)) {
+      this._forward.delete(this._reverse.get(b));
+    }
+    this._forward.set(a, b);
+    this._reverse.set(b, a);
   }
   get(a) {
-    return this._map.get(a);
+    return this._forward.has(a) ? this._forward.get(a) : this._reverse.get(a);
   }
   delete(a) {
-    const b = this._map.get(a);
-    if (b !== undefined) {
-      this._map.delete(a);
-      this._map.delete(b);
+    if (this._forward.has(a)) {
+      this._reverse.delete(this._forward.get(a));
+      this._forward.delete(a);
+    } else if (this._reverse.has(a)) {
+      this._forward.delete(this._reverse.get(a));
+      this._reverse.delete(a);
     }
   }
   has(a) {
-    return this._map.has(a);
+    return this._forward.has(a) || this._reverse.has(a);
   }
   get size() {
-    return this._map.size / 2;
+    return this._forward.size;
+  }
+  keys() {
+    return this._forward.keys();
+  }
+  values() {
+    return this._forward.values();
   }
   clear() {
-    this._map.clear();
+    this._forward.clear();
+    this._reverse.clear();
   }
 }
 

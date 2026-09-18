@@ -8,12 +8,12 @@ const CryptoJS = require("crypto-js");
 const TuyaOpenMQ = require("../src/cloud/api/TuyaOpenMQ");
 const { PrefixLogger } = require("../src/shared/Logger");
 
-// MQTT password captured from the open-hub access-config response.
-const TEST_PASSWORD = "***REMOVED***";
-// A real protocol-4 message the server encrypted as v1.0 (AES-ECB) even though
-// the client requested msg_encrypted_version 2.0.
+// Synthetic fixture password — must not be a real captured credential.
+const TEST_PASSWORD = "doimus-test-fixture-key!";
+// A synthetic protocol-4 message encrypted as v1.0 (AES-ECB) even though the
+// client requested msg_encrypted_version 2.0.
 const V1_MESSAGE =
-  "***REMOVED***";
+  "V1cFviTxgQVqUlwYbX8thEqr706hnhx04GDnRjcA5NZdH2haxGMHLWT96uPOmgfxv8yuOO/6oVQttd8C0e9xISO7WA4ltA7zmHMKFA18xMst7AOseBIyc4nbPHx3A/WT";
 const V1_T = 1786542314;
 
 function makeLogger() {
@@ -40,7 +40,7 @@ test("_decodeMQMessage — decodes v1.0 (ECB) message when version is 2.0", () =
   const decoded = mq._decodeMQMessage(V1_MESSAGE, TEST_PASSWORD, V1_T);
   assert.ok(decoded, "expected a decoded string");
   const msg = JSON.parse(decoded);
-  assert.equal(msg.devId, "bf22ea98909abfaf19vaf1");
+  assert.equal(msg.devId, "test-device-0001");
   assert.ok(Array.isArray(msg.status));
 });
 
@@ -63,7 +63,7 @@ test("_decodeMQMessage — decodes v1.0 (ECB) message when version is 1.0", () =
   const decoded = mq._decodeMQMessage(V1_MESSAGE, TEST_PASSWORD, V1_T);
   assert.ok(decoded, "expected a decoded string");
   const msg = JSON.parse(decoded);
-  assert.equal(msg.devId, "bf22ea98909abfaf19vaf1");
+  assert.equal(msg.devId, "test-device-0001");
 });
 
 test("_decodeMQMessage — returns null for garbage data", () => {

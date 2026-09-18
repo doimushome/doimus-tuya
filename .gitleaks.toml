@@ -1,0 +1,12 @@
+# gitleaks configuration — see https://github.com/gitleaks/gitleaks
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Dependencies and build output are not first-party source"
+paths = [
+  '''node_modules''',
+  '''/dist/''',
+  '''/build/''',
+  '''\\.astro/''',
+]

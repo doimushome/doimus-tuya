@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate manifest and config schema
+        run: |
+          node -e "const p=require('./package.json'); if (!p.name || !p.version) { console.error('package.json missing name or version'); process.exit(1); }"
+          node -e "JSON.parse(require('fs').readFileSync('config.schema.json', 'utf8'))"
+      - name: Syntax check entrypoint
+        run: |
+          MAIN="$(node -p "require('./package.json').main || 'index.js'")"
+          node --check "$MAIN"
+      - name: Test (when a test script exists)
+        run: |
+          if node -e "const s=require('./package.json').scripts; process.exit(s && s.test ? 0 : 1)"; then
+            if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+            npm test
+          else
+            echo "No test script defined - skipping"
+          fi
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for secrets
+        uses: docker://ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+        with:
+          args: dir . --config .gitleaks.toml --redact --exit-code 1 --no-banner
